@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArUco Markers Test - DICT_4X4_50</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: white;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .block {
+            margin: 40px 0;
+            padding: 20px;
+            border: 2px solid #000;
+            position: relative;
+            width: 600px;
+            height: 420px;
+            margin: 40px auto;
+        }
+        .block h2 {
+            position: absolute;
+            top: -30px;
+            left: 10px;
+            background: white;
+            padding: 0 10px;
+        }
+        .marker-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 20px;
+            height: 100%;
+            padding: 20px;
+        }
+        .marker {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .marker img {
+            width: 120px;
+            height: 120px;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .marker-label {
+            margin-top: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+        .instructions {
+            background-color: #f0f0f0;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        .instructions h3 {
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ArUco Markers - DICT_4X4_50</h1>
+
+        <div class="instructions">
+            <h3>使い方:</h3>
+            <ol>
+                <li>このページを<strong>全画面表示</strong>にする（F11キー）</li>
+                <li>画面の明るさを<strong>最大</strong>にする</li>
+                <li>スマホのカメラアプリで画面を撮影する</li>
+                <li>Android Studioのlogcatで検出ログを確認する</li>
+            </ol>
+            <p><strong>注意:</strong> 4つのマーカーすべてがカメラに映るようにしてください。</p>
+        </div>
+
+        <div class="block">
+            <h2>Bブロック (ID: 0, 1, 2, 3)</h2>
+            <div class="marker-grid">
+                <div class="marker">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAAAAABVicqIAAAAxElEQVR4nO2YMQ6AMAwD8/+f5gWwMDAhpVIHThqJDZM6ToIkSZIkSZIkSZIk/V8+AOzPef70L2vZy1r2spa9rGUva9nLWvayl732sgbUPtawl7XsZS17Wavayzr23bJX7WUde1nHXtaxl3XsZR17Wcde1rGXdexlHXtZx17WsZd17GUde1nHXtax726va++yu13HXtaxl3XsZR17Wcde1rGXdexlHXtZx17Wse9u72vZy1r2spa9rGUva9nLWvayli8r+gDYbBmt9MgdrwAAAABJRU5ErkJggg==" alt="Marker 0">
+                    <div class="marker-label">ID: 0 (Top-Left)</div>
+                </div>
+                <div class="marker">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAAAAABVicqIAAAAw0lEQVR4nO2YMQ6AIBBEd+/NXFAPYGN0jV+CG51k0pnoJK8hkCRJkiRJkiRJkiT9XwqAa+9+9C9r2cta9rKWvaxlL2vZy1r2spZ9t+wFYO+X/V3Wse+yvaxlL+vYy1r2so69rGMva9nLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKWvaxlL2vZy1r2spa9rOULH4cZtxHWCe8AAAAASUVORK5CYII=" alt="Marker 1">
+                    <div class="marker-label">ID: 1 (Top-Right)</div>
+                </div>
+                <div class="marker">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAAAAABVicqIAAAAwklEQVR4nO2YMQ6AIBBEd+/NXFAPYGOxtWkMG51k0pnoJK8hkCRJkiRJkiRJkiT9XwqAa+9+9C9r2cta9rKWvaxlL2vZy1r2spZ9t+wF4Hv2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL2vZy1r2spa9rGUva9nLWvayli8+BRmt9g4lkQAAAABJRU5ErkJggg==" alt="Marker 2">
+                    <div class="marker-label">ID: 2 (Bottom-Left)</div>
+                </div>
+                <div class="marker">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAAAAABVicqIAAAAx0lEQVR4nO2YMQ6AMAwDk///NGZgYEBKpQ6cNBIbJnWcBEmSJEmSJEmSJEn6v3wA2J/z/Olf1rKXtexlLXtZy17Wspe17GUt+27ZC8C+vaxlL+vYy1r2so69rGMva9nLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKWvaxlL2vZy1r2spa9rGUva/my2g+vDxm3CW0vcAAAAABJRU5ErkJggg==" alt="Marker 3">
+                    <div class="marker-label">ID: 3 (Bottom-Right)</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="block">
+            <h2>Cブロック (ID: 4, 5, 6, 7)</h2>
+            <div class="marker-grid">
+                <div class="marker">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAAAAABVicqIAAAAyElEQVR4nO2YMQ6AIBAEx++fzAewse5MbAwbnWTSmegkryGQJEmSJEmSJEmSJP1fCoBr7370L2vZy1r2spa9rGUva9nLWvayl323bADYn/P86V/Wse+yvaxlL+vYyzr2spa9rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy9r2cta9rKWvaxlL2vZy1r2spa9rOUL7p8Zrf+dY1kAAAAASUVORK5CYII=" alt="Marker 4">
+                    <div class="marker-label">ID: 4 (Top-Left)</div>
+                </div>
+                <div class="marker">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAAAAABVicqIAAAAxElEQVR4nO2YMQ6AIBBEd+/NXFAPYGNaW5vGsNFJJp2JTvIaAkmSJEmSJEmSJEnS/6UAuPbuR/+ylr2sZS9r2cta9rKWvaxlL2vZd8teAL5nL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKWvaxlL2vZy1r2spa9rGUva/myAugZGa3Z+9MhAAAAAElFTkSuQmCC" alt="Marker 5">
+                    <div class="marker-label">ID: 5 (Top-Right)</div>
+                </div>
+                <div class="marker">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAAAAABVicqIAAAAw0lEQVR4nO2YMQ6AIBBEd+/NXFAPYGNba9MYNjrJpDPRSV5DIEmSJEmSJEmSJEn6vxQA1979/9Ky/y172cta9rKWvaxlL2vZy1r2spa9rGUva9nLWvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKWvaxlL2vZy1r2spa9rGUva9nLWr4AJ4UZrQGI+tQAAAAASUVORK5CYII=" alt="Marker 6">
+                    <div class="marker-label">ID: 6 (Bottom-Left)</div>
+                </div>
+                <div class="marker">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAAAAABVicqIAAAAxklEQVR4nO2YMQ6AIBBEd+/NXFAPYGNTa9MYNjrJpDPRSV5DIEmSJEmSJEmSJEn6vxQA1979/9Ky/y172cta9rKWvaxlL2vZy1r2spa9rGUva9nLWvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKOvaxjL+vYyzr2so69rGMv69jLOvayjr2sYy/r2Ms69rKWvaxlL2vZy1r2spa9rGUva9nLWr4AQ0EZrQGPaVQAAAAASUVORK5CYII=" alt="Marker 7">
+                    <div class="marker-label">ID: 7 (Bottom-Right)</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <h3>期待されるログ:</h3>
+            <pre>Dictionary DICT_4X4_50: Detected 4 markers
+All detected IDs: [0, 1, 2, 3]
+B_BLOCK detected
+Auto-capture triggered</pre>
+        </div>
+    </div>
+</body>
+</html>
