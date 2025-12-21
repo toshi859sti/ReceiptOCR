@@ -299,6 +299,13 @@ fun CameraScreen(
                     modifier = Modifier.padding(paddingValues)
                 )
             }
+            is CameraViewModel.CameraUiState.SuccessUnderlay -> {
+                // 下に敷くタイプの結果表示
+                UnderlayResultScreen(
+                    state = state,
+                    viewModel = viewModel
+                )
+            }
             is CameraViewModel.CameraUiState.Error -> {
                 Box(
                     modifier = Modifier
