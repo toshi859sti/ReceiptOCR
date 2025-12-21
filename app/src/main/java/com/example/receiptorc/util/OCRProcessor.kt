@@ -553,11 +553,19 @@ object OCRProcessor {
     /**
      * 下に敷くタイプの台紙でOCR処理
      *
-     * 処理フロー:
-     * 1. ML Kit OCRでテキストボックスを取得
-     * 2. 小計を分離
-     * 3. 行クラスタリング
-     * 4. 各行を処理
+     * 正しい処理フロー:
+     * 1. ArUco検出 & warp（呼び出し元で実行済み）
+     * 2. ML Kit OCR（日本語）
+     * 3. TextBox変換（bbox + text）
+     * 4. ノイズ除去（空・記号・極小bbox）
+     * 5. 行クラスタリング（Y、閾値15px）
+     * 6. 行タイプ判定（通常 / 小計 / 月合計 / 空白）
+     * 7. 各行を処理
+     *    ├ 列判定（X + 安全px範囲）
+     *    ├ 正規表現確定
+     *    └ 行データ生成
+     * 8. 小計・月合計の意味付け（結果から抽出）
+     * 9. UI表示（呼び出し元）
      *
      * @param warpedBitmap warp後の伝票画像
      * @return ReceiptRowのリスト
@@ -565,38 +573,60 @@ object OCRProcessor {
     suspend fun processUnderlayingBase(
         warpedBitmap: Bitmap
     ): ProcessUnderlayingBaseResult {
-        Log.d(TAG, "Processing underlying base type: ${warpedBitmap.width}x${warpedBitmap.height}")
+        Log.d(TAG, "[UNDERLAY] ========== Processing Start ==========")
+        Log.d(TAG, "[UNDERLAY] Image size: ${warpedBitmap.width}x${warpedBitmap.height}")
 
         // 1. ML Kit OCR（日本語モデル）
         val text = recognizeText(warpedBitmap) ?: run {
-            Log.w(TAG, "OCR failed for underlying base")
+            Log.w(TAG, "[UNDERLAY] OCR failed")
             return ProcessUnderlayingBaseResult(emptyList(), emptyList())
         }
 
-        Log.d(TAG, "OCR completed: ${text.textBlocks.size} blocks")
+        Log.d(TAG, "[UNDERLAY] Step 2: OCR completed (${text.textBlocks.size} blocks)")
 
-        // 2. TextBoxに変換
+        // 3. TextBoxに変換
         val textBoxes = convertToTextBoxes(text)
+        Log.d(TAG, "[UNDERLAY] Step 3: Converted to ${textBoxes.size} text boxes")
 
-        // 3. 小計を分離
-        val subtotals = UnderlyingBaseProcessor.extractSubtotals(textBoxes)
-        Log.d(TAG, "Extracted ${subtotals.size} subtotals")
+        // 4. ノイズ除去（空、記号、極小bbox）
+        val filteredBoxes = UnderlyingBaseProcessor.filterNoise(textBoxes)
+        Log.d(TAG, "[UNDERLAY] Step 4: Noise filtering (${textBoxes.size} → ${filteredBoxes.size})")
 
-        // 通常行のテキストボックス
-        val normalBoxes = textBoxes.filter {
-            !UnderlyingBaseProcessor.isSubtotalRow(it.centerY, it.centerX)
-        }
+        // 5. 行クラスタリング（Y座標、閾値15px）
+        val rows = UnderlyingBaseProcessor.clusterRows(filteredBoxes)
+        Log.d(TAG, "[UNDERLAY] Step 5: Row clustering (${rows.size} rows)")
 
-        // 4. 行クラスタリング
-        val rows = UnderlyingBaseProcessor.clusterRows(normalBoxes)
-
-        // 5. 各行を処理
+        // 6-7. 各行を処理（行タイプ判定 → 列判定 → 行データ生成）
         val receiptRows = rows.mapIndexed { index, rowBoxes ->
-            Log.d(TAG, "Processing row $index: ${rowBoxes.size} boxes")
-            UnderlyingBaseProcessor.processRow(rowBoxes)
+            Log.d(TAG, "[UNDERLAY] Processing row $index (${rowBoxes.size} boxes):")
+
+            // 6. 行タイプ判定
+            val rowType = UnderlyingBaseProcessor.detectRowType(rowBoxes)
+
+            // 7. 行データ生成
+            val row = UnderlyingBaseProcessor.processRow(rowBoxes, rowType)
+
+            Log.d(TAG, "[UNDERLAY]   → Type: $rowType, Data: ${row.rawText}")
+            row
         }
 
-        Log.d(TAG, "Processed ${receiptRows.size} rows")
+        Log.d(TAG, "[UNDERLAY] Step 7: Processed ${receiptRows.size} rows")
+
+        // 8. 小計・月合計の抽出（結果から）
+        val subtotals = receiptRows
+            .filter { it.rowType == UnderlyingBaseProcessor.RowType.SUBTOTAL }
+            .mapNotNull { row ->
+                row.categorySum?.let { value ->
+                    UnderlyingBaseProcessor.SubtotalData(
+                        value = value,
+                        centerX = 0,  // 行から抽出した場合は座標不要
+                        centerY = 0
+                    )
+                }
+            }
+
+        Log.d(TAG, "[UNDERLAY] Step 8: Extracted ${subtotals.size} subtotals")
+        Log.d(TAG, "[UNDERLAY] ========== Processing Complete ==========")
 
         return ProcessUnderlayingBaseResult(receiptRows, subtotals)
     }

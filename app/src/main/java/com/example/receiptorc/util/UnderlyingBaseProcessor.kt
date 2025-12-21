@@ -86,6 +86,16 @@ object UnderlyingBaseProcessor {
         SUBTOTAL        // 小計・合計（数字）
     }
 
+    /**
+     * 行タイプ
+     */
+    enum class RowType {
+        NORMAL,         // 通常の取引行
+        SUBTOTAL,       // 小計行（一般購買、給油所、農業機械）
+        MONTHLY_TOTAL,  // 月合計行
+        EMPTY           // 空白行
+    }
+
     // ============================================
     // データクラス
     // ============================================
@@ -105,10 +115,12 @@ object UnderlyingBaseProcessor {
      * 伝票の1行
      */
     data class ReceiptRow(
+        val rowType: RowType,      // 行タイプ
         val date: String?,         // 取引日（6桁、例: "060130"）
         val itemName: String?,     // 商品名
         val amount: Int?,          // 税込金額
-        val categorySum: Int?      // 分類計
+        val categorySum: Int?,     // 分類計
+        val rawText: String? = null  // 行全体のテキスト（デバッグ用）
     )
 
     /**
@@ -139,12 +151,73 @@ object UnderlyingBaseProcessor {
     }
 
     /**
-     * 小計行かどうかを判定
+     * ノイズ除去（空文字、記号のみ、極小bbox）
      *
-     * @param cy テキストボックスの中心Y座標
-     * @param cx テキストボックスの中心X座標
-     * @return true: 小計行、false: 通常行
+     * @param textBoxes テキストボックスのリスト
+     * @return フィルタリングされたテキストボックス
      */
+    fun filterNoise(textBoxes: List<TextBox>): List<TextBox> {
+        val filtered = textBoxes.filter { box ->
+            // 空文字を除外
+            if (box.text.isBlank()) return@filter false
+
+            // 極小bbox（幅・高さが5px未満）を除外
+            val width = box.bounds.width()
+            val height = box.bounds.height()
+            if (width < 5 || height < 5) return@filter false
+
+            // 記号のみ（※、＊、｜など）を除外
+            val onlySymbols = box.text.matches(Regex("^[※＊｜\\s]+$"))
+            if (onlySymbols) return@filter false
+
+            true
+        }
+
+        Log.d(TAG, "Noise filtering: ${textBoxes.size} → ${filtered.size} boxes")
+        return filtered
+    }
+
+    /**
+     * 行タイプを判定（通常/小計/月合計/空白）
+     *
+     * 行が確定してから判定する（TextBox単位ではなく、行単位）
+     *
+     * @param rowBoxes 1行分のテキストボックス
+     * @return 行タイプ
+     */
+    fun detectRowType(rowBoxes: List<TextBox>): RowType {
+        if (rowBoxes.isEmpty()) {
+            return RowType.EMPTY
+        }
+
+        // 行全体のテキストを結合
+        val rowText = rowBoxes.joinToString(" ") { it.text }
+
+        // 小計判定（「小計」「一般購買」「給油所」「農業機械」などのキーワード）
+        val subtotalKeywords = listOf("小計", "一般購買", "給油所", "農業機械")
+        if (subtotalKeywords.any { rowText.contains(it) }) {
+            Log.d(TAG, "  Row type: SUBTOTAL (text='$rowText')")
+            return RowType.SUBTOTAL
+        }
+
+        // 月合計判定（「月合計」「合計」など）
+        val monthlyTotalKeywords = listOf("月合計", "合　計")
+        if (monthlyTotalKeywords.any { rowText.contains(it) }) {
+            Log.d(TAG, "  Row type: MONTHLY_TOTAL (text='$rowText')")
+            return RowType.MONTHLY_TOTAL
+        }
+
+        // 通常行
+        Log.d(TAG, "  Row type: NORMAL")
+        return RowType.NORMAL
+    }
+
+    /**
+     * 小計行かどうかを判定（旧版、互換性のため残す）
+     *
+     * @deprecated 行タイプ判定は detectRowType() を使用してください
+     */
+    @Deprecated("Use detectRowType() instead")
     fun isSubtotalRow(cy: Int, cx: Int): Boolean {
         return cy in SUBTOTAL_Y_RANGE && cx in CATEGORY_RANGE
     }
@@ -222,9 +295,26 @@ object UnderlyingBaseProcessor {
      * 1行のテキストボックスから ReceiptRow を生成
      *
      * @param rowBoxes 1行分のテキストボックス
+     * @param rowType 行タイプ
      * @return ReceiptRow
      */
-    fun processRow(rowBoxes: List<TextBox>): ReceiptRow {
+    fun processRow(rowBoxes: List<TextBox>, rowType: RowType): ReceiptRow {
+        // 行全体のテキスト（デバッグ用）
+        val rawText = rowBoxes.joinToString(" ") { it.text }
+
+        // 行タイプに応じた処理
+        return when (rowType) {
+            RowType.SUBTOTAL -> processSubtotalRow(rowBoxes, rawText)
+            RowType.MONTHLY_TOTAL -> processMonthlyTotalRow(rowBoxes, rawText)
+            RowType.EMPTY -> ReceiptRow(rowType, null, null, null, null, rawText)
+            RowType.NORMAL -> processNormalRow(rowBoxes, rawText)
+        }
+    }
+
+    /**
+     * 通常行の処理
+     */
+    private fun processNormalRow(rowBoxes: List<TextBox>, rawText: String): ReceiptRow {
         var date: String? = null
         val itemParts = mutableListOf<String>()
         var amount: Int? = null
@@ -270,7 +360,61 @@ object UnderlyingBaseProcessor {
             null
         }
 
-        return ReceiptRow(date, itemName, amount, categorySum)
+        return ReceiptRow(RowType.NORMAL, date, itemName, amount, categorySum, rawText)
+    }
+
+    /**
+     * 小計行の処理
+     */
+    private fun processSubtotalRow(rowBoxes: List<TextBox>, rawText: String): ReceiptRow {
+        // 小計行は商品名列に「＊小計（カテゴリ名）」が入る
+        val itemParts = mutableListOf<String>()
+        var categorySum: Int? = null
+
+        for (box in rowBoxes) {
+            val column = detectColumn(box.centerX)
+
+            when (column) {
+                ColumnType.ITEM -> {
+                    itemParts.add(box.text)
+                }
+                ColumnType.CATEGORY_SUM -> {
+                    categorySum = box.text.toIntOrNull()
+                    Log.d(TAG, "  SUBTOTAL AMOUNT: ${box.text}")
+                }
+                else -> {}
+            }
+        }
+
+        val itemName = if (itemParts.isNotEmpty()) {
+            itemParts.joinToString(" ")
+        } else {
+            null
+        }
+
+        return ReceiptRow(RowType.SUBTOTAL, null, itemName, null, categorySum, rawText)
+    }
+
+    /**
+     * 月合計行の処理
+     */
+    private fun processMonthlyTotalRow(rowBoxes: List<TextBox>, rawText: String): ReceiptRow {
+        // 月合計行は分類計列に金額が入る
+        var categorySum: Int? = null
+
+        for (box in rowBoxes) {
+            val column = detectColumn(box.centerX)
+
+            when (column) {
+                ColumnType.CATEGORY_SUM -> {
+                    categorySum = box.text.toIntOrNull()
+                    Log.d(TAG, "  MONTHLY_TOTAL AMOUNT: ${box.text}")
+                }
+                else -> {}
+            }
+        }
+
+        return ReceiptRow(RowType.MONTHLY_TOTAL, null, "月合計", null, categorySum, rawText)
     }
 
     /**
