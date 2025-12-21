@@ -514,4 +514,98 @@ object OCRProcessor {
         recognizer.close()
         latinRecognizer.close()
     }
+
+    // ============================================
+    // 下に敷くタイプ用の処理（UnderlyingBaseProcessor統合）
+    // ============================================
+
+    /**
+     * ML Kit Text結果を TextBox リストに変換
+     *
+     * @param text ML Kit OCR結果
+     * @return TextBoxのリスト
+     */
+    private fun convertToTextBoxes(text: Text): List<UnderlyingBaseProcessor.TextBox> {
+        val textBoxes = mutableListOf<UnderlyingBaseProcessor.TextBox>()
+
+        text.textBlocks.forEach { block ->
+            block.lines.forEach { line ->
+                line.elements.forEach { element ->
+                    val bounds = element.boundingBox
+                    if (bounds != null) {
+                        textBoxes.add(
+                            UnderlyingBaseProcessor.TextBox(
+                                text = element.text,
+                                bounds = bounds,
+                                centerX = bounds.centerX(),
+                                centerY = bounds.centerY()
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        Log.d(TAG, "Converted ${textBoxes.size} text boxes from ML Kit result")
+        return textBoxes
+    }
+
+    /**
+     * 下に敷くタイプの台紙でOCR処理
+     *
+     * 処理フロー:
+     * 1. ML Kit OCRでテキストボックスを取得
+     * 2. 小計を分離
+     * 3. 行クラスタリング
+     * 4. 各行を処理
+     *
+     * @param warpedBitmap warp後の伝票画像
+     * @return ReceiptRowのリスト
+     */
+    suspend fun processUnderlayingBase(
+        warpedBitmap: Bitmap
+    ): ProcessUnderlayingBaseResult {
+        Log.d(TAG, "Processing underlying base type: ${warpedBitmap.width}x${warpedBitmap.height}")
+
+        // 1. ML Kit OCR（日本語モデル）
+        val text = recognizeText(warpedBitmap) ?: run {
+            Log.w(TAG, "OCR failed for underlying base")
+            return ProcessUnderlayingBaseResult(emptyList(), emptyList())
+        }
+
+        Log.d(TAG, "OCR completed: ${text.textBlocks.size} blocks")
+
+        // 2. TextBoxに変換
+        val textBoxes = convertToTextBoxes(text)
+
+        // 3. 小計を分離
+        val subtotals = UnderlyingBaseProcessor.extractSubtotals(textBoxes)
+        Log.d(TAG, "Extracted ${subtotals.size} subtotals")
+
+        // 通常行のテキストボックス
+        val normalBoxes = textBoxes.filter {
+            !UnderlyingBaseProcessor.isSubtotalRow(it.centerY, it.centerX)
+        }
+
+        // 4. 行クラスタリング
+        val rows = UnderlyingBaseProcessor.clusterRows(normalBoxes)
+
+        // 5. 各行を処理
+        val receiptRows = rows.mapIndexed { index, rowBoxes ->
+            Log.d(TAG, "Processing row $index: ${rowBoxes.size} boxes")
+            UnderlyingBaseProcessor.processRow(rowBoxes)
+        }
+
+        Log.d(TAG, "Processed ${receiptRows.size} rows")
+
+        return ProcessUnderlayingBaseResult(receiptRows, subtotals)
+    }
+
+    /**
+     * 下に敷くタイプの処理結果
+     */
+    data class ProcessUnderlayingBaseResult(
+        val rows: List<UnderlyingBaseProcessor.ReceiptRow>,
+        val subtotals: List<UnderlyingBaseProcessor.SubtotalData>
+    )
 }
