@@ -8,12 +8,24 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [ReceiptItem::class, MonthlyData::class, SheetData::class],
-    version = 2,
+    entities = [
+        ReceiptItem::class,
+        MonthlyData::class,
+        SheetData::class,
+        ProductMaster::class,
+        OcrVariant::class,
+        YayoiAccount::class,
+        RakurakuAccount::class
+    ],
+    version = 3,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun receiptDao(): ReceiptDao
+    abstract fun productMasterDao(): ProductMasterDao
+    abstract fun ocrVariantDao(): OcrVariantDao
+    abstract fun yayoiAccountDao(): YayoiAccountDao
+    abstract fun rakurakuAccountDao(): RakurakuAccountDao
 
     companion object {
         @Volatile
@@ -84,6 +96,77 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 2 → 3（辞書ベース補正システム）
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // 1. YayoiAccountテーブル作成
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS yayoi_accounts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        accountCode TEXT NOT NULL,
+                        accountName TEXT NOT NULL,
+                        category TEXT,
+                        subcategory TEXT,
+                        description TEXT
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_yayoi_accounts_accountCode
+                    ON yayoi_accounts (accountCode)
+                """.trimIndent())
+
+                // 2. RakurakuAccountテーブル作成
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS rakuraku_accounts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        accountCode TEXT NOT NULL,
+                        accountName TEXT NOT NULL,
+                        category TEXT,
+                        subcategory TEXT,
+                        description TEXT
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_rakuraku_accounts_accountCode
+                    ON rakuraku_accounts (accountCode)
+                """.trimIndent())
+
+                // 3. ProductMasterテーブル作成
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS product_master (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        canonicalName TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        frequencyCount INTEGER NOT NULL DEFAULT 0,
+                        yayoiAccountId INTEGER,
+                        rakurakuAccountId INTEGER,
+                        FOREIGN KEY (yayoiAccountId) REFERENCES yayoi_accounts(id) ON DELETE SET NULL,
+                        FOREIGN KEY (rakurakuAccountId) REFERENCES rakuraku_accounts(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+
+                // 4. OcrVariantテーブル作成
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ocr_variants (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        productId INTEGER NOT NULL,
+                        variantText TEXT NOT NULL,
+                        occurrenceCount INTEGER NOT NULL DEFAULT 0,
+                        lastSeen INTEGER NOT NULL,
+                        FOREIGN KEY (productId) REFERENCES product_master(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_variants_productId
+                    ON ocr_variants (productId)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_variants_variantText
+                    ON ocr_variants (variantText)
+                """.trimIndent())
+            }
+        }
+
         fun getDatabase(context: Context): ReceiptDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -91,7 +174,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance

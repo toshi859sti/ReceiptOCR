@@ -43,7 +43,7 @@ fun OcrCaptureScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("OCR撮影") },
+                title = { },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "戻る")
@@ -222,44 +222,16 @@ private fun CameraScreenForOcr(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        // ガイダンス（撮影前のみ表示）
-        if (uiState !is CameraViewModel.CameraUiState.Success) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "撮影対象: $targetBlock",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Text(
-                        text = "マーカーID: $expectedMarkerIds",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-        }
-
-        // カメラプレビュー / 結果表示
-        Box(modifier = Modifier.weight(1f)) {
-            CameraScreen(viewModel = cameraViewModel)
-        }
+    Box(modifier = modifier.fillMaxSize()) {
+        // カメラプレビュー / 結果表示（全画面）
+        CameraScreen(viewModel = cameraViewModel)
 
         // ボタン
         if (uiState is CameraViewModel.CameraUiState.Success && showPreview) {
             // プレビュー表示ONの場合：次へボタン
             Row(
                 modifier = Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -281,11 +253,11 @@ private fun CameraScreenForOcr(
                 }
             }
         } else if (uiState !is CameraViewModel.CameraUiState.Success) {
-            // 撮影前：キャンセルボタン
+            // 撮影前：キャンセルボタン（右下に配置して重ならないように）
             OutlinedButton(
                 onClick = onCancel,
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .align(Alignment.BottomEnd)
                     .padding(16.dp)
             ) {
                 Text("キャンセル")

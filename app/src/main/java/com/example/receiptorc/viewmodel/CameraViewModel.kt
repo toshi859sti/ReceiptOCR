@@ -5,8 +5,10 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.receiptorc.data.ReceiptDatabase
 import com.example.receiptorc.util.ImageProcessor
 import com.example.receiptorc.util.OCRProcessor
+import com.example.receiptorc.util.ProductNameCorrector
 import com.example.receiptorc.util.UnderlyingBaseProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,7 +25,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val useUpscaling: StateFlow<Boolean> = _useUpscaling.asStateFlow()
 
     // 台紙タイプ（上に乗せる/下に敷く）
-    private val _baseType = MutableStateFlow(BaseType.OVERLAY)
+    private val _baseType = MutableStateFlow(BaseType.UNDERLAY)
     val baseType: StateFlow<BaseType> = _baseType.asStateFlow()
 
     /**
@@ -142,26 +144,67 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     ): CameraUiState {
         Log.d(TAG, "[UNDERLAY] Processing: ${bitmap.width}x${bitmap.height}")
 
-        // 透視変換（伝票全体）
+        // 透視変換（伝票全体、固定2400×1700出力）
         val transformedBitmap = ImageProcessor.perspectiveTransform(
             bitmap,
             arucoResult.corners,
             arucoResult.ids,
-            arucoResult.blockType!!
+            arucoResult.blockType!!,
+            useFixedOutput = true  // UNDERLAY台紙用: A4全体を固定サイズで出力
         ) ?: throw IllegalStateException("Perspective transform failed")
 
         Log.d(TAG, "[UNDERLAY] Transformed image size: ${transformedBitmap.width}x${transformedBitmap.height}")
 
+        // 画像前処理を適用（シャープ化、コントラスト強化）
+        val enhancedBitmap = ImageProcessor.enhanceImageForOCR(transformedBitmap)
+        Log.d(TAG, "[UNDERLAY] Applied image enhancement (sharpening + CLAHE)")
+
+        // 固定2400×1700出力では mm->px比率は8.1で確定（再計算不要）
+        val mmToPixelRatio = ImageProcessor.getMmToPixelRatio()
+        Log.d(TAG, "[UNDERLAY] Using fixed mm->px ratio: $mmToPixelRatio (8.1px/mm)")
+
         // 下に敷くタイプのOCR処理
         Log.d(TAG, "[UNDERLAY] Starting OCR with row clustering...")
-        val result = OCRProcessor.processUnderlayingBase(transformedBitmap)
+        val result = OCRProcessor.processUnderlayingBase(enhancedBitmap)
 
         Log.d(TAG, "[UNDERLAY] OCR completed: ${result.rows.size} rows, ${result.subtotals.size} subtotals")
+
+        // カテゴリ判定（小計行から逆算）
+        val rowsWithCategories = UnderlyingBaseProcessor.assignCategories(result.rows)
+        Log.d(TAG, "[UNDERLAY] Categories assigned to ${rowsWithCategories.size} rows")
+
+        // 辞書ベース商品名補正
+        val database = ReceiptDatabase.getDatabase(getApplication())
+        val productDao = database.productMasterDao()
+        val variantDao = database.ocrVariantDao()
+
+        val correctedRows = rowsWithCategories.map { (row, category) ->
+            if (row.rowType == UnderlyingBaseProcessor.RowType.NORMAL && row.itemName != null) {
+                // 通常行の商品名を補正
+                val correctionResult = ProductNameCorrector.correctProductName(
+                    ocrName = row.itemName,
+                    category = category,
+                    productDao = productDao,
+                    variantDao = variantDao
+                )
+
+                if (correctionResult.matched) {
+                    Log.d(TAG, "[CORRECTION] ${row.itemName} -> ${correctionResult.correctedName} (${correctionResult.similarity})")
+                    row.copy(itemName = correctionResult.correctedName)
+                } else {
+                    row
+                }
+            } else {
+                row
+            }
+        }
+
+        Log.d(TAG, "[UNDERLAY] Product name correction completed")
 
         return CameraUiState.SuccessUnderlay(
             originalBitmap = bitmap,
             transformedBitmap = transformedBitmap,
-            rows = result.rows,
+            rows = correctedRows,
             subtotals = result.subtotals
         )
     }

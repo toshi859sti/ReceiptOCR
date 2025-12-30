@@ -27,9 +27,24 @@ object ImageProcessor {
     private const val DEBUG_SAVE_CELL_IMAGES = true
 
     // マーカーサイズ（mm）
-    private const val MARKER_SIZE_MM = 20.0
+    private const val MARKER_SIZE_MM = 25.0
 
-    // マーカーとブロックの間のマージン（mm）
+    // warp出力サイズ（固定、UNDERLAY台紙用）
+    private const val WARP_OUTPUT_WIDTH = 2400
+    private const val WARP_OUTPUT_HEIGHT = 1700
+    private const val WARP_SCALE_PX_PER_MM = 8.1  // px/mm
+
+    // ArUco中心座標（mm、A4左上原点）
+    private const val ARUCO_ID0_X_MM = 25.0
+    private const val ARUCO_ID0_Y_MM = 25.0
+    private const val ARUCO_ID1_X_MM = 272.0
+    private const val ARUCO_ID1_Y_MM = 25.0
+    private const val ARUCO_ID2_X_MM = 272.0
+    private const val ARUCO_ID2_Y_MM = 185.0
+    private const val ARUCO_ID3_X_MM = 25.0
+    private const val ARUCO_ID3_Y_MM = 185.0
+
+    // マーカーとブロックの間のマージン（mm）- OVERLAY用
     private const val MARKER_TO_BLOCK_MARGIN_MM = 1.0  // 右端の文字欠けを防ぐため1mmに設定
 
     // ブロック列幅定義（mm）- 実測値に基づく
@@ -144,109 +159,34 @@ object ImageProcessor {
 
         Log.d(TAG, "Image size: ${bitmap.width}x${bitmap.height}, Mat channels: ${mat.channels()}, type: ${mat.type()}")
 
-        // 複数の前処理手法を適用
-        val preprocessedImages = mutableListOf<Pair<Mat, String>>()
-
-        // 1. オリジナルのグレースケール
-        preprocessedImages.add(grayMat to "original")
-
-        // 2. ヒストグラム均等化
-        val equalizedMat = Mat()
-        Imgproc.equalizeHist(grayMat, equalizedMat)
-        preprocessedImages.add(equalizedMat to "equalized")
-
-        // 3. ガウシアンブラー + 適応的二値化
+        // 前処理: グレースケール + 軽いGaussianBlur のみ（固定）
         val blurredMat = Mat()
-        Imgproc.GaussianBlur(grayMat, blurredMat, Size(5.0, 5.0), 0.0)
-        val adaptiveThreshMat = Mat()
-        Imgproc.adaptiveThreshold(
-            blurredMat,
-            adaptiveThreshMat,
-            255.0,
-            Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
-            Imgproc.THRESH_BINARY,
-            11,
-            2.0
-        )
-        preprocessedImages.add(adaptiveThreshMat to "adaptive_thresh")
+        Imgproc.GaussianBlur(grayMat, blurredMat, Size(3.0, 3.0), 0.0)
 
-        // 4. Otsu二値化
-        val otsuMat = Mat()
-        Imgproc.threshold(grayMat, otsuMat, 0.0, 255.0, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU)
-        preprocessedImages.add(otsuMat to "otsu")
+        Log.d(TAG, "Using fixed preprocessing: Grayscale + GaussianBlur(3x3)")
 
-        // 5. CLAHE (Contrast Limited Adaptive Histogram Equalization)
-        val clahe = Imgproc.createCLAHE()
-        clahe.clipLimit = 2.0
-        val claheMat = Mat()
-        clahe.apply(grayMat, claheMat)
-        preprocessedImages.add(claheMat to "clahe")
+        // 辞書: DICT_4X4_50 固定
+        val dictionary = Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50)
+        val detectorParams = DetectorParameters()
+        val detector = ArucoDetector(dictionary, detectorParams)
 
-        Log.d(TAG, "Testing ${preprocessedImages.size} preprocessing methods")
+        // ArUco検出
+        val corners = ArrayList<Mat>()
+        val ids = Mat()
+        detector.detectMarkers(blurredMat, corners, ids)
 
-        // 複数の辞書を試す
-        val dictionaries = listOf(
-            Objdetect.DICT_4X4_50 to "DICT_4X4_50",
-            Objdetect.DICT_4X4_100 to "DICT_4X4_100",
-            Objdetect.DICT_4X4_250 to "DICT_4X4_250",
-            Objdetect.DICT_4X4_1000 to "DICT_4X4_1000",
-            Objdetect.DICT_5X5_50 to "DICT_5X5_50",
-            Objdetect.DICT_6X6_50 to "DICT_6X6_50",
-            Objdetect.DICT_6X6_100 to "DICT_6X6_100",
-            Objdetect.DICT_6X6_250 to "DICT_6X6_250",
-            Objdetect.DICT_7X7_50 to "DICT_7X7_50"
-        )
-
-        var bestResult: Triple<ArrayList<Mat>, Mat, String>? = null
-        var maxDetected = 0
-
-        for ((dictType, dictName) in dictionaries) {
-            val dictionary = Objdetect.getPredefinedDictionary(dictType)
-
-            // デフォルトの検出パラメータを使用
-            val detectorParams = DetectorParameters()
-
-            val detector = ArucoDetector(dictionary, detectorParams)
-
-            // 全ての前処理画像で試行
-            val imagesToTry = preprocessedImages
-
-            for ((img, imgType) in imagesToTry) {
-                val corners = ArrayList<Mat>()
-                val ids = Mat()
-                detector.detectMarkers(img, corners, ids)
-
-                val detectedCount = corners.size
-                Log.d(TAG, "Dictionary $dictName ($imgType): Detected $detectedCount markers")
-
-                if (detectedCount > maxDetected) {
-                    maxDetected = detectedCount
-                    bestResult = Triple(corners, ids, dictName)
-                }
-
-                // 4つ以上検出できたら、それ以上探索しない
-                if (detectedCount >= 4) {
-                    break
-                }
-            }
-
-            if (maxDetected >= 4) {
-                break
-            }
-        }
+        val detectedCount = corners.size
+        Log.d(TAG, "Dictionary DICT_4X4_50: Detected $detectedCount markers")
 
         // メモリ解放
         mat.release()
         grayMat.release()
-        equalizedMat.release()
         blurredMat.release()
-        adaptiveThreshMat.release()
-        otsuMat.release()
-        claheMat.release()
 
-        if (bestResult != null && maxDetected > 0) {
-            Log.d(TAG, "Best dictionary: ${bestResult.third} with $maxDetected markers")
-            val (bestCorners, bestIds, _) = bestResult
+        if (detectedCount > 0) {
+            Log.d(TAG, "ArUco detection completed with $detectedCount markers")
+            val bestCorners = corners
+            val bestIds = ids
 
             // 検出されたマーカーIDを確認
             val detectedIds = mutableListOf<Int>()
@@ -352,13 +292,30 @@ object ImageProcessor {
             // 下辺Y = 下側マーカー（左下、右下）の下辺Y座標の最大値
             val bottomY = maxOf(blMarker[2].y, blMarker[3].y, brMarker[2].y, brMarker[3].y)
 
-            // 左辺X = 左側マーカー（左上、左下）の右辺X座標 + 2mm
-            val leftMarkerRightX = maxOf(tlMarker[1].x, tlMarker[2].x, blMarker[1].x, blMarker[2].x)
-            val leftX = leftMarkerRightX + (MARKER_TO_BLOCK_MARGIN_MM * mmToPixel)
+            // B_BLOCK（下に敷くタイプ）は左右が反転しているため、leftXとrightXを入れ替え
+            val tempLeftX: Double
+            val tempRightX: Double
 
-            // 右辺X = 右側マーカー（右上、右下）の左辺X座標 - 2mm
-            val rightMarkerLeftX = minOf(trMarker[0].x, trMarker[3].x, brMarker[0].x, brMarker[3].x)
-            val rightX = rightMarkerLeftX - (MARKER_TO_BLOCK_MARGIN_MM * mmToPixel)
+            if (blockType == BlockType.B_BLOCK) {
+                // 右辺X = 右側マーカー（右上、右下）の左辺X座標 - 2mm
+                val rightMarkerLeftX = minOf(tlMarker[0].x, tlMarker[3].x, blMarker[0].x, blMarker[3].x)
+                tempLeftX = rightMarkerLeftX - (MARKER_TO_BLOCK_MARGIN_MM * mmToPixel)
+
+                // 左辺X = 左側マーカー（左上、左下）の右辺X座標 + 2mm
+                val leftMarkerRightX = maxOf(trMarker[1].x, trMarker[2].x, brMarker[1].x, brMarker[2].x)
+                tempRightX = leftMarkerRightX + (MARKER_TO_BLOCK_MARGIN_MM * mmToPixel)
+            } else {
+                // 左辺X = 左側マーカー（左上、左下）の右辺X座標 + 2mm
+                val leftMarkerRightX = maxOf(tlMarker[1].x, tlMarker[2].x, blMarker[1].x, blMarker[2].x)
+                tempLeftX = leftMarkerRightX + (MARKER_TO_BLOCK_MARGIN_MM * mmToPixel)
+
+                // 右辺X = 右側マーカー（右上、右下）の左辺X座標 - 2mm
+                val rightMarkerLeftX = minOf(trMarker[0].x, trMarker[3].x, brMarker[0].x, brMarker[3].x)
+                tempRightX = rightMarkerLeftX - (MARKER_TO_BLOCK_MARGIN_MM * mmToPixel)
+            }
+
+            val leftX = tempLeftX
+            val rightX = tempRightX
 
             val bounds = BlockBounds(
                 topLeft = Point(leftX, topY),
@@ -382,55 +339,123 @@ object ImageProcessor {
     }
 
     /**
+     * ArUcoマーカーの中心座標を取得
+     * @return ID順にソートされた中心座標配列 [ID0, ID1, ID2, ID3]
+     */
+    private fun getMarkerCenters(
+        corners: List<MatOfPoint2f>,
+        ids: Mat,
+        blockType: BlockType
+    ): Array<Point> {
+        val markerCenters = mutableMapOf<Int, Point>()
+
+        for (i in 0 until ids.rows()) {
+            val id = ids.get(i, 0)[0].toInt()
+            val cornerArray = corners[i].toArray()
+
+            // マーカー中心 = 4隅の平均
+            val centerX = cornerArray.map { it.x }.average()
+            val centerY = cornerArray.map { it.y }.average()
+            markerCenters[id] = Point(centerX, centerY)
+        }
+
+        // ブロックタイプに応じたID順に並べる
+        val (id0, id1, id2, id3) = when (blockType) {
+            BlockType.B_BLOCK -> listOf(0, 1, 2, 3)
+            BlockType.C_BLOCK -> listOf(4, 5, 6, 7)
+        }
+
+        return arrayOf(
+            markerCenters[id0]!!,
+            markerCenters[id1]!!,
+            markerCenters[id2]!!,
+            markerCenters[id3]!!
+        )
+    }
+
+    /**
      * マーカーベースの透視変換でブロックを切り出し
      *
      * マーカーの座標からブロックの境界を計算し、透視変換を実行してブロックを正確に切り出す
+     *
+     * @param useFixedOutput trueの場合、2400×1700固定出力（UNDERLAY台紙用）
      */
     fun perspectiveTransform(
         bitmap: Bitmap,
         corners: List<MatOfPoint2f>,
         ids: Mat,
-        blockType: BlockType
+        blockType: BlockType,
+        useFixedOutput: Boolean = false
     ): Bitmap? {
         try {
             val mat = bitmapToMat(bitmap)
 
-            // マーカーの座標からブロックの境界を計算
-            val blockBounds = calculateBlockBounds(corners, ids, blockType)
-            if (blockBounds == null) {
-                Log.e(TAG, "Failed to calculate block bounds")
-                mat.release()
-                return null
+            val srcMat: MatOfPoint2f
+            val dstMat: MatOfPoint2f
+            val dstWidth: Int
+            val dstHeight: Int
+
+            if (useFixedOutput) {
+                // UNDERLAY台紙用: 固定2400×1700出力（A4全体）
+                // mm→px比率を固定値に設定
+                lastMmToPixelRatio = WARP_SCALE_PX_PER_MM
+
+                // ソース4点: ArUcoマーカー中心座標
+                val markerCenters = getMarkerCenters(corners, ids, blockType)
+                srcMat = MatOfPoint2f(
+                    markerCenters[0],  // ID0 左上
+                    markerCenters[1],  // ID1 右上
+                    markerCenters[2],  // ID2 右下
+                    markerCenters[3]   // ID3 左下
+                )
+
+                // デスティネーション4点: A4上の設計座標（px）
+                dstMat = MatOfPoint2f(
+                    Point(ARUCO_ID0_X_MM * WARP_SCALE_PX_PER_MM, ARUCO_ID0_Y_MM * WARP_SCALE_PX_PER_MM),  // 202.5, 202.5
+                    Point(ARUCO_ID1_X_MM * WARP_SCALE_PX_PER_MM, ARUCO_ID1_Y_MM * WARP_SCALE_PX_PER_MM),  // 2203.2, 202.5
+                    Point(ARUCO_ID2_X_MM * WARP_SCALE_PX_PER_MM, ARUCO_ID2_Y_MM * WARP_SCALE_PX_PER_MM),  // 2203.2, 1498.5
+                    Point(ARUCO_ID3_X_MM * WARP_SCALE_PX_PER_MM, ARUCO_ID3_Y_MM * WARP_SCALE_PX_PER_MM)   // 202.5, 1498.5
+                )
+
+                dstWidth = WARP_OUTPUT_WIDTH
+                dstHeight = WARP_OUTPUT_HEIGHT
+
+                Log.d(TAG, "Perspective transform - Fixed output mode (UNDERLAY)")
+                Log.d(TAG, "  Output size: ${dstWidth}px x ${dstHeight}px (A4 @ ${WARP_SCALE_PX_PER_MM}px/mm)")
+                Log.d(TAG, "  mm->px ratio set to: $lastMmToPixelRatio")
+            } else {
+                // OVERLAY台紙用: 可変出力（ブロック領域のみ）
+                val blockBounds = calculateBlockBounds(corners, ids, blockType)
+                if (blockBounds == null) {
+                    Log.e(TAG, "Failed to calculate block bounds")
+                    mat.release()
+                    return null
+                }
+
+                srcMat = MatOfPoint2f(
+                    blockBounds.topLeft,
+                    blockBounds.topRight,
+                    blockBounds.bottomRight,
+                    blockBounds.bottomLeft
+                )
+
+                val srcWidth = blockBounds.topRight.x - blockBounds.topLeft.x
+                val srcHeight = blockBounds.bottomLeft.y - blockBounds.topLeft.y
+                dstWidth = srcWidth.toInt()
+                dstHeight = srcHeight.toInt()
+
+                dstMat = MatOfPoint2f(
+                    Point(0.0, 0.0),
+                    Point(dstWidth.toDouble(), 0.0),
+                    Point(dstWidth.toDouble(), dstHeight.toDouble()),
+                    Point(0.0, dstHeight.toDouble())
+                )
+
+                Log.d(TAG, "Perspective transform - Variable output mode (OVERLAY)")
+                Log.d(TAG, "  Block type: $blockType")
+                Log.d(TAG, "  Source block size: ${srcWidth}px x ${srcHeight}px")
+                Log.d(TAG, "  Target image size: ${dstWidth}px x ${dstHeight}px")
             }
-
-            // ソース4点（ブロックの境界座標）
-            val srcMat = MatOfPoint2f(
-                blockBounds.topLeft,
-                blockBounds.topRight,
-                blockBounds.bottomRight,
-                blockBounds.bottomLeft
-            )
-
-            // ブロックのサイズを計算（元画像上でのピクセルサイズ）
-            val srcWidth = blockBounds.topRight.x - blockBounds.topLeft.x
-            val srcHeight = blockBounds.bottomLeft.y - blockBounds.topLeft.y
-
-            // 目標画像サイズ（ブロックのサイズを保持、高解像度で変換）
-            // 元画像のサイズを保持することで、解像度を維持
-            val dstWidth = srcWidth.toInt()
-            val dstHeight = srcHeight.toInt()
-
-            Log.d(TAG, "Perspective transform - Block type: $blockType")
-            Log.d(TAG, "  Source block size: ${srcWidth}px x ${srcHeight}px")
-            Log.d(TAG, "  Target image size: ${dstWidth}px x ${dstHeight}px")
-
-            // デスティネーション4点（矩形に変換）
-            val dstMat = MatOfPoint2f(
-                Point(0.0, 0.0),
-                Point(dstWidth.toDouble(), 0.0),
-                Point(dstWidth.toDouble(), dstHeight.toDouble()),
-                Point(0.0, dstHeight.toDouble())
-            )
 
             // 透視変換行列を計算
             val transformMatrix = Imgproc.getPerspectiveTransform(srcMat, dstMat)
@@ -1157,6 +1182,195 @@ object ImageProcessor {
             Log.d(TAG, "Debug image saved: ${imageFile.absolutePath}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save debug image: $fileName", e)
+        }
+    }
+
+    /**
+     * OCR用の画像前処理
+     * シャープ化とコントラスト強化を適用してOCR精度を向上
+     *
+     * @param bitmap 入力画像
+     * @param useSharpening シャープ化を適用するか (デフォルト: true)
+     * @param useCLAHE コントラスト強化を適用するか (デフォルト: true)
+     * @return 前処理後の画像
+     */
+    fun enhanceImageForOCR(
+        bitmap: Bitmap,
+        useSharpening: Boolean = true,
+        useCLAHE: Boolean = true
+    ): Bitmap {
+        val mat = bitmapToMat(bitmap)
+        var processedMat = mat
+
+        try {
+            // 1. グレースケール変換
+            val grayMat = Mat()
+            if (mat.channels() == 4) {
+                Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_BGRA2GRAY)
+            } else if (mat.channels() == 3) {
+                Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_BGR2GRAY)
+            } else {
+                mat.copyTo(grayMat)
+            }
+
+            processedMat = grayMat
+
+            // 2. シャープニング (Unsharp Mask)
+            if (useSharpening) {
+                val blurred = Mat()
+                Imgproc.GaussianBlur(processedMat, blurred, Size(0.0, 0.0), 3.0)
+
+                val sharpened = Mat()
+                Core.addWeighted(processedMat, 1.5, blurred, -0.5, 0.0, sharpened)
+
+                processedMat.release()
+                processedMat = sharpened
+                blurred.release()
+
+                Log.d(TAG, "Applied sharpening (Unsharp Mask)")
+            }
+
+            // 3. CLAHE (コントラスト制限適応ヒストグラム均等化)
+            if (useCLAHE) {
+                val clahe = Imgproc.createCLAHE()
+                clahe.clipLimit = 2.0
+                clahe.tilesGridSize = Size(8.0, 8.0)
+
+                val claheMat = Mat()
+                clahe.apply(processedMat, claheMat)
+
+                processedMat.release()
+                processedMat = claheMat
+
+                Log.d(TAG, "Applied CLAHE (clipLimit=2.0, tileSize=8x8)")
+            }
+
+            // グレースケールをBGRAに変換してBitmapに戻す
+            val bgraMat = Mat()
+            Imgproc.cvtColor(processedMat, bgraMat, Imgproc.COLOR_GRAY2BGRA)
+
+            val result = matToBitmap(bgraMat)
+
+            // メモリ解放
+            mat.release()
+            processedMat.release()
+            bgraMat.release()
+
+            return result
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in image enhancement", e)
+            mat.release()
+            if (processedMat != mat) {
+                processedMat.release()
+            }
+            return bitmap
+        }
+    }
+
+    /**
+     * mm→px変換率を取得
+     *
+     * @return mm→px変換率（透視変換時に計算された値）
+     */
+    fun getMmToPixelRatio(): Double {
+        return lastMmToPixelRatio
+    }
+
+    /**
+     * warp後画像からmm→px比率を再計算（精度向上）
+     *
+     * warp後の画像は歪みが補正されているため、より正確な比率を計算できる
+     *
+     * @param warpedBitmap warp後の画像
+     * @param originalCorners 元のマーカー座標
+     * @param originalIds 元のマーカーID
+     * @param blockType ブロックタイプ
+     * @return 再計算されたmm→px比率、失敗時はnull
+     */
+    fun recalculateMmToPixelRatioFromWarpedImage(
+        warpedBitmap: Bitmap,
+        originalCorners: List<MatOfPoint2f>,
+        originalIds: Mat,
+        blockType: BlockType
+    ): Double? {
+        try {
+            Log.d(TAG, "Recalculating mm->px ratio from warped image...")
+
+            // warp後画像でArUco再検出
+            val warpedResult = detectArucoMarkers(warpedBitmap)
+            if (!warpedResult.isValid || warpedResult.corners.size < 2) {
+                Log.w(TAG, "Failed to detect markers in warped image")
+                return null
+            }
+
+            // マーカーIDと座標のマップを作成
+            val markerCorners = mutableMapOf<Int, MatOfPoint2f>()
+            for (i in 0 until warpedResult.ids.rows()) {
+                val id = warpedResult.ids.get(i, 0)[0].toInt()
+                markerCorners[id] = warpedResult.corners[i]
+            }
+
+            // ブロックタイプに応じて使用するマーカーIDを決定
+            val (leftMarkerId, rightMarkerId) = when (blockType) {
+                BlockType.B_BLOCK -> Pair(0, 1)  // 左上と右上
+                BlockType.C_BLOCK -> Pair(4, 5)  // 左上と右上
+            }
+
+            // 必要なマーカーが存在するか確認
+            if (!markerCorners.containsKey(leftMarkerId) || !markerCorners.containsKey(rightMarkerId)) {
+                Log.w(TAG, "Required markers not found in warped image")
+                return null
+            }
+
+            // 左右マーカーの中心座標を計算
+            val leftMarker = markerCorners[leftMarkerId]!!.toArray()
+            val rightMarker = markerCorners[rightMarkerId]!!.toArray()
+
+            val leftCenter = Point(
+                (leftMarker[0].x + leftMarker[1].x + leftMarker[2].x + leftMarker[3].x) / 4.0,
+                (leftMarker[0].y + leftMarker[1].y + leftMarker[2].y + leftMarker[3].y) / 4.0
+            )
+            val rightCenter = Point(
+                (rightMarker[0].x + rightMarker[1].x + rightMarker[2].x + rightMarker[3].x) / 4.0,
+                (rightMarker[0].y + rightMarker[1].y + rightMarker[2].y + rightMarker[3].y) / 4.0
+            )
+
+            // マーカー中心間のピクセル距離を計算
+            val distancePx = sqrt(
+                (rightCenter.x - leftCenter.x) * (rightCenter.x - leftCenter.x) +
+                (rightCenter.y - leftCenter.y) * (rightCenter.y - leftCenter.y)
+            )
+
+            // 実距離（mm）を計算
+            // 台紙設計値: 伝票幅約180mm、マーカーは左右端に配置
+            // マーカー中心間距離 = 伝票幅 - マーカーサイズ（左右の中心なので）
+            // 実測に基づく設計値を使用
+            val distanceMm = when (blockType) {
+                BlockType.B_BLOCK -> 180.0 - MARKER_SIZE_MM  // 約155mm
+                BlockType.C_BLOCK -> 180.0 - MARKER_SIZE_MM  // 約155mm
+            }
+
+            // mm→px比率を計算
+            val mmToPixelRatio = distancePx / distanceMm
+
+            Log.d(TAG, "Warped image recalculation:")
+            Log.d(TAG, "  Left marker center: (${leftCenter.x}, ${leftCenter.y})")
+            Log.d(TAG, "  Right marker center: (${rightCenter.x}, ${rightCenter.y})")
+            Log.d(TAG, "  Distance (px): $distancePx")
+            Log.d(TAG, "  Distance (mm): $distanceMm")
+            Log.d(TAG, "  Recalculated mm->px ratio: $mmToPixelRatio")
+            Log.d(TAG, "  Previous ratio: $lastMmToPixelRatio")
+            Log.d(TAG, "  Difference: ${mmToPixelRatio - lastMmToPixelRatio} px/mm (${((mmToPixelRatio - lastMmToPixelRatio) / lastMmToPixelRatio * 100)}%)")
+
+            // lastMmToPixelRatioを更新
+            lastMmToPixelRatio = mmToPixelRatio
+
+            return mmToPixelRatio
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error recalculating mm->px ratio from warped image", e)
+            return null
         }
     }
 }

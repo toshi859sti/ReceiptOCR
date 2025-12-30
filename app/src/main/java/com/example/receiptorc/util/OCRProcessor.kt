@@ -520,7 +520,127 @@ object OCRProcessor {
     // ============================================
 
     /**
+     * 数量列を特化OCRで再処理（高精度化）
+     *
+     * 全体OCR（日本語モデル）は小さい1桁数字を落としやすい
+     * → 数量列だけ切り出して、Latin OCR + 4倍拡大で再処理
+     *
+     * @param warpedBitmap warp後の伝票画像
+     * @param rows 既存の行データ（Y座標でマッピングするために使用）
+     * @param rowYCoordinates 各行の実際のY座標（centerY）
+     * @return 数量のマップ（行インデックス → 数量文字列）
+     */
+    private suspend fun extractQuantitiesFromColumn(
+        warpedBitmap: Bitmap,
+        rows: List<UnderlyingBaseProcessor.ReceiptRow>,
+        rowYCoordinates: List<Int>
+    ): Map<Int, String> {
+        Log.d(TAG, "[QUANTITY] ========== Quantity Column Re-OCR Start ==========")
+
+        // 1. 数量列ROIを取得
+        val quantityRange = UnderlyingBaseProcessor.getQuantityRange()
+        val quantityX = quantityRange.first
+        val quantityWidth = quantityRange.last - quantityRange.first
+
+        Log.d(TAG, "[QUANTITY] Quantity column ROI: X=$quantityX, Width=$quantityWidth")
+
+        // 2. 数量列を切り出し
+        val quantityColumnBitmap = Bitmap.createBitmap(
+            warpedBitmap,
+            quantityX,
+            0,
+            quantityWidth.coerceAtMost(warpedBitmap.width - quantityX),
+            warpedBitmap.height
+        )
+
+        // 3. 4倍アップスケール（小さい数字を検出しやすくする）
+        val upscaledBitmap = Bitmap.createScaledBitmap(
+            quantityColumnBitmap,
+            quantityColumnBitmap.width * 4,
+            quantityColumnBitmap.height * 4,
+            true
+        )
+
+        Log.d(TAG, "[QUANTITY] Upscaled to ${upscaledBitmap.width}x${upscaledBitmap.height}")
+
+        // 4. Latin OCR（数字に強い）
+        val text = recognizeTextLatin(upscaledBitmap)
+        quantityColumnBitmap.recycle()
+        upscaledBitmap.recycle()
+
+        if (text == null) {
+            Log.w(TAG, "[QUANTITY] Latin OCR failed")
+            return emptyMap()
+        }
+
+        // 5. OCR結果からTextBoxを抽出
+        val quantityBoxes = mutableListOf<UnderlyingBaseProcessor.TextBox>()
+        text.textBlocks.forEach { block ->
+            block.lines.forEach { line ->
+                val bounds = line.boundingBox
+                if (bounds != null) {
+                    // Y座標をオリジナル画像のスケールに戻す（4倍拡大していたため）
+                    val scaledBounds = android.graphics.Rect(
+                        bounds.left / 4 + quantityX,  // X座標も元に戻す
+                        bounds.top / 4,
+                        bounds.right / 4 + quantityX,
+                        bounds.bottom / 4
+                    )
+                    quantityBoxes.add(
+                        UnderlyingBaseProcessor.TextBox(
+                            text = line.text.trim(),
+                            bounds = scaledBounds,
+                            centerX = scaledBounds.centerX(),
+                            centerY = scaledBounds.centerY()
+                        )
+                    )
+                    Log.d(TAG, "[QUANTITY] OCR detected: '${line.text}' at Y=${scaledBounds.centerY()}")
+                }
+            }
+        }
+
+        // 6. Y座標でソート
+        quantityBoxes.sortBy { it.centerY }
+
+        // 7. 行にマッピング（Y座標の近さで判定）
+        val quantityMap = mutableMapOf<Int, String>()
+        val yThreshold = 15  // 15px以内なら同じ行とみなす
+
+        rows.forEachIndexed { rowIndex, row ->
+            // 実際の行Y座標を使用
+            val rowY = rowYCoordinates.getOrNull(rowIndex)
+            if (rowY == null) {
+                return@forEachIndexed
+            }
+
+            // この行に対応する数量テキストを検索
+            val matchingBoxes = quantityBoxes.filter { box ->
+                kotlin.math.abs(box.centerY - rowY) <= yThreshold
+            }
+
+            if (matchingBoxes.isNotEmpty()) {
+                // 同じ行内の複数の断片を結合（X座標順）
+                val combinedText = matchingBoxes
+                    .sortedBy { it.centerX }
+                    .joinToString("") { it.text }
+
+                // 正規化
+                val normalized = UnderlyingBaseProcessor.normalizeQuantity(combinedText)
+                if (normalized != null) {
+                    quantityMap[rowIndex] = normalized.toString()
+                    Log.d(TAG, "[QUANTITY] Row $rowIndex (Y=$rowY): '$combinedText' → $normalized")
+                }
+            }
+        }
+
+        Log.d(TAG, "[QUANTITY] ========== Quantity Column Re-OCR Complete: ${quantityMap.size} quantities ==========")
+        return quantityMap
+    }
+
+    /**
      * ML Kit Text結果を TextBox リストに変換
+     *
+     * Line単位で処理し、日付（先頭6桁）を分離
      *
      * @param text ML Kit OCR結果
      * @return TextBoxのリスト
@@ -530,17 +650,45 @@ object OCRProcessor {
 
         text.textBlocks.forEach { block ->
             block.lines.forEach { line ->
-                line.elements.forEach { element ->
-                    val bounds = element.boundingBox
-                    if (bounds != null) {
+                val bounds = line.boundingBox
+                if (bounds != null) {
+                    // Line全体をTextBoxとして追加（商品名などに使用）
+                    textBoxes.add(
+                        UnderlyingBaseProcessor.TextBox(
+                            text = line.text,
+                            bounds = bounds,
+                            centerX = bounds.centerX(),
+                            centerY = bounds.centerY()
+                        )
+                    )
+
+                    // 先頭6桁が数字（正規化後）なら、日付として別途追加
+                    val normalized = UnderlyingBaseProcessor.normalizeToDigits(line.text).take(6)
+
+                    if (normalized.length == 6) {
+                        // 日付部分のbbox（左端から固定幅）
+                        // 日付は6桁、約15文字幅相当（実測ベース）
+                        val avgCharWidth = bounds.width() / line.text.length.coerceAtLeast(1)
+                        val dateWidth = (avgCharWidth * 6).toInt()
+                        val dateBounds = android.graphics.Rect(
+                            bounds.left,
+                            bounds.top,
+                            (bounds.left + dateWidth).coerceAtMost(bounds.right),
+                            bounds.bottom
+                        )
+
+                        // centerXを左端寄りに配置（DATE列の範囲内に収める）
+                        val dateCenterX = bounds.left + (dateWidth / 2)
+
                         textBoxes.add(
                             UnderlyingBaseProcessor.TextBox(
-                                text = element.text,
-                                bounds = bounds,
-                                centerX = bounds.centerX(),
-                                centerY = bounds.centerY()
+                                text = normalized,  // 正規化済みの6桁数字
+                                bounds = dateBounds,
+                                centerX = dateCenterX,
+                                centerY = dateBounds.centerY()
                             )
                         )
+                        Log.d(TAG, "  Date extracted: '$normalized' at centerX=$dateCenterX, Y=${dateBounds.centerY()}")
                     }
                 }
             }
@@ -576,6 +724,14 @@ object OCRProcessor {
         Log.d(TAG, "[UNDERLAY] ========== Processing Start ==========")
         Log.d(TAG, "[UNDERLAY] Image size: ${warpedBitmap.width}x${warpedBitmap.height}")
 
+        // 0. 列範囲を初期化（透視変換で計算されたmm->px比率を使用）
+        val mmToPixelRatio = ImageProcessor.getMmToPixelRatio()
+        if (mmToPixelRatio <= 0.0) {
+            Log.e(TAG, "[UNDERLAY] Invalid mmToPixelRatio: $mmToPixelRatio")
+            return ProcessUnderlayingBaseResult(emptyList(), emptyList())
+        }
+        UnderlyingBaseProcessor.initializeColumnRanges(mmToPixelRatio)
+
         // 1. ML Kit OCR（日本語モデル）
         val text = recognizeText(warpedBitmap) ?: run {
             Log.w(TAG, "[UNDERLAY] OCR failed")
@@ -592,13 +748,31 @@ object OCRProcessor {
         val filteredBoxes = UnderlyingBaseProcessor.filterNoise(textBoxes)
         Log.d(TAG, "[UNDERLAY] Step 4: Noise filtering (${textBoxes.size} → ${filteredBoxes.size})")
 
-        // 5. 行クラスタリング（Y座標、閾値15px）
+        // 5. 行クラスタリング（Y座標、閾値25px）
         val rows = UnderlyingBaseProcessor.clusterRows(filteredBoxes)
         Log.d(TAG, "[UNDERLAY] Step 5: Row clustering (${rows.size} rows)")
 
+        // 5.5. Y座標範囲でフィルタリング（ヘッダー・フッター除外）
+        val validYRange = UnderlyingBaseProcessor.getNormalRowYRange()
+        val validRows = rows.filter { rowBoxes ->
+            val avgY = rowBoxes.map { it.centerY }.average().toInt()
+            val isInRange = avgY in validYRange
+            if (!isInRange) {
+                Log.d(TAG, "[UNDERLAY]   Filtered out row at Y=$avgY (outside $validYRange)")
+            }
+            isInRange
+        }
+        Log.d(TAG, "[UNDERLAY] Step 5.5: Y-range filtering (${rows.size} → ${validRows.size} rows)")
+
         // 6-7. 各行を処理（行タイプ判定 → 列判定 → 行データ生成）
-        val receiptRows = rows.mapIndexed { index, rowBoxes ->
+        // また、各行のY座標も記録（数量列OCRのマッピングに使用）
+        val rowYCoordinates = mutableListOf<Int>()
+        val receiptRows = validRows.mapIndexed { index, rowBoxes ->
             Log.d(TAG, "[UNDERLAY] Processing row $index (${rowBoxes.size} boxes):")
+
+            // 行のY座標を計算（行内の全TextBoxのY座標平均）
+            val avgY = rowBoxes.map { it.centerY }.average().toInt()
+            rowYCoordinates.add(avgY)
 
             // 6. 行タイプ判定
             val rowType = UnderlyingBaseProcessor.detectRowType(rowBoxes)
@@ -606,14 +780,45 @@ object OCRProcessor {
             // 7. 行データ生成
             val row = UnderlyingBaseProcessor.processRow(rowBoxes, rowType)
 
-            Log.d(TAG, "[UNDERLAY]   → Type: $rowType, Data: ${row.rawText}")
+            Log.d(TAG, "[UNDERLAY]   → Type: $rowType, Y=$avgY, Data: ${row.rawText}")
             row
         }
 
         Log.d(TAG, "[UNDERLAY] Step 7: Processed ${receiptRows.size} rows")
 
-        // 8. 小計・月合計の抽出（結果から）
-        val subtotals = receiptRows
+        // 8. 数量列特化OCR処理（Latin OCR + 4倍拡大）
+        val quantityMap = extractQuantitiesFromColumn(warpedBitmap, receiptRows, rowYCoordinates)
+        Log.d(TAG, "[UNDERLAY] Step 8: Quantity re-OCR completed (${quantityMap.size} quantities)")
+
+        // 9. 数量を上書き & 返品処理
+        val updatedRows = receiptRows.mapIndexed { index, row ->
+            // 数量列OCRで取得した値で上書き
+            val newQuantity = quantityMap[index] ?: row.quantity
+
+            // 返品処理（商品名に「返品」が含まれていれば数量を負にする）
+            val finalQuantity = if (row.itemName?.contains("返品") == true && newQuantity != null) {
+                val qty = newQuantity.toIntOrNull()
+                if (qty != null && qty > 0) {
+                    (-qty).toString()
+                } else {
+                    newQuantity
+                }
+            } else {
+                newQuantity
+            }
+
+            // ログ出力
+            if (quantityMap.containsKey(index) || row.itemName?.contains("返品") == true) {
+                Log.d(TAG, "[UNDERLAY]   Row $index: quantity updated: '${row.quantity}' → '$finalQuantity'" +
+                        (if (row.itemName?.contains("返品") == true) " (返品処理)" else ""))
+            }
+
+            // 新しいRowを作成
+            row.copy(quantity = finalQuantity)
+        }
+
+        // 10. 小計・月合計の抽出（結果から）
+        val subtotals = updatedRows
             .filter { it.rowType == UnderlyingBaseProcessor.RowType.SUBTOTAL }
             .mapNotNull { row ->
                 row.categorySum?.let { value ->
@@ -625,10 +830,20 @@ object OCRProcessor {
                 }
             }
 
-        Log.d(TAG, "[UNDERLAY] Step 8: Extracted ${subtotals.size} subtotals")
+        Log.d(TAG, "[UNDERLAY] Step 10: Extracted ${subtotals.size} subtotals")
+
+        // 11. カテゴリ判定（小計行から逆算）
+        val rowsWithCategories = UnderlyingBaseProcessor.assignCategories(updatedRows)
+        Log.d(TAG, "[UNDERLAY] Step 11: Assigned categories to ${rowsWithCategories.size} rows")
+
+        // 12. 辞書ベース商品名補正
+        Log.d(TAG, "[UNDERLAY] Step 12: Dictionary-based product name correction...")
+        // TODO: ここでProductNameCorrectorを使用するには、ContextとDatabaseが必要
+        // 現在はスキップし、後でCameraViewModelで呼び出す
+
         Log.d(TAG, "[UNDERLAY] ========== Processing Complete ==========")
 
-        return ProcessUnderlayingBaseResult(receiptRows, subtotals)
+        return ProcessUnderlayingBaseResult(updatedRows, subtotals)
     }
 
     /**

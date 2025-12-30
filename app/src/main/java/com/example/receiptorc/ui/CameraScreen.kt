@@ -61,11 +61,14 @@ fun CameraScreen(
 
     var isProcessing by remember { mutableStateOf(false) }
     var isFocused by remember { mutableStateOf(false) }
+    var isBrightnessGood by remember { mutableStateOf(false) }
+    var qualityInfo by remember { mutableStateOf("") }
     var hasDetectedMarker by remember { mutableStateOf(false) }
     var detectedMarkerCount by remember { mutableStateOf(0) }
     var detectedMarkerIds by remember { mutableStateOf("") }
     var lastProcessTime by remember { mutableStateOf(0L) }
     var lastDetectionTime by remember { mutableStateOf(0L) }
+    var consecutiveGoodFrames by remember { mutableStateOf(0) }  // フレーム安定性カウンター
     var camera by remember { mutableStateOf<Camera?>(null) }
     var isTorchOn by remember { mutableStateOf(false) }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
@@ -77,6 +80,7 @@ fun CameraScreen(
             isProcessing = false
             detectedMarkerCount = 0
             detectedMarkerIds = ""
+            consecutiveGoodFrames = 0  // 安定性カウンターもリセット
             // フラッシュの状態を再適用
             camera?.cameraControl?.enableTorch(isTorchOn)
         }
@@ -134,8 +138,15 @@ fun CameraScreen(
                                                     imageProxy,
                                                     viewModel,
                                                     hasDetectedMarker,
+                                                    consecutiveGoodFrames,
                                                     onFocusChange = { focused ->
                                                         isFocused = focused
+                                                    },
+                                                    onBrightnessChange = { good ->
+                                                        isBrightnessGood = good
+                                                    },
+                                                    onQualityInfo = { info ->
+                                                        qualityInfo = info
                                                     },
                                                     onMarkerDetected = { detected ->
                                                         hasDetectedMarker = detected
@@ -147,6 +158,9 @@ fun CameraScreen(
                                                     },
                                                     onProcessingChange = { processing ->
                                                         isProcessing = processing
+                                                    },
+                                                    onConsecutiveGoodFramesChange = { frames ->
+                                                        consecutiveGoodFrames = frames
                                                     }
                                                 )
                                             }
@@ -176,75 +190,33 @@ fun CameraScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // マーカー検出状態の表示
-                    Card(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(16.dp)
-                            .fillMaxWidth(0.9f),
-                        colors = CardDefaults.cardColors(
-                            containerColor = when {
-                                isProcessing -> MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
-                                hasDetectedMarker && isFocused -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f)
-                                detectedMarkerCount > 0 -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.9f)
-                                else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
-                            }
-                        )
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = when {
-                                    isProcessing -> "📸 処理中..."
-                                    hasDetectedMarker && isFocused -> "✅ 撮影します！"
-                                    hasDetectedMarker -> "🎯 マーカー検出 - フォーカス中..."
-                                    detectedMarkerCount > 0 -> "⚠️ マーカー検出不完全 ($detectedMarkerCount/4)"
-                                    else -> "🔍 ArUcoマーカーを探しています..."
-                                },
-                                style = MaterialTheme.typography.titleMedium,
-                                color = when {
-                                    isProcessing || hasDetectedMarker -> MaterialTheme.colorScheme.onPrimary
-                                    else -> MaterialTheme.colorScheme.onSurface
-                                }
+                    // 品質情報表示
+                    if (qualityInfo.isNotEmpty()) {
+                        Card(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                             )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            // 詳細情報
-                            Text(
-                                text = buildString {
-                                    append("検出数: $detectedMarkerCount/4")
-                                    if (detectedMarkerIds.isNotEmpty()) {
-                                        append(" | IDs: $detectedMarkerIds")
-                                    }
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = when {
-                                    isProcessing || hasDetectedMarker -> MaterialTheme.colorScheme.onPrimary
-                                    else -> MaterialTheme.colorScheme.onSurface
-                                }
-                            )
-
-                            Text(
-                                text = "フォーカス: ${if (isFocused) "✓" else "×"} | 処理中: ${if (isProcessing) "Yes" else "No"}",
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(top = 4.dp),
-                                color = when {
-                                    isProcessing || hasDetectedMarker -> MaterialTheme.colorScheme.onPrimary
-                                    else -> MaterialTheme.colorScheme.onSurface
-                                }
-                            )
-
-                            // 最終更新時刻
-                            if (lastProcessTime > 0) {
-                                val timeSinceUpdate = (System.currentTimeMillis() - lastProcessTime) / 1000
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
                                 Text(
-                                    text = "最終更新: ${timeSinceUpdate}秒前",
+                                    text = qualityInfo,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                // 総合ステータス
+                                val allGood = isFocused && isBrightnessGood && hasDetectedMarker
+                                Text(
+                                    text = if (allGood) "✓ 撮影準備完了" else "カメラを調整してください",
                                     style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(top = 4.dp),
-                                    color = when {
-                                        isProcessing || hasDetectedMarker -> MaterialTheme.colorScheme.onPrimary
-                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
+                                    color = if (allGood) Color.Green else Color.Red,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(top = 4.dp)
                                 )
                             }
                         }
@@ -259,7 +231,7 @@ fun CameraScreen(
                             }
                         },
                         modifier = Modifier
-                            .align(Alignment.BottomEnd)
+                            .align(Alignment.BottomStart)
                             .padding(16.dp),
                         containerColor = if (isTorchOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
                     ) {
@@ -336,10 +308,14 @@ private fun processImage(
     imageProxy: ImageProxy,
     viewModel: CameraViewModel,
     hasDetectedMarker: Boolean,
+    consecutiveGoodFrames: Int,
     onFocusChange: (Boolean) -> Unit,
+    onBrightnessChange: (Boolean) -> Unit,
+    onQualityInfo: (String) -> Unit,
     onMarkerDetected: (Boolean) -> Unit,
     onMarkerInfo: (Int, String) -> Unit,
-    onProcessingChange: (Boolean) -> Unit
+    onProcessingChange: (Boolean) -> Unit,
+    onConsecutiveGoodFramesChange: (Int) -> Unit
 ) {
     try {
         val bitmap = imageProxyToBitmap(imageProxy)
@@ -362,13 +338,27 @@ private fun processImage(
             sharpness > FOCUS_THRESHOLD
         }
 
-        // フォーカス状態を更新
+        // 画像の明るさを計算
+        val brightness = calculateBrightness(bitmap)
+        val isBrightnessGood = brightness in BRIGHTNESS_MIN..BRIGHTNESS_MAX
+
+        // フォーカスと明るさの状態を更新
         onFocusChange(isFocusGood)
+        onBrightnessChange(isBrightnessGood)
+
+        // 品質情報を更新
+        val qualityStatus = buildString {
+            append("鮮明度: ${sharpness.toInt()} ")
+            append(if (isFocusGood) "✓" else "✗")
+            append(" | 明るさ: ${brightness.toInt()} ")
+            append(if (isBrightnessGood) "✓" else if (brightness < BRIGHTNESS_MIN) "暗い" else "明るい")
+        }
+        onQualityInfo(qualityStatus)
 
         if (DEBUG_SKIP_FOCUS_CHECK) {
-            Log.d("CameraScreen", "DEBUG MODE: Focus check skipped (sharpness: $sharpness)")
+            Log.d("CameraScreen", "DEBUG MODE: Focus check skipped (sharpness: $sharpness, brightness: $brightness)")
         } else {
-            Log.d("CameraScreen", "Sharpness: $sharpness, Focus: $isFocusGood, Threshold: $FOCUS_THRESHOLD")
+            Log.d("CameraScreen", "Quality - Sharpness: $sharpness (${if (isFocusGood) "OK" else "NG"}), Brightness: $brightness (${if (isBrightnessGood) "OK" else "NG"})")
         }
 
         // Bitmapがまだ有効か再確認（calculateSharpness後）
@@ -380,9 +370,8 @@ private fun processImage(
         // ArUco マーカー検出
         val arucoResult = ImageProcessor.detectArucoMarkers(bitmap)
 
-        // マーカー検出状態を更新
+        // マーカー検出状態を確認（フラグ更新は撮影後のみ）
         val markerDetected = arucoResult.isValid && arucoResult.blockType != null
-        onMarkerDetected(markerDetected)
 
         // マーカー情報を更新
         val markerCount = arucoResult.corners.size
@@ -404,12 +393,39 @@ private fun processImage(
             Log.d("CameraScreen", "Partial detection: ${arucoResult.corners.size} markers found but not enough for complete block")
         }
 
-        // フォーカスが合っていて、かつマーカーが検出されたら自動撮影
-        // hasDetectedMarkerで二重撮影を防止
-        if (markerDetected && isFocusGood && !hasDetectedMarker) {
-            Log.d("CameraScreen", "Auto-capture triggered: Focus OK (sharpness=$sharpness) + Marker detected (${arucoResult.blockType})")
-            onProcessingChange(true)
-            viewModel.processImage(bitmap, arucoResult)
+        // フレーム安定性チェック付き自動撮影
+        // 条件: マーカー検出 + フォーカスOK + 明るさOK + 未撮影
+        if (markerDetected && isFocusGood && isBrightnessGood && !hasDetectedMarker) {
+            // 条件を満たすフレームをカウント
+            val newCount = consecutiveGoodFrames + 1
+            onConsecutiveGoodFramesChange(newCount)
+
+            if (newCount >= MIN_STABLE_FOCUS_FRAMES) {
+                // 安定した状態が続いたので撮影
+                Log.d("CameraScreen", "Auto-capture triggered: Stable for $newCount frames (sharpness=$sharpness, brightness=$brightness, marker=${arucoResult.blockType})")
+                onProcessingChange(true)
+                onMarkerDetected(true)  // 撮影完了フラグを設定
+                viewModel.processImage(bitmap, arucoResult)
+                onConsecutiveGoodFramesChange(0)  // カウンターリセット
+            } else {
+                Log.d("CameraScreen", "Quality good, waiting for stability: $newCount/$MIN_STABLE_FOCUS_FRAMES frames")
+            }
+        } else {
+            // 条件を満たさなくなったらカウンターリセット
+            if (consecutiveGoodFrames > 0) {
+                Log.d("CameraScreen", "Quality dropped, resetting stability counter (was $consecutiveGoodFrames)")
+                onConsecutiveGoodFramesChange(0)
+            }
+
+            // マーカーは検出されたが品質が不十分
+            if (markerDetected && !hasDetectedMarker) {
+                val reason = when {
+                    !isFocusGood -> "フォーカス不足 (sharpness=$sharpness < $FOCUS_THRESHOLD)"
+                    !isBrightnessGood -> "明るさ不適切 (brightness=$brightness, range=$BRIGHTNESS_MIN..$BRIGHTNESS_MAX)"
+                    else -> "不明"
+                }
+                Log.d("CameraScreen", "Auto-capture skipped: $reason")
+            }
         }
     } catch (e: Exception) {
         Log.e("CameraScreen", "Error processing image", e)
@@ -473,9 +489,37 @@ private fun getGray(pixel: Int): Int {
     return (0.299 * r + 0.587 * g + 0.114 * b).toInt()
 }
 
-private const val FOCUS_THRESHOLD = 30.0  // フォーカス閾値を下げて撮影しやすく（50.0→30.0）
+/**
+ * 画像の明るさを計算
+ * 0-255の範囲で、値が大きいほど明るい
+ */
+private fun calculateBrightness(bitmap: Bitmap): Double {
+    val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 640, 480, true)
+    val shouldRecycle = scaledBitmap != bitmap
+
+    val width = scaledBitmap.width
+    val height = scaledBitmap.height
+    val pixels = IntArray(width * height)
+    scaledBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+    var sumBrightness = 0.0
+    for (pixel in pixels) {
+        sumBrightness += getGray(pixel)
+    }
+
+    if (shouldRecycle) {
+        scaledBitmap.recycle()
+    }
+
+    return sumBrightness / pixels.size
+}
+
+private const val FOCUS_THRESHOLD = 250.0  // フォーカス閾値（150→200→250に引き上げ、画像前処理と併用）
+private const val BRIGHTNESS_MIN = 40.0    // 最小明るさ（これより暗いと警告）
+private const val BRIGHTNESS_MAX = 220.0   // 最大明るさ（これより明るいと警告）
 private const val DEBUG_SKIP_FOCUS_CHECK = false  // デバッグ用：trueにするとフォーカスチェックをスキップ
 private const val MIN_DETECTION_INTERVAL_MS = 500L  // 連続検出の最小間隔（ミリ秒）
+private const val MIN_STABLE_FOCUS_FRAMES = 3  // フォーカスが安定するまでのフレーム数
 
 /**
  * ImageProxyからBitmapに変換

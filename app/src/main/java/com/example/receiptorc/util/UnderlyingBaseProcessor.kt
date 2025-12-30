@@ -25,51 +25,62 @@ object UnderlyingBaseProcessor {
     // ============================================
 
     /**
-     * warp後のスケール（実測値）
-     */
-    private const val SCALE = 8.1  // px/mm
-
-    /**
      * 行クラスタリングの閾値
-     * Y座標の差がこの値以下なら同じ行とみなす
+     * 実測値: 64.5mm / 20行 ≈ 3.2mm/行 ≈ 25px/行
+     * 閾値は行高の半分程度（12-15px）が最適
      */
-    const val ROW_THRESHOLD_PX = 15
+    const val ROW_CLUSTERING_Y_THRESHOLD = 15  // 別行を分離
 
     /**
-     * 列範囲（実用範囲、安全マージン込み）
-     *
-     * 実測値（mm）:
-     * - 取引日: 5.5 - 20.0
-     * - 商品名: 20.0 - 79.5
-     * - 税込金額: 134.5 - 156.0
-     * - 分類計: 156.0 - 177.0
-     *
-     * 理論px変換（8.1 px/mm）:
-     * - 取引日: 45 - 162
-     * - 商品名: 162 - 644
-     * - 税込金額: 1090 - 1264
-     * - 分類計: 1264 - 1434
+     * 伝票位置（mm、A4左上原点）
      */
-    private val DATE_RANGE = 50..155           // マージン: ±5-7px
-    private val ITEM_RANGE = 170..620          // マージン: +8px, -24px
-    private val AMOUNT_RANGE = 1110..1240      // マージン: +20px, -24px
-    private val CATEGORY_RANGE = 1280..1410    // マージン: +16px, -24px
+    private const val RECEIPT_LEFT_MM = 43.0   // A4左端から伝票左端まで
+    private const val RECEIPT_TOP_MM = 31.0    // A4上端から伝票上端まで
 
     /**
-     * 小計行のY範囲（px）
-     *
-     * 実測値: 119.5 - 123.0 mm
-     * 理論px: 968 - 996 px
+     * 列範囲（mm単位、A4左上原点、固定2400×1700出力用）
+     * 伝票左端43mm + 各列位置（実測値ベース）
      */
-    private val SUBTOTAL_Y_RANGE = 968..996
+    private const val DATE_START_MM = RECEIPT_LEFT_MM + 5.5        // 48.5mm
+    private const val DATE_END_MM = RECEIPT_LEFT_MM + 20.0         // 63.0mm
+    private const val ITEM_START_MM = RECEIPT_LEFT_MM + 20.0       // 63.0mm
+    private const val ITEM_END_MM = RECEIPT_LEFT_MM + 79.5         // 122.5mm
+    private const val STORE_START_MM = RECEIPT_LEFT_MM + 79.5      // 122.5mm (取扱支店、無視)
+    private const val STORE_END_MM = RECEIPT_LEFT_MM + 97.0        // 140.0mm
+    private const val QUANTITY_START_MM = RECEIPT_LEFT_MM + 97.0   // 140.0mm (数量)
+    private const val QUANTITY_END_MM = RECEIPT_LEFT_MM + 117.0    // 160.0mm
+    private const val UNITPRICE_START_MM = RECEIPT_LEFT_MM + 117.0 // 160.0mm (税込単価、無視)
+    private const val UNITPRICE_END_MM = RECEIPT_LEFT_MM + 134.5   // 177.5mm
+    private const val AMOUNT_START_MM = RECEIPT_LEFT_MM + 134.5    // 177.5mm (税込金額)
+    private const val AMOUNT_END_MM = RECEIPT_LEFT_MM + 156.0      // 199.0mm
+    private const val CATEGORY_START_MM = RECEIPT_LEFT_MM + 156.0  // 199.0mm (分類計)
+    private const val CATEGORY_END_MM = RECEIPT_LEFT_MM + 177.5    // 220.5mm
 
     /**
-     * 通常行のY範囲（px）
-     *
-     * 実測値: 55.0 - 119.5 mm
-     * 理論px: 446 - 968 px
+     * Y座標範囲（mm単位、A4左上原点、固定2400×1700出力用）
+     * 伝票上端31mm + 各行位置
      */
-    private val NORMAL_ROW_Y_RANGE = 446..968
+    private const val NORMAL_ROW_Y_START_MM = RECEIPT_TOP_MM + 56.5   // 87.5mm
+    private const val NORMAL_ROW_Y_END_MM = RECEIPT_TOP_MM + 120.5    // 151.5mm（実測値に修正）
+    private const val SUBTOTAL_Y_START_MM = RECEIPT_TOP_MM + 120.5    // 151.5mm
+    private const val SUBTOTAL_Y_END_MM = RECEIPT_TOP_MM + 132.0      // 163.0mm
+
+    /**
+     * 列範囲（px単位、実行時に初期化）
+     */
+    private var DATE_RANGE: IntRange = 50..155
+    private var ITEM_RANGE: IntRange = 170..620
+    private var STORE_RANGE: IntRange = 620..780       // 取扱支店（無視）
+    private var QUANTITY_RANGE: IntRange = 780..950    // 数量（取得）
+    private var UNITPRICE_RANGE: IntRange = 950..1110  // 税込単価（無視）
+    private var AMOUNT_RANGE: IntRange = 1110..1240
+    private var CATEGORY_RANGE: IntRange = 1280..1410
+
+    /**
+     * Y座標範囲（px単位、実行時に初期化）
+     */
+    private var SUBTOTAL_Y_RANGE: IntRange = 968..996
+    private var NORMAL_ROW_Y_RANGE: IntRange = 446..968
 
     // ============================================
     // 列挙型
@@ -81,6 +92,7 @@ object UnderlyingBaseProcessor {
     enum class ColumnType {
         DATE,           // 取引日（6桁数字）
         ITEM,           // 商品名（日本語）
+        QUANTITY,       // 数量（数字）
         AMOUNT,         // 税込金額（数字、マイナス可）
         CATEGORY_SUM,   // 分類計（数字）
         SUBTOTAL        // 小計・合計（数字）
@@ -118,6 +130,7 @@ object UnderlyingBaseProcessor {
         val rowType: RowType,      // 行タイプ
         val date: String?,         // 取引日（6桁、例: "060130"）
         val itemName: String?,     // 商品名
+        val quantity: String?,     // 数量
         val amount: Int?,          // 税込金額
         val categorySum: Int?,     // 分類計
         val rawText: String? = null  // 行全体のテキスト（デバッグ用）
@@ -137,17 +150,61 @@ object UnderlyingBaseProcessor {
     // ============================================
 
     /**
+     * 列範囲を初期化（透視変換で計算されたmm->px比率を使用）
+     *
+     * @param mmToPixelRatio mm→px変換率（例: 13.2 px/mm）
+     */
+    fun initializeColumnRanges(mmToPixelRatio: Double) {
+        DATE_RANGE = (DATE_START_MM * mmToPixelRatio).toInt()..(DATE_END_MM * mmToPixelRatio).toInt()
+        ITEM_RANGE = (ITEM_START_MM * mmToPixelRatio).toInt()..(ITEM_END_MM * mmToPixelRatio).toInt()
+        STORE_RANGE = (STORE_START_MM * mmToPixelRatio).toInt()..(STORE_END_MM * mmToPixelRatio).toInt()
+        QUANTITY_RANGE = (QUANTITY_START_MM * mmToPixelRatio).toInt()..(QUANTITY_END_MM * mmToPixelRatio).toInt()
+        UNITPRICE_RANGE = (UNITPRICE_START_MM * mmToPixelRatio).toInt()..(UNITPRICE_END_MM * mmToPixelRatio).toInt()
+        AMOUNT_RANGE = (AMOUNT_START_MM * mmToPixelRatio).toInt()..(AMOUNT_END_MM * mmToPixelRatio).toInt()
+        CATEGORY_RANGE = (CATEGORY_START_MM * mmToPixelRatio).toInt()..(CATEGORY_END_MM * mmToPixelRatio).toInt()
+
+        NORMAL_ROW_Y_RANGE = (NORMAL_ROW_Y_START_MM * mmToPixelRatio).toInt()..(NORMAL_ROW_Y_END_MM * mmToPixelRatio).toInt()
+        SUBTOTAL_Y_RANGE = (SUBTOTAL_Y_START_MM * mmToPixelRatio).toInt()..(SUBTOTAL_Y_END_MM * mmToPixelRatio).toInt()
+
+        Log.d(TAG, "Column ranges initialized with mmToPixelRatio=$mmToPixelRatio")
+        Log.d(TAG, "  DATE_RANGE: $DATE_RANGE")
+        Log.d(TAG, "  ITEM_RANGE: $ITEM_RANGE")
+        Log.d(TAG, "  STORE_RANGE: $STORE_RANGE (無視)")
+        Log.d(TAG, "  QUANTITY_RANGE: $QUANTITY_RANGE")
+        Log.d(TAG, "  UNITPRICE_RANGE: $UNITPRICE_RANGE (無視)")
+        Log.d(TAG, "  AMOUNT_RANGE: $AMOUNT_RANGE")
+        Log.d(TAG, "  CATEGORY_RANGE: $CATEGORY_RANGE")
+        Log.d(TAG, "  NORMAL_ROW_Y_RANGE: $NORMAL_ROW_Y_RANGE")
+        Log.d(TAG, "  SUBTOTAL_Y_RANGE: $SUBTOTAL_Y_RANGE")
+    }
+
+    /**
+     * 有効な商品行のY座標範囲を取得
+     * @return Y座標範囲（px）
+     */
+    fun getNormalRowYRange(): IntRange = NORMAL_ROW_Y_RANGE
+
+    /**
+     * 数量列のX座標範囲を取得
+     * @return X座標範囲（px）
+     */
+    fun getQuantityRange(): IntRange = QUANTITY_RANGE
+
+    /**
      * X座標から列タイプを判定
      *
      * @param cx テキストボックスの中心X座標
-     * @return 列タイプ、または null（空白帯）
+     * @return 列タイプ、または null（無視する列）
      */
     fun detectColumn(cx: Int): ColumnType? = when (cx) {
+        in STORE_RANGE -> null  // 取扱支店（無視）
+        in UNITPRICE_RANGE -> null  // 税込単価（無視）
         in DATE_RANGE -> ColumnType.DATE
         in ITEM_RANGE -> ColumnType.ITEM
+        in QUANTITY_RANGE -> ColumnType.QUANTITY
         in AMOUNT_RANGE -> ColumnType.AMOUNT
         in CATEGORY_RANGE -> ColumnType.CATEGORY_SUM
-        else -> null  // 空白帯（79.5-134.5mm）は無視
+        else -> null  // その他の範囲外
     }
 
     /**
@@ -244,9 +301,10 @@ object UnderlyingBaseProcessor {
     }
 
     /**
-     * 行クラスタリング
+     * 行クラスタリング（Y座標主軸方式）
      *
-     * Y座標が近いテキストボックスを同じ行にグループ化
+     * Y座標を基準に物理的な行構造を使ってグループ化
+     * 日付の誤認識に依存しないため、より安定
      *
      * @param textBoxes テキストボックスのリスト
      * @return 行ごとにグループ化されたテキストボックス
@@ -256,30 +314,31 @@ object UnderlyingBaseProcessor {
             return emptyList()
         }
 
-        // Y座標でソート
-        val sorted = textBoxes.sortedBy { it.centerY }
+        Log.d(TAG, "Starting Y-based row clustering with ${textBoxes.size} text boxes")
+
+        // ステップ1: 全TextBoxをcenterYでソート
+        val sortedBoxes = textBoxes.sortedBy { it.centerY }
+        Log.d(TAG, "Sorted ${sortedBoxes.size} boxes by Y coordinate")
+
+        // ステップ2: Y座標差でクラスタ化
         val rows = mutableListOf<MutableList<TextBox>>()
-
         var currentRow = mutableListOf<TextBox>()
-        var lastY = -1000
+        var lastY = sortedBoxes[0].centerY
 
-        for (box in sorted) {
-            // 通常行の範囲外は無視
-            if (box.centerY !in NORMAL_ROW_Y_RANGE) {
-                continue
-            }
+        for (box in sortedBoxes) {
+            val yDiff = kotlin.math.abs(box.centerY - lastY)
 
-            if (box.centerY - lastY > ROW_THRESHOLD_PX) {
-                // 新しい行を開始
+            if (yDiff <= ROW_CLUSTERING_Y_THRESHOLD) {
+                // 同じ行
+                currentRow.add(box)
+            } else {
+                // 新しい行
                 if (currentRow.isNotEmpty()) {
                     rows.add(currentRow)
                 }
                 currentRow = mutableListOf(box)
-            } else {
-                // 同じ行に追加
-                currentRow.add(box)
+                lastY = box.centerY
             }
-            lastY = box.centerY
         }
 
         // 最後の行を追加
@@ -287,7 +346,15 @@ object UnderlyingBaseProcessor {
             rows.add(currentRow)
         }
 
-        Log.d(TAG, "Clustered ${textBoxes.size} boxes into ${rows.size} rows")
+        Log.d(TAG, "Clustered into ${rows.size} rows using Y-threshold=${ROW_CLUSTERING_Y_THRESHOLD}px")
+
+        // ステップ3: 各行の情報をログ出力
+        rows.forEachIndexed { index, row ->
+            val avgY = row.map { it.centerY }.average().toInt()
+            val texts = row.map { it.text }.joinToString(", ")
+            Log.d(TAG, "  Row $index (Y=$avgY): ${row.size} boxes - [$texts]")
+        }
+
         return rows
     }
 
@@ -306,7 +373,7 @@ object UnderlyingBaseProcessor {
         return when (rowType) {
             RowType.SUBTOTAL -> processSubtotalRow(rowBoxes, rawText)
             RowType.MONTHLY_TOTAL -> processMonthlyTotalRow(rowBoxes, rawText)
-            RowType.EMPTY -> ReceiptRow(rowType, null, null, null, null, rawText)
+            RowType.EMPTY -> ReceiptRow(rowType, null, null, null, null, null, rawText)
             RowType.NORMAL -> processNormalRow(rowBoxes, rawText)
         }
     }
@@ -317,8 +384,17 @@ object UnderlyingBaseProcessor {
     private fun processNormalRow(rowBoxes: List<TextBox>, rawText: String): ReceiptRow {
         var date: String? = null
         val itemParts = mutableListOf<String>()
+        var quantity: String? = null
         var amount: Int? = null
         var categorySum: Int? = null
+
+        // 全ボックスをX座標でソートして詳細ログ
+        val sortedBoxes = rowBoxes.sortedBy { it.centerX }
+        Log.d(TAG, "  Processing ${sortedBoxes.size} boxes (sorted by X):")
+        sortedBoxes.forEach { box ->
+            val column = detectColumn(box.centerX)
+            Log.d(TAG, "    [X=${box.centerX}] '${box.text}' → column=$column")
+        }
 
         for (box in rowBoxes) {
             // X座標で列判定
@@ -333,34 +409,47 @@ object UnderlyingBaseProcessor {
             when (finalColumn) {
                 ColumnType.DATE -> {
                     date = box.text
-                    Log.d(TAG, "  DATE: ${box.text} at X=${box.centerX}")
+                    Log.d(TAG, "  ✓ DATE: ${box.text} at X=${box.centerX}")
                 }
                 ColumnType.ITEM -> {
                     itemParts.add(box.text)
-                    Log.d(TAG, "  ITEM: ${box.text} at X=${box.centerX}")
+                    Log.d(TAG, "  ✓ ITEM: ${box.text} at X=${box.centerX}")
+                }
+                ColumnType.QUANTITY -> {
+                    // スペースとカンマを除去
+                    quantity = box.text.replace(" ", "").replace(",", "")
+                    Log.d(TAG, "  ✓ QUANTITY: ${box.text} → normalized: $quantity at X=${box.centerX}")
                 }
                 ColumnType.AMOUNT -> {
-                    amount = box.text.replace("-", "").toIntOrNull()
-                    Log.d(TAG, "  AMOUNT: ${box.text} at X=${box.centerX}")
+                    // マイナス記号の有無を確認
+                    val isNegative = box.text.contains("-")
+                    // 数字専用正規化を適用してOCR誤認識を修正
+                    val normalized = normalizeToDigits(box.text)
+                    val value = normalized.toIntOrNull()
+                    amount = if (isNegative && value != null) -value else value
+                    Log.d(TAG, "  ✓ AMOUNT: ${box.text} → normalized: ${normalized} (${if (isNegative) "negative" else "positive"}) at X=${box.centerX}")
                 }
                 ColumnType.CATEGORY_SUM -> {
-                    categorySum = box.text.toIntOrNull()
-                    Log.d(TAG, "  CATEGORY_SUM: ${box.text} at X=${box.centerX}")
+                    // スペースとカンマを除去してから数値に変換
+                    val normalized = box.text.replace(" ", "").replace(",", "")
+                    categorySum = normalized.toIntOrNull()
+                    Log.d(TAG, "  ✓ CATEGORY_SUM: ${box.text} → normalized: ${normalized} at X=${box.centerX}")
                 }
                 else -> {
-                    Log.d(TAG, "  IGNORED: ${box.text} at X=${box.centerX} (空白帯)")
+                    Log.d(TAG, "  ✗ IGNORED: ${box.text} at X=${box.centerX} (列範囲外)")
                 }
             }
         }
 
-        // 商品名を結合（スペース区切り）
+        // 商品名を結合（スペース区切り）して日付を除去
         val itemName = if (itemParts.isNotEmpty()) {
-            itemParts.joinToString(" ")
+            val combined = itemParts.joinToString(" ")
+            cleanItemName(combined)
         } else {
             null
         }
 
-        return ReceiptRow(RowType.NORMAL, date, itemName, amount, categorySum, rawText)
+        return ReceiptRow(RowType.NORMAL, date, itemName, quantity, amount, categorySum, rawText)
     }
 
     /**
@@ -379,8 +468,10 @@ object UnderlyingBaseProcessor {
                     itemParts.add(box.text)
                 }
                 ColumnType.CATEGORY_SUM -> {
-                    categorySum = box.text.toIntOrNull()
-                    Log.d(TAG, "  SUBTOTAL AMOUNT: ${box.text}")
+                    // 数字専用正規化を適用してOCR誤認識を修正
+                    val normalized = normalizeToDigits(box.text)
+                    categorySum = normalized.toIntOrNull()
+                    Log.d(TAG, "  SUBTOTAL AMOUNT: ${box.text} → normalized: ${normalized}")
                 }
                 else -> {}
             }
@@ -392,7 +483,7 @@ object UnderlyingBaseProcessor {
             null
         }
 
-        return ReceiptRow(RowType.SUBTOTAL, null, itemName, null, categorySum, rawText)
+        return ReceiptRow(RowType.SUBTOTAL, null, itemName, null, null, categorySum, rawText)
     }
 
     /**
@@ -414,7 +505,7 @@ object UnderlyingBaseProcessor {
             }
         }
 
-        return ReceiptRow(RowType.MONTHLY_TOTAL, null, "月合計", null, categorySum, rawText)
+        return ReceiptRow(RowType.MONTHLY_TOTAL, null, "月合計", null, null, categorySum, rawText)
     }
 
     /**
@@ -565,12 +656,201 @@ object UnderlyingBaseProcessor {
     // ============================================
 
     /**
-     * mm を px に変換
+     * 数字専用正規化（1文字）
+     *
+     * OCR誤認識を修正:
+     * - O, o, p → 0
+     * - I, i, l, |, : → 1
+     * - B, b → 8
+     * - S → 5
+     *
+     * @param char 正規化する文字
+     * @return 正規化後の文字
      */
-    fun mmToPx(mm: Double): Int = (mm * SCALE).toInt()
+    private fun normalizeDigit(char: Char): Char = when (char) {
+        'O', 'o', 'p' -> '0'
+        'I', 'i', 'l', '|', ':' -> '1'
+        'B', 'b' -> '8'
+        'S' -> '5'
+        else -> char
+    }
 
     /**
-     * px を mm に変換
+     * 数字専用正規化（文字列）
+     *
+     * テキストから数字のみを抽出し、正規化を適用
+     * 空白も削除
+     *
+     * @param text 正規化する文字列
+     * @return 正規化後の数字のみの文字列
      */
-    fun pxToMm(px: Int): Double = px / SCALE
+    fun normalizeToDigits(text: String): String {
+        return text
+            .replace(" ", "")  // 空白を削除
+            .map { normalizeDigit(it) }
+            .filter { it.isDigit() }
+            .joinToString("")
+    }
+
+    /**
+     * 数量テキストを正規化して数値に変換
+     *
+     * OCR誤認識を修正:
+     * - o, O → 0
+     * - l, I → 1
+     * - スペース、カンマ削除
+     *
+     * @param raw OCRで取得した生テキスト
+     * @return 正規化後の数値、または null（変換失敗）
+     */
+    fun normalizeQuantity(raw: String): Int? {
+        val normalized = raw
+            .replace("o", "0")
+            .replace("O", "0")
+            .replace("l", "1")
+            .replace("I", "1")
+            .replace(" ", "")
+            .replace(",", "")
+
+        return normalized.toIntOrNull()
+    }
+
+    /**
+     * 商品名から日付パターンを除去
+     *
+     * OCRで商品名に日付が混入している場合（例: "p71008米用紙袋"）に
+     * 日付部分を除去して商品名のみを返す
+     *
+     * パターン例:
+     * - "p71008米用紙袋" → "米用紙袋"
+     * - "071011トミーネクサス" → "トミーネクサス"
+     * - "b71021|グレーシア乳剤" → "グレーシア乳剤"
+     * - "p7101 1トミーネクサス" → "トミーネクサス" (スペース混入)
+     * - "p71o17レギュラー" → "レギュラー" (文字混入)
+     *
+     * @param itemName 元の商品名
+     * @return 日付を除去した商品名
+     */
+    private fun cleanItemName(itemName: String): String {
+        var cleaned = itemName
+        var previousCleaned = ""
+        var iteration = 0
+        val maxIterations = 3  // 無限ループ防止
+
+        // 複数の日付パターンを試行（優先順位順）
+        // E/eを8の誤認識として扱う（他の誤認識: O→0, I→1, B→8, S→5）
+        val patterns = listOf(
+            // パターン1: アルファベット1-3文字 + 数字/誤認識文字2-8文字 + 区切り文字
+            // 例: "j13|", "i16|", "p7062o|", "b70621|", "p70E01"
+            Regex("^[a-zA-Z]{1,3}[0-9oOlIeEbBsS.:/ ]{2,8}[|]?"),
+
+            // パターン2: 純粋な6桁数字 + 区切り文字（E/e含む）
+            // 例: "070620|", "971011|", "07E621"
+            Regex("^[0-9oOlIeEbBsS]{6}[|]?"),
+
+            // パターン3: アルファベット + スペース + 数字 + 区切り文字
+            // 例: "i1 6|", "p7101 1|", "e12 1"
+            Regex("^[a-zA-Z][0-9oOlIeEbBsS]+\\s+[0-9oOlIeEbBsS]+[|]?"),
+
+            // パターン4: より緩いパターン（最大12文字まで、日本語直前）
+            // 例: "p7o6i16|", "1p70618|", "0708i19NK"
+            Regex("^[a-zA-Z0-9oOlIeEbBsS.:/ |]{3,12}(?=[\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF])"),
+
+            // パターン5: 途中の日付パターン（スペース後）
+            // 例: "テーブナー針 0708|12その他生産資材"
+            Regex("\\s+[a-zA-Z0-9oOlIeEbBsS.:/ |]{4,12}(?=[\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF])")
+        )
+
+        // 変化がなくなるまで繰り返し適用（複数の日付パターンが連続している場合に対応）
+        while (iteration < maxIterations && cleaned != previousCleaned) {
+            previousCleaned = cleaned
+
+            for ((index, pattern) in patterns.withIndex()) {
+                val result = cleaned.replace(pattern, "")
+                if (result != cleaned) {
+                    cleaned = result.trimStart('|', ' ', '　')
+                    Log.d(TAG, "  Iteration ${iteration + 1}, Pattern ${index + 1}: '$previousCleaned' → '$cleaned'")
+                    break  // 1つマッチしたら次のイテレーションへ
+                }
+            }
+
+            iteration++
+        }
+
+        // 除去後が空または短すぎる場合は元の文字列を返す
+        if (cleaned.isEmpty() || cleaned.length < 2) {
+            cleaned = itemName
+            Log.d(TAG, "  Item name too short after cleaning, keeping original: '$itemName'")
+        } else if (cleaned != itemName) {
+            Log.d(TAG, "  Item name cleaned (${iteration} iterations): '$itemName' → '$cleaned'")
+        }
+
+        return cleaned
+    }
+
+    /**
+     * 小計行から逆算してカテゴリを判定
+     *
+     * 小計行に含まれるキーワードからカテゴリを特定し、
+     * その前の通常行にカテゴリを遡って適用：
+     * - "一般購買" → "一般購買"
+     * - "給油所", "給値所" → "給油所" (OCR誤認識対応)
+     * - "農業機械", "展業慢城", "農業" → "農業機械" (OCR誤認識対応)
+     *
+     * @param rows 全行データ（NORMAL, SUBTOTAL, MONTHLY_TOTAL）
+     * @return カテゴリ付き行データ（各行にカテゴリを設定）
+     */
+    fun assignCategories(rows: List<ReceiptRow>): List<Pair<ReceiptRow, String>> {
+        // 1. 小計行のインデックスとカテゴリを抽出
+        val subtotalIndices = mutableListOf<Pair<Int, String>>()
+
+        rows.forEachIndexed { index, row ->
+            if (row.rowType == RowType.SUBTOTAL) {
+                val categoryName = row.itemName ?: ""
+                val category = when {
+                    categoryName.contains("一般購買") -> "一般購買"
+                    categoryName.contains("給油所") || categoryName.contains("給値所") -> "給油所"
+                    categoryName.contains("農業機械") || categoryName.contains("展業慢城") || categoryName.contains("農業") -> "農業機械"
+                    else -> "未分類"
+                }
+                subtotalIndices.add(Pair(index, category))
+                Log.d(TAG, "Subtotal found at index $index: $categoryName → category: $category")
+            }
+        }
+
+        // 2. 各行にカテゴリを適用（小計行から逆算）
+        val result = mutableListOf<Pair<ReceiptRow, String>>()
+
+        rows.forEachIndexed { index, row ->
+            val category = when (row.rowType) {
+                RowType.SUBTOTAL -> {
+                    // 小計行自身のカテゴリ
+                    subtotalIndices.find { it.first == index }?.second ?: "未分類"
+                }
+                RowType.NORMAL -> {
+                    // 通常行：直後の小計行のカテゴリを適用
+                    // 小計行がない場合（1枚目など）は「一般購買」をデフォルトとする
+                    val nextSubtotal = subtotalIndices.find { it.first > index }
+                    nextSubtotal?.second ?: "一般購買"
+                }
+                RowType.MONTHLY_TOTAL -> "月合計"
+                RowType.EMPTY -> "空白"
+            }
+
+            result.add(Pair(row, category))
+        }
+
+        // 3. カテゴリ別の行数をログ出力
+        val categoryCount = result.groupingBy { it.second }.eachCount()
+
+        if (subtotalIndices.isEmpty()) {
+            Log.d(TAG, "No subtotal rows found. Using default category: 一般購買")
+        }
+
+        categoryCount.forEach { (category, count) ->
+            Log.d(TAG, "Category '$category': $count rows")
+        }
+
+        return result
+    }
 }
