@@ -149,7 +149,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             bitmap,
             arucoResult.corners,
             arucoResult.ids,
-            arucoResult.blockType!!,
+            arucoResult.blockType ?: ImageProcessor.BlockType.B_BLOCK,  // Use default when bypassing marker check
             useFixedOutput = true  // UNDERLAY台紙用: A4全体を固定サイズで出力
         ) ?: throw IllegalStateException("Perspective transform failed")
 

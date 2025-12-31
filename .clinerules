@@ -667,9 +667,95 @@ adb logcat -d -s UnderlyingBaseProcessor:D OCRProcessor:D CameraViewModel:D
 7. 品質チェック (フォーカス + 輝度) を通過した画像のみ処理
 
 ## 最終更新
-- **日時**: 2025-12-31 01:00
+- **日時**: 2025-12-31 07:00
 - **ブランチ**: feature/underlay-base
+- **セッション概要**: OCR品質評価システムの実装と調整
 - **更新内容**:
+
+  ### 🎯 OCR品質評価システムの実装と調整
+
+  **背景:**
+  - ユーザー要求: 「撮影されません」（品質基準を満たさず自動撮影されない）
+  - 初期問題: フォーカス値が0、文字高さが0で品質スコアが低すぎる
+
+  **実装したシステム:**
+  1. **OcrQualityEvaluator.kt** (新規作成)
+     - 3つの品質指標による総合評価
+     - フォーカス(20%), 文字高さ(50%), コントラスト(30%)
+     - Laplacian分散によるシャープネス計算
+     - 垂直エッジ検出による文字高さ推定
+     - 標準偏差によるコントラスト測定
+
+  2. **ImagePreprocessor.kt** (新規作成)
+     - エッジ検出 (Sobel-like vertical edge detection)
+     - 文字高さ推定 (connected components)
+     - 画像前処理ユーティリティ
+
+  **調整の経緯:**
+
+  a) **初期実装の問題**
+  - フォーカス値が0 → グレースケール変換の型ミス (Int vs Long)
+  - 文字高さが0 → Y方向スキャンでは検出できず
+  - NaN in contrast → Integer overflow
+
+  b) **修正1: 計算エラー解消**
+  - Long型への変換でオーバーフロー解消
+  - X方向(列)スキャンに変更で文字高さ検出成功
+  - エッジ検出閾値: 25 → 15 に下げて検出感度向上
+
+  c) **修正2: 実測値ベースのスコアリング調整**
+  - 実測フォーカス値: 8-30 (期待値120-300と大きく乖離)
+  - 実測文字高さ: 6-10px (期待値10-35pxと乖離)
+  - ユーザー: 「カメラはこれ以上近づけると全体が入らない」
+  - スコアリング関数を実測値範囲に合わせて再調整
+    - focusScore: 5-40の範囲で0.0-1.0にマッピング
+    - charHeightScore: 6-15pxの範囲で0.4-0.85にマッピング
+
+  d) **修正3: 閾値の段階的引き下げ**
+  - QUALITY_THRESHOLD: 0.70 → 0.20 → 0.15 → 0.45
+  - MIN_STABLE_FOCUS_FRAMES: 3 → 1 (安定性要件を緩和)
+
+  **ArUcoマーカー検出問題の発生:**
+  - ユーザー: 「撮影されません」が続く
+  - 原因: ArUcoマーカーが検出されない（緑の四角が表示されない）
+  - ユーザー確認: 「マーカーは印刷されています」
+  - 暫定対応: DEBUG_SKIP_MARKER_CHECK = true でマーカー検出をバイパス
+
+  **新たな問題の発生:**
+  1. **NullPointerException (解決済み)**
+     - 場所: CameraViewModel.kt:152
+     - 原因: `arucoResult.blockType!!` が null
+     - マーカー検出バイパス時、blockType が null のまま
+     - 修正: `arucoResult.blockType ?: ImageProcessor.BlockType.B_BLOCK`
+
+  2. **Perspective transform failed (現在の問題)** ⚠️
+     - 場所: CameraViewModel.kt:154
+     - 原因: perspectiveTransform が null を返す
+     - DEBUG_SKIP_MARKER_CHECK 有効時、corners と ids が空または無効
+     - 透視変換には有効なマーカー位置情報が必要
+
+  **変更ファイル:**
+  - CameraScreen.kt: DEBUG_SKIP_MARKER_CHECK フラグ追加、MIN_STABLE_FOCUS_FRAMES = 1
+  - CameraViewModel.kt:152: blockType の null 対応追加
+  - OcrQualityEvaluator.kt: 新規作成（品質評価システム）
+  - ImagePreprocessor.kt: 新規作成（画像前処理ユーティリティ）
+
+  **現在の状態:**
+  - ✅ 品質評価システム: 実装完了、実測値ベースで動作
+  - ✅ 自動撮影トリガー: 品質基準を満たせば発動
+  - ⚠️ ArUcoマーカー検出: 原因不明で検出失敗
+  - ⚠️ 透視変換: マーカー情報なしで失敗中
+
+  **次のステップ（選択肢）:**
+  1. **DEBUG モードでは透視変換をスキップ** - 元の画像で処理を試す
+  2. **マーカー検出問題の調査** - なぜ印刷されたマーカーが検出されないのか
+
+  **技術的メモ:**
+  - 4K解像度: 3264x2448 (実測値)
+  - 品質スコア実測例: 0.67-0.72 (focus=8-10, charHeight=20, contrast=0.53-0.73)
+  - DEBUG_SKIP_MARKER_CHECK 使用時は透視変換が不可能
+
+- **前回の更新 (2025-12-31 01:00)**:
   - **辞書補正精度の大規模テスト実施**: 3枚の伝票で57行を分析
   - **補正成功率**: 35% (20/57) - ⚠️ 目標70%を大幅に未達
   - **根本原因の特定**: OCR精度が低い（商品名列の拡大処理不足）
@@ -678,63 +764,7 @@ adb logcat -d -s UnderlyingBaseProcessor:D OCRProcessor:D CameraViewModel:D
     - 数量列(162px幅)は4倍拡大+Latin OCR → 認識良好
     - 誤認識例: 有機→者橋, 粒状→状, 乳剤→刺, アグリメック→グリメック
   - **次の改善策**: 商品名列にも2-3倍拡大処理を適用
-- **変更ファイル**:
-  - CameraScreen.kt: hasDetectedMarkerフラグロジック修正 (line 375, 407)
-  - UnderlyingBaseProcessor.kt: cleanItemName関数改善 (E/e対応、反復処理)
-- **修正内容詳細**:
-  1. **自動撮影バグ修正** (CameraScreen.kt)
-     - 問題: `onMarkerDetected(markerDetected)`が毎フレーム実行され、hasDetectedMarkerが即座にtrueに
-     - 結果: 安定性カウンターが1/3で止まり、2/3, 3/3に到達できず
-     - 修正: `onMarkerDetected(true)`を撮影成功時のみ実行 (line 407)
-     - 効果: カウンター 1/3 → 2/3 → 3/3 → 自動撮影 正常動作 ✅
 
-  2. **日付パターン最適化** (UnderlyingBaseProcessor.kt:734-789)
-     - E/eをOCR誤認識として追加 (ユーザー指摘: "Eは8の誤認識が多いのでは")
-     - 全パターンに`eE`を追加: `[0-9oOlIeEbBsS]`
-     - 反復マッチング実装 (最大3回、無限ループ防止)
-     - パターン5追加: 途中の日付パターン対応
-     ```kotlin
-     // 反復処理ロジック
-     var iteration = 0
-     val maxIterations = 3
-     while (iteration < maxIterations && cleaned != previousCleaned) {
-         previousCleaned = cleaned
-         for (pattern in patterns) {
-             if (pattern matches cleaned) {
-                 cleaned = apply pattern
-                 break
-             }
-         }
-         iteration++
-     }
-     ```
-
-  3. **フレーム安定性チェック** (既存機能の動作確認)
-     - MIN_STABLE_FOCUS_FRAMES = 3
-     - 品質基準: Sharpness > 250.0, Brightness 40.0-220.0
-     - ArUcoマーカー: B_BLOCK (ID 0,1,2,3)
-- **テスト結果** (2025-12-31 00:50 実伝票3枚):
-  - **撮影枚数**: 3枚 (合計57行)
-  - **補正成功率**:
-    - 1枚目: 3/20 = 15%
-    - 2枚目: 8/20 = 40%
-    - 3枚目: 9/17 = 53%
-    - **全体: 20/57 = 35%** ⚠️ (目標70%未達)
-  - **補正成功例**:
-    - `ドライパー500ml` → `ドライバー500ml` (0.8)
-    - `レギュラーガンリン` → `レギュラーガソリン` (0.89)
-    - `うりネット54m` → `きゅうりネット54m` (0.8)
-    - `ベストガード水移100g` → `ベストガード水溶100g` (0.875)
-  - **OCR誤認識の深刻な例**:
-    - `マンモス有機886` → OCR: `マンモス者橋るる0` (辞書到達不可)
-    - `粒状BMようりん20kg` → OCR: `状BMようりん20kg` (辞書到達不可)
-    - `ウララDF250g` → OCR: `DF2S0g` (辞書到達不可)
-    - `乳剤250ml` → OCR: `刺250m1` (辞書到達不可)
-    - `アグリメック500ml` → OCR: `グリメック500ml` (辞書到達不可)
-- **根本原因の特定**:
-  - 商品名列(510-992px = 482px幅)は**拡大処理なし**でOCR
-  - 数量列(1134-1296px = 162px幅)は**4倍拡大+Latin OCR**で認識良好
-  - → 小さい漢字(有機、粒、乳)、カタカナ(アグリ)が誤認識多発
 - **更新者**: Claude Code
 
 ---

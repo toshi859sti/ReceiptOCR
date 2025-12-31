@@ -191,6 +191,12 @@ object UnderlyingBaseProcessor {
     fun getQuantityRange(): IntRange = QUANTITY_RANGE
 
     /**
+     * 商品名列のX座標範囲を取得
+     * @return X座標範囲（px）
+     */
+    fun getItemRange(): IntRange = ITEM_RANGE
+
+    /**
      * X座標から列タイプを判定
      *
      * @param cx テキストボックスの中心X座標
@@ -731,7 +737,7 @@ object UnderlyingBaseProcessor {
      * @param itemName 元の商品名
      * @return 日付を除去した商品名
      */
-    private fun cleanItemName(itemName: String): String {
+    fun cleanItemName(itemName: String): String {
         var cleaned = itemName
         var previousCleaned = ""
         var iteration = 0

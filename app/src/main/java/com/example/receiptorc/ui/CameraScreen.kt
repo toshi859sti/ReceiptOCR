@@ -37,6 +37,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.receiptorc.util.ImageProcessor
 import com.example.receiptorc.util.OCRProcessor
+import com.example.receiptorc.util.OcrQualityEvaluator
 import com.example.receiptorc.util.YuvToRgbConverter
 import com.example.receiptorc.viewmodel.CameraViewModel
 import java.util.concurrent.Executors
@@ -124,7 +125,7 @@ fun CameraScreen(
 
                                 val imageAnalyzer = ImageAnalysis.Builder()
                                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                    .setTargetResolution(android.util.Size(1920, 1080))  // Full HD解像度
+                                    .setTargetResolution(android.util.Size(3840, 2160))  // 4K解像度（OCR精度向上のため）
                                     .build()
                                     .also {
                                         it.setAnalyzer(cameraExecutor) { imageProxy ->
@@ -210,7 +211,7 @@ fun CameraScreen(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 // 総合ステータス
-                                val allGood = isFocused && isBrightnessGood && hasDetectedMarker
+                                val allGood = isFocused && hasDetectedMarker
                                 Text(
                                     text = if (allGood) "✓ 撮影準備完了" else "カメラを調整してください",
                                     style = MaterialTheme.typography.bodySmall,
@@ -330,35 +331,43 @@ private fun processImage(
             return
         }
 
-        // 画像のシャープネスを計算してフォーカス判定
-        val sharpness = calculateSharpness(bitmap)
-        val isFocusGood = if (DEBUG_SKIP_FOCUS_CHECK) {
-            true  // デバッグモード：常にフォーカスOK
+        // OCR品質を総合評価（フォーカス、文字高さ、コントラスト）
+        val quality = if (DEBUG_SKIP_FOCUS_CHECK) {
+            // デバッグモード：ダミーの良好な品質スコアを返す
+            OcrQualityEvaluator.OcrQuality(
+                score = 1.0,
+                focus = 250.0,
+                focusScore = 1.0,
+                charHeight = 25,
+                charHeightScore = 1.0,
+                contrast = 0.8,
+                contrastScore = 0.8,
+                isGood = true
+            )
         } else {
-            sharpness > FOCUS_THRESHOLD
+            OcrQualityEvaluator.evaluateOcrQuality(bitmap)
         }
 
-        // 画像の明るさを計算
-        val brightness = calculateBrightness(bitmap)
-        val isBrightnessGood = brightness in BRIGHTNESS_MIN..BRIGHTNESS_MAX
+        // 品質状態を更新
+        val isQualityGood = quality.isGood
+        onFocusChange(isQualityGood)  // 総合判定結果をフォーカスフラグに設定
+        onBrightnessChange(true)  // 明るさは個別チェックせず、コントラストで評価
 
-        // フォーカスと明るさの状態を更新
-        onFocusChange(isFocusGood)
-        onBrightnessChange(isBrightnessGood)
-
-        // 品質情報を更新
+        // 品質情報を更新（詳細表示）
         val qualityStatus = buildString {
-            append("鮮明度: ${sharpness.toInt()} ")
-            append(if (isFocusGood) "✓" else "✗")
-            append(" | 明るさ: ${brightness.toInt()} ")
-            append(if (isBrightnessGood) "✓" else if (brightness < BRIGHTNESS_MIN) "暗い" else "明るい")
+            append("品質: ${(quality.score * 100).toInt()}% ")
+            append(if (quality.isGood) "✓" else "✗")
+            append("\n")
+            append("文字: ${quality.charHeight}px (${(quality.charHeightScore * 100).toInt()}%) | ")
+            append("コントラスト: ${(quality.contrastScore * 100).toInt()}% | ")
+            append("フォーカス: ${(quality.focusScore * 100).toInt()}%")
         }
         onQualityInfo(qualityStatus)
 
         if (DEBUG_SKIP_FOCUS_CHECK) {
-            Log.d("CameraScreen", "DEBUG MODE: Focus check skipped (sharpness: $sharpness, brightness: $brightness)")
+            Log.d("CameraScreen", "DEBUG MODE: Quality check skipped")
         } else {
-            Log.d("CameraScreen", "Quality - Sharpness: $sharpness (${if (isFocusGood) "OK" else "NG"}), Brightness: $brightness (${if (isBrightnessGood) "OK" else "NG"})")
+            Log.d("CameraScreen", "Quality - ${quality}")
         }
 
         // Bitmapがまだ有効か再確認（calculateSharpness後）
@@ -371,7 +380,12 @@ private fun processImage(
         val arucoResult = ImageProcessor.detectArucoMarkers(bitmap)
 
         // マーカー検出状態を確認（フラグ更新は撮影後のみ）
-        val markerDetected = arucoResult.isValid && arucoResult.blockType != null
+        val markerDetected = if (DEBUG_SKIP_MARKER_CHECK) {
+            Log.d("CameraScreen", "DEBUG MODE: Marker check skipped (forced true)")
+            true
+        } else {
+            arucoResult.isValid && arucoResult.blockType != null
+        }
 
         // マーカー情報を更新
         val markerCount = arucoResult.corners.size
@@ -394,15 +408,15 @@ private fun processImage(
         }
 
         // フレーム安定性チェック付き自動撮影
-        // 条件: マーカー検出 + フォーカスOK + 明るさOK + 未撮影
-        if (markerDetected && isFocusGood && isBrightnessGood && !hasDetectedMarker) {
+        // 条件: マーカー検出 + 品質OK + 未撮影
+        if (markerDetected && isQualityGood && !hasDetectedMarker) {
             // 条件を満たすフレームをカウント
             val newCount = consecutiveGoodFrames + 1
             onConsecutiveGoodFramesChange(newCount)
 
             if (newCount >= MIN_STABLE_FOCUS_FRAMES) {
                 // 安定した状態が続いたので撮影
-                Log.d("CameraScreen", "Auto-capture triggered: Stable for $newCount frames (sharpness=$sharpness, brightness=$brightness, marker=${arucoResult.blockType})")
+                Log.d("CameraScreen", "Auto-capture triggered: Stable for $newCount frames (quality=${quality.score}, marker=${arucoResult.blockType})")
                 onProcessingChange(true)
                 onMarkerDetected(true)  // 撮影完了フラグを設定
                 viewModel.processImage(bitmap, arucoResult)
@@ -419,12 +433,9 @@ private fun processImage(
 
             // マーカーは検出されたが品質が不十分
             if (markerDetected && !hasDetectedMarker) {
-                val reason = when {
-                    !isFocusGood -> "フォーカス不足 (sharpness=$sharpness < $FOCUS_THRESHOLD)"
-                    !isBrightnessGood -> "明るさ不適切 (brightness=$brightness, range=$BRIGHTNESS_MIN..$BRIGHTNESS_MAX)"
-                    else -> "不明"
-                }
+                val reason = "品質不足 (score=${quality.score}, threshold=${OcrQualityEvaluator.QUALITY_THRESHOLD})"
                 Log.d("CameraScreen", "Auto-capture skipped: $reason")
+                Log.d("CameraScreen", "  Details: ${quality.toHumanReadable()}")
             }
         }
     } catch (e: Exception) {
@@ -432,94 +443,17 @@ private fun processImage(
     }
 }
 
-/**
- * 画像のシャープネスを計算（Laplacian分散を使用）
- * 値が大きいほど画像がシャープ（フォーカスが合っている）
- */
-private fun calculateSharpness(bitmap: Bitmap): Double {
-    // 計算効率のため、画像を縮小
-    // filter=trueにして、必ず新しいBitmapを作成
-    val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 640, 480, true)
+// ============================================
+// 定数
+// ============================================
 
-    // 元のBitmapと同じ参照でないことを確認
-    val shouldRecycle = scaledBitmap != bitmap
-
-    val width = scaledBitmap.width
-    val height = scaledBitmap.height
-    val pixels = IntArray(width * height)
-    scaledBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-
-    // グレースケール変換とLaplacianフィルタの適用
-    var sumLaplacian = 0.0
-    var count = 0
-
-    for (y in 1 until height - 1) {
-        for (x in 1 until width - 1) {
-            val idx = y * width + x
-
-            // グレースケール値を取得
-            val gray = getGray(pixels[idx])
-            val grayTop = getGray(pixels[(y - 1) * width + x])
-            val grayBottom = getGray(pixels[(y + 1) * width + x])
-            val grayLeft = getGray(pixels[y * width + (x - 1)])
-            val grayRight = getGray(pixels[y * width + (x + 1)])
-
-            // Laplacian オペレーター
-            val laplacian = Math.abs(
-                4 * gray - grayTop - grayBottom - grayLeft - grayRight
-            )
-
-            sumLaplacian += laplacian * laplacian
-            count++
-        }
-    }
-
-    // 元のBitmapと異なる場合のみリサイクル
-    if (shouldRecycle) {
-        scaledBitmap.recycle()
-    }
-
-    return sumLaplacian / count
-}
-
-private fun getGray(pixel: Int): Int {
-    val r = (pixel shr 16) and 0xFF
-    val g = (pixel shr 8) and 0xFF
-    val b = pixel and 0xFF
-    return (0.299 * r + 0.587 * g + 0.114 * b).toInt()
-}
-
-/**
- * 画像の明るさを計算
- * 0-255の範囲で、値が大きいほど明るい
- */
-private fun calculateBrightness(bitmap: Bitmap): Double {
-    val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 640, 480, true)
-    val shouldRecycle = scaledBitmap != bitmap
-
-    val width = scaledBitmap.width
-    val height = scaledBitmap.height
-    val pixels = IntArray(width * height)
-    scaledBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-
-    var sumBrightness = 0.0
-    for (pixel in pixels) {
-        sumBrightness += getGray(pixel)
-    }
-
-    if (shouldRecycle) {
-        scaledBitmap.recycle()
-    }
-
-    return sumBrightness / pixels.size
-}
-
-private const val FOCUS_THRESHOLD = 250.0  // フォーカス閾値（150→200→250に引き上げ、画像前処理と併用）
-private const val BRIGHTNESS_MIN = 40.0    // 最小明るさ（これより暗いと警告）
-private const val BRIGHTNESS_MAX = 220.0   // 最大明るさ（これより明るいと警告）
-private const val DEBUG_SKIP_FOCUS_CHECK = false  // デバッグ用：trueにするとフォーカスチェックをスキップ
+private const val DEBUG_SKIP_FOCUS_CHECK = false  // デバッグ用：trueにすると品質チェックをスキップ
+private const val DEBUG_SKIP_MARKER_CHECK = false  // デバッグ用：trueにするとArUcoマーカー検出をスキップ
 private const val MIN_DETECTION_INTERVAL_MS = 500L  // 連続検出の最小間隔（ミリ秒）
-private const val MIN_STABLE_FOCUS_FRAMES = 3  // フォーカスが安定するまでのフレーム数
+private const val MIN_STABLE_FOCUS_FRAMES = 1  // 品質が安定するまでのフレーム数（テスト用に1に設定）
+
+// 注: calculateSharpness()、calculateBrightness()、FOCUS_THRESHOLD等は
+// OcrQualityEvaluatorに移行しました
 
 /**
  * ImageProxyからBitmapに変換

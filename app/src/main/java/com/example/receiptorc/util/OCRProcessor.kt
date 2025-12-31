@@ -508,6 +508,38 @@ object OCRProcessor {
     }
 
     /**
+     * 商品名列の複数スケールOCR処理（実験的）
+     *
+     * 仕様書ベースの新実装:
+     * 1. 商品名列を切り出し
+     * 2. 複数スケール(1x/2x/3x)でOCR
+     * 3. 辞書スコアリングで最良の結果を選択
+     *
+     * @param warpedBitmap warp後の伝票画像
+     * @param rows 既存の行データ（Y座標でマッピングするために使用）
+     * @param rowYCoordinates 各行の実際のY座標（centerY）
+     * @param dictionary 商品名辞書
+     * @return 商品名のマップ（行インデックス → 商品名）
+     */
+    private suspend fun extractProductNamesMultiScale(
+        warpedBitmap: Bitmap,
+        rows: List<UnderlyingBaseProcessor.ReceiptRow>,
+        rowYCoordinates: List<Int>,
+        dictionary: List<String>
+    ): Map<Int, String> {
+        Log.d(TAG, "[PRODUCT-MULTISCALE] ========== Multi-Scale Product Name OCR Start ==========")
+
+        // TODO: 実装を追加
+        // 1. 商品名列ROIを取得
+        // 2. 行ごとに切り出し
+        // 3. 複数スケール(1x/2x/3x)でOCR
+        // 4. 辞書スコアリングで最良の結果を選択
+
+        Log.d(TAG, "[PRODUCT-MULTISCALE] ========== Multi-Scale Product Name OCR Complete ==========")
+        return emptyMap()
+    }
+
+    /**
      * リソースのクリーンアップ
      */
     fun close() {
@@ -635,6 +667,130 @@ object OCRProcessor {
 
         Log.d(TAG, "[QUANTITY] ========== Quantity Column Re-OCR Complete: ${quantityMap.size} quantities ==========")
         return quantityMap
+    }
+
+    /**
+     * 商品名列を特化OCRで再処理（高精度化）
+     *
+     * 全体OCR（日本語モデル）は小さい文字を落としやすい
+     * → 商品名列だけ切り出して、拡大 + Japanese OCR で再処理
+     *
+     * @param warpedBitmap warp後の伝票画像
+     * @param rows 既存の行データ（Y座標でマッピングするために使用）
+     * @param rowYCoordinates 各行の実際のY座標（centerY）
+     * @return 商品名のマップ（行インデックス → 商品名文字列）
+     */
+    private suspend fun extractProductNamesFromColumn(
+        warpedBitmap: Bitmap,
+        rows: List<UnderlyingBaseProcessor.ReceiptRow>,
+        rowYCoordinates: List<Int>
+    ): Map<Int, String> {
+        Log.d(TAG, "[PRODUCT] ========== Product Name Column Re-OCR Start ==========")
+
+        // 1. 商品名列ROIを取得
+        val itemRange = UnderlyingBaseProcessor.getItemRange()
+        val itemX = itemRange.first
+        val itemWidth = itemRange.last - itemRange.first
+
+        Log.d(TAG, "[PRODUCT] Product name column ROI: X=$itemX, Width=$itemWidth")
+
+        // 2. 商品名列を切り出し
+        val itemColumnBitmap = Bitmap.createBitmap(
+            warpedBitmap,
+            itemX,
+            0,
+            itemWidth.coerceAtMost(warpedBitmap.width - itemX),
+            warpedBitmap.height
+        )
+
+        // 3. 3倍アップスケール（小さい文字を検出しやすくする）
+        val upscaledBitmap = Bitmap.createScaledBitmap(
+            itemColumnBitmap,
+            itemColumnBitmap.width * 3,
+            itemColumnBitmap.height * 3,
+            true
+        )
+
+        Log.d(TAG, "[PRODUCT] Upscaled to ${upscaledBitmap.width}x${upscaledBitmap.height}")
+
+        // 4. Japanese OCR（商品名は日本語）
+        val text = recognizeText(upscaledBitmap)
+        itemColumnBitmap.recycle()
+        upscaledBitmap.recycle()
+
+        if (text == null) {
+            Log.w(TAG, "[PRODUCT] Japanese OCR failed")
+            return emptyMap()
+        }
+
+        // 5. OCR結果からTextBoxを抽出
+        val productBoxes = mutableListOf<UnderlyingBaseProcessor.TextBox>()
+        text.textBlocks.forEach { block ->
+            block.lines.forEach { line ->
+                val bounds = line.boundingBox
+                if (bounds != null) {
+                    // Y座標をオリジナル画像のスケールに戻す（3倍拡大していたため）
+                    val scaledBounds = android.graphics.Rect(
+                        bounds.left / 3 + itemX,  // X座標も元に戻す
+                        bounds.top / 3,
+                        bounds.right / 3 + itemX,
+                        bounds.bottom / 3
+                    )
+                    productBoxes.add(
+                        UnderlyingBaseProcessor.TextBox(
+                            text = line.text.trim(),
+                            bounds = scaledBounds,
+                            centerX = scaledBounds.centerX(),
+                            centerY = scaledBounds.centerY()
+                        )
+                    )
+                    Log.d(TAG, "[PRODUCT] OCR detected: '${line.text}' at Y=${scaledBounds.centerY()}")
+                }
+            }
+        }
+
+        // 6. Y座標でソート
+        productBoxes.sortBy { it.centerY }
+
+        // 7. 行にマッピング（Y座標の近さで判定）
+        val productMap = mutableMapOf<Int, String>()
+        val yThreshold = 15  // 15px以内なら同じ行とみなす
+
+        rows.forEachIndexed { rowIndex, row ->
+            // 通常行のみ処理（小計行はスキップ）
+            if (row.rowType != UnderlyingBaseProcessor.RowType.NORMAL) {
+                return@forEachIndexed
+            }
+
+            // 実際の行Y座標を使用
+            val rowY = rowYCoordinates.getOrNull(rowIndex)
+            if (rowY == null) {
+                return@forEachIndexed
+            }
+
+            // この行に対応する商品名テキストを検索
+            val matchingBoxes = productBoxes.filter { box ->
+                kotlin.math.abs(box.centerY - rowY) <= yThreshold
+            }
+
+            if (matchingBoxes.isNotEmpty()) {
+                // 同じ行内の複数の断片を結合（X座標順）
+                val combinedText = matchingBoxes
+                    .sortedBy { it.centerX }
+                    .joinToString("") { it.text }
+
+                // 日付パターンをクリーニング
+                val cleaned = UnderlyingBaseProcessor.cleanItemName(combinedText)
+
+                if (cleaned.isNotBlank()) {
+                    productMap[rowIndex] = cleaned
+                    Log.d(TAG, "[PRODUCT] Row $rowIndex (Y=$rowY): '$combinedText' → '$cleaned'")
+                }
+            }
+        }
+
+        Log.d(TAG, "[PRODUCT] ========== Product Name Column Re-OCR Complete: ${productMap.size} product names ==========")
+        return productMap
     }
 
     /**
@@ -790,13 +946,20 @@ object OCRProcessor {
         val quantityMap = extractQuantitiesFromColumn(warpedBitmap, receiptRows, rowYCoordinates)
         Log.d(TAG, "[UNDERLAY] Step 8: Quantity re-OCR completed (${quantityMap.size} quantities)")
 
-        // 9. 数量を上書き & 返品処理
+        // 8.5. 商品名列特化OCR処理（Japanese OCR + 3倍拡大）
+        val productNameMap = extractProductNamesFromColumn(warpedBitmap, receiptRows, rowYCoordinates)
+        Log.d(TAG, "[UNDERLAY] Step 8.5: Product name re-OCR completed (${productNameMap.size} product names)")
+
+        // 9. 数量・商品名を上書き & 返品処理
         val updatedRows = receiptRows.mapIndexed { index, row ->
             // 数量列OCRで取得した値で上書き
             val newQuantity = quantityMap[index] ?: row.quantity
 
+            // 商品名列OCRで取得した値で上書き
+            val newItemName = productNameMap[index] ?: row.itemName
+
             // 返品処理（商品名に「返品」が含まれていれば数量を負にする）
-            val finalQuantity = if (row.itemName?.contains("返品") == true && newQuantity != null) {
+            val finalQuantity = if (newItemName?.contains("返品") == true && newQuantity != null) {
                 val qty = newQuantity.toIntOrNull()
                 if (qty != null && qty > 0) {
                     (-qty).toString()
@@ -808,13 +971,16 @@ object OCRProcessor {
             }
 
             // ログ出力
-            if (quantityMap.containsKey(index) || row.itemName?.contains("返品") == true) {
+            if (quantityMap.containsKey(index)) {
                 Log.d(TAG, "[UNDERLAY]   Row $index: quantity updated: '${row.quantity}' → '$finalQuantity'" +
-                        (if (row.itemName?.contains("返品") == true) " (返品処理)" else ""))
+                        (if (newItemName?.contains("返品") == true) " (返品処理)" else ""))
+            }
+            if (productNameMap.containsKey(index)) {
+                Log.d(TAG, "[UNDERLAY]   Row $index: itemName updated: '${row.itemName}' → '$newItemName'")
             }
 
             // 新しいRowを作成
-            row.copy(quantity = finalQuantity)
+            row.copy(quantity = finalQuantity, itemName = newItemName)
         }
 
         // 10. 小計・月合計の抽出（結果から）
