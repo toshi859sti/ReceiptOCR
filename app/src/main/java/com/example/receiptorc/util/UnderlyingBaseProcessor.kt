@@ -418,8 +418,8 @@ object UnderlyingBaseProcessor {
                     Log.d(TAG, "  ✓ DATE: ${box.text} at X=${box.centerX}")
                 }
                 ColumnType.ITEM -> {
-                    itemParts.add(box.text)
-                    Log.d(TAG, "  ✓ ITEM: ${box.text} at X=${box.centerX}")
+                    // 商品名は列特化OCR（3倍拡大）で取得するため、全体OCRは無視
+                    Log.d(TAG, "  ⊘ ITEM (SKIPPED): ${box.text} at X=${box.centerX} (use column OCR instead)")
                 }
                 ColumnType.QUANTITY -> {
                     // スペースとカンマを除去
@@ -447,13 +447,9 @@ object UnderlyingBaseProcessor {
             }
         }
 
-        // 商品名を結合（スペース区切り）して日付を除去
-        val itemName = if (itemParts.isNotEmpty()) {
-            val combined = itemParts.joinToString(" ")
-            cleanItemName(combined)
-        } else {
-            null
-        }
+        // 商品名は列特化OCRで取得するため、ここではnull
+        // （後のStep 8.5で上書きされる）
+        val itemName: String? = null
 
         return ReceiptRow(RowType.NORMAL, date, itemName, quantity, amount, categorySum, rawText)
     }
@@ -814,9 +810,32 @@ object UnderlyingBaseProcessor {
             if (row.rowType == RowType.SUBTOTAL) {
                 val categoryName = row.itemName ?: ""
                 val category = when {
-                    categoryName.contains("一般購買") -> "一般購買"
-                    categoryName.contains("給油所") || categoryName.contains("給値所") -> "給油所"
-                    categoryName.contains("農業機械") || categoryName.contains("展業慢城") || categoryName.contains("農業") -> "農業機械"
+                    // 一般購買の誤認識パターン
+                    categoryName.contains("一般購買") ||
+                    categoryName.contains("一般買") ||   // "購" 欠落
+                    categoryName.contains("一般講買") ||  // "購" → "講"
+                    categoryName.contains("一般課買") ||  // "購" → "課"
+                    categoryName.contains("ー般講買") ||  // "一" → "ー", "購" → "講"
+                    categoryName.contains("ー般購買") ||  // "一" → "ー"
+                    categoryName.contains("般購買") ||    // "一" 欠落
+                    categoryName.contains("般講買") ->    // "一" 欠落, "購" → "講"
+                        "一般購買"
+
+                    // 給油所の誤認識パターン
+                    categoryName.contains("給油所") ||
+                    categoryName.contains("給値所") ||  // "油" → "値"
+                    categoryName.contains("給造所") ||  // "油" → "造"
+                    categoryName.contains("給治所") ||  // "油" → "治"
+                    categoryName.contains("給抽所") ->  // "油" → "抽"
+                        "給油所"
+
+                    // 農業機械の誤認識パターン
+                    categoryName.contains("農業機械") ||
+                    categoryName.contains("展業慢城") ||
+                    categoryName.contains("農来") ||  // 大幅に省略されたパターン
+                    categoryName.contains("農発検") ||  // 別の誤認識パターン
+                    categoryName.contains("農業") -> "農業機械"
+
                     else -> "未分類"
                 }
                 subtotalIndices.add(Pair(index, category))

@@ -123,9 +123,10 @@ fun CameraScreen(
                                     it.setSurfaceProvider(previewView.surfaceProvider)
                                 }
 
+                                // 品質チェック・マーカー検出・OCR処理用（高解像度）
                                 val imageAnalyzer = ImageAnalysis.Builder()
                                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                    .setTargetResolution(android.util.Size(3840, 2160))  // 4K解像度（OCR精度向上のため）
+                                    .setTargetResolution(android.util.Size(3840, 2160))  // 4K解像度
                                     .build()
                                     .also {
                                         it.setAnalyzer(cameraExecutor) { imageProxy ->
@@ -137,6 +138,7 @@ fun CameraScreen(
                                                 lastDetectionTime = currentTime
                                                 processImage(
                                                     imageProxy,
+                                                    ctx,
                                                     viewModel,
                                                     hasDetectedMarker,
                                                     consecutiveGoodFrames,
@@ -179,6 +181,7 @@ fun CameraScreen(
                                         preview,
                                         imageAnalyzer
                                     )
+                                    Log.d("CameraScreen", "Camera bound with ImageAnalysis (4K resolution)")
                                     // 連続オートフォーカスはデフォルトで有効
                                     // シャープネス計算によってフォーカス判定を行う
                                 } catch (exc: Exception) {
@@ -307,6 +310,7 @@ fun CameraScreen(
 
 private fun processImage(
     imageProxy: ImageProxy,
+    context: android.content.Context,
     viewModel: CameraViewModel,
     hasDetectedMarker: Boolean,
     consecutiveGoodFrames: Int,
@@ -319,6 +323,7 @@ private fun processImage(
     onConsecutiveGoodFramesChange: (Int) -> Unit
 ) {
     try {
+        // プレビュー用の低解像度画像（品質チェック・マーカー検出用）
         val bitmap = imageProxyToBitmap(imageProxy)
         if (bitmap == null || bitmap.isRecycled) {
             Log.w("CameraScreen", "Bitmap is null or recycled, skipping frame")
@@ -415,11 +420,15 @@ private fun processImage(
             onConsecutiveGoodFramesChange(newCount)
 
             if (newCount >= MIN_STABLE_FOCUS_FRAMES) {
-                // 安定した状態が続いたので撮影
+                // 安定した状態が続いたのでOCR処理開始
                 Log.d("CameraScreen", "Auto-capture triggered: Stable for $newCount frames (quality=${quality.score}, marker=${arucoResult.blockType})")
+                Log.d("CameraScreen", "Processing with ImageAnalysis: ${bitmap.width}x${bitmap.height}")
                 onProcessingChange(true)
-                onMarkerDetected(true)  // 撮影完了フラグを設定
+                onMarkerDetected(true)  // 処理完了フラグを設定
+
+                // ImageAnalysisのフレームを直接OCR処理
                 viewModel.processImage(bitmap, arucoResult)
+
                 onConsecutiveGoodFramesChange(0)  // カウンターリセット
             } else {
                 Log.d("CameraScreen", "Quality good, waiting for stability: $newCount/$MIN_STABLE_FOCUS_FRAMES frames")

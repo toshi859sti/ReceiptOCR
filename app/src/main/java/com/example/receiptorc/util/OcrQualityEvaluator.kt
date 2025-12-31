@@ -6,10 +6,14 @@ import android.util.Log
 import kotlin.math.sqrt
 
 /**
- * OCR品質評価システム
+ * OCR品質評価システム V2
  *
  * フォーカス、文字高さ、コントラストの3指標を総合的に評価し、
  * OCR実行の可否を判断する。
+ *
+ * 【V2更新】文字高さをOCR実行時の2400pxスケールで評価
+ * - 旧: 1280pxで評価 → 6-7px = 良好 → 実際は18-21px@2400px (不足)
+ * - 新: 2400pxで評価 → 30-40px = 良好 (ML Kit推奨範囲)
  *
  * スコア設計:
  * - 文字高さ: 重み 0.5 (最重要 - OCR精度をほぼ決める)
@@ -98,30 +102,38 @@ object OcrQualityEvaluator {
      * 文字高さ（ピクセル）から0.0-1.0のスコアに変換。
      * OCR精度に最も影響する指標。
      *
-     * 【重要】このスコアは1280px品質評価用にダウンスケールされた画像での文字高さを想定
-     * スケール比: 1280px / 3264px ≈ 0.39
+     * 【V2更新】2400pxベース + 列特化拡大を考慮した評価
+     * 実際のOCRフロー:
+     * 1. 2400pxベース画像（この関数で評価）
+     * 2. 列特化OCR: 3-4倍拡大
+     * 3. 最終OCR: 2400px × 3倍 = 7200px相当
      *
-     * 範囲（1280pxスケール）:
-     * - < 3px: 0.0 (小さすぎ、読めない)
-     * - 3px: 0.4 (最小限)
-     * - 4-5px: 0.4-0.7 (遠距離撮影で許容可能)
-     * - 6-7px: 0.7-0.85 (良好) ← 通常の撮影距離
-     * - 8-14px: 0.85-1.0 (理想的)
-     * - 15-20px: 0.8 (やや大きい)
-     * - > 20px: 0.6 (大きすぎ、OCRが苦手)
+     * ML Kit推奨: 30-40px/文字 → 2400pxベースで10-13px必要
+     * （10px × 3倍 = 30px, 13px × 3倍 = 39px）
      *
-     * @param height 推定文字高さ (px、1280pxスケール)
+     * 範囲（2400pxベーススケール）:
+     * - < 4px: 0.0 (極小、拡大しても不足)
+     * - 4-6px: 0.0-0.5 (3倍拡大で12-18px、不安定)
+     * - 6-8px: 0.5-0.7 (3倍拡大で18-24px、最低限)
+     * - 8-10px: 0.7-0.85 (3倍拡大で24-30px、良好手前)
+     * - 10-14px: 0.85-1.0 (3倍拡大で30-42px、理想的 ← ML Kit推奨範囲)
+     * - 14-20px: 1.0 (3倍拡大で42-60px、優秀)
+     * - 20-30px: 0.95 (やや大きい)
+     * - > 30px: 0.8 (大きすぎ)
+     *
+     * @param height 推定文字高さ (px、2400pxベーススケール)
      * @return 文字高さスコア (0.0-1.0)
      */
     fun charHeightScore(height: Int): Double {
         return when {
-            height < 3 -> 0.0
-            height < 4 -> 0.4
-            height < 6 -> 0.4 + (height - 4) / 2.0 * 0.3  // 4-5px → 0.4-0.7
-            height < 8 -> 0.7 + (height - 6) / 2.0 * 0.15  // 6-7px → 0.7-0.85
-            height <= 14 -> 0.85 + (height - 8) / 6.0 * 0.15  // 8-14px → 0.85-1.0
-            height <= 20 -> 0.8
-            else -> 0.6
+            height < 4 -> 0.0
+            height < 6 -> (height - 4) / 2.0 * 0.6  // 4-6px → 0.0-0.6
+            height < 8 -> 0.6 + (height - 6) / 2.0 * 0.15  // 6-8px → 0.6-0.75
+            height < 10 -> 0.75 + (height - 8) / 2.0 * 0.10  // 8-10px → 0.75-0.85
+            height <= 14 -> 0.85 + (height - 10) / 4.0 * 0.15  // 10-14px → 0.85-1.0
+            height <= 20 -> 1.0
+            height <= 30 -> 0.95
+            else -> 0.8
         }
     }
 
@@ -224,49 +236,84 @@ object OcrQualityEvaluator {
     /**
      * OCR品質を総合評価（簡易版 - Bitmapから自動計算）
      *
+     * 【V2更新】文字高さをOCR実行時の2400pxスケールで評価
+     * - フォーカス・コントラスト: 1280pxで評価（高速化）
+     * - 文字高さ: 2400pxスケールで評価（ML Kit要求に合わせる）
+     *
      * @param bitmap 評価対象の画像
      * @return OCR品質評価結果
      */
     fun evaluateOcrQuality(bitmap: Bitmap): OcrQuality {
         Log.d(TAG, "evaluateOcrQuality: input bitmap ${bitmap.width}x${bitmap.height}, config=${bitmap.config}, isRecycled=${bitmap.isRecycled}")
 
-        // ダウンスケール（高速化のため）: 4K → 1280px
-        // アスペクト比を維持しながら、長辺を1280pxに制限
-        val maxDimension = 1280
-        val scale = maxDimension.toFloat() / maxOf(bitmap.width, bitmap.height)
-        val scaledWidth = (bitmap.width * scale).toInt()
-        val scaledHeight = (bitmap.height * scale).toInt()
+        // ===============================================
+        // ステップ1: フォーカス・コントラスト評価 (1280px)
+        // ===============================================
+        val previewScale = 1280.0f / maxOf(bitmap.width, bitmap.height)
+        val previewWidth = (bitmap.width * previewScale).toInt()
+        val previewHeight = (bitmap.height * previewScale).toInt()
 
-        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, true)
-        Log.d(TAG, "evaluateOcrQuality: downscaled to ${scaledBitmap.width}x${scaledBitmap.height} (${String.format("%.1f", scale * 100)}%)")
-
-        // サンプルピクセルをチェック（ダウンスケール後）
-        if (!scaledBitmap.isRecycled) {
-            val samplePixel = scaledBitmap.getPixel(scaledBitmap.width / 2, scaledBitmap.height / 2)
-            val r = Color.red(samplePixel)
-            val g = Color.green(samplePixel)
-            val b = Color.blue(samplePixel)
-            Log.d(TAG, "evaluateOcrQuality: sample pixel at center = RGB($r, $g, $b)")
-        }
+        val previewBitmap = Bitmap.createScaledBitmap(bitmap, previewWidth, previewHeight, true)
+        Log.d(TAG, "evaluateOcrQuality: preview scaled to ${previewBitmap.width}x${previewBitmap.height} (${String.format("%.1f", previewScale * 100)}%)")
 
         // グレースケール化
-        val gray = ImagePreprocessor.toGray(scaledBitmap)
-        scaledBitmap.recycle()  // ダウンスケール画像を解放
+        val grayPreview = ImagePreprocessor.toGray(previewBitmap)
+        previewBitmap.recycle()
+
+        // フォーカス計算
+        val focus = calculateSharpness(grayPreview)
+
+        // コントラスト計算（グレースケール画像を使用）
+        val contrastValue = contrastScore(grayPreview)
+        grayPreview.recycle()
+
+        // ===============================================
+        // ステップ2: 文字高さ評価 (2400px OCRスケール)
+        // ===============================================
+        // OCR実行時の2400pxスケールで文字高さを測定
+        val ocrScale = 2400.0f / maxOf(bitmap.width, bitmap.height)
+        val ocrWidth = (bitmap.width * ocrScale).toInt()
+        val ocrHeight = (bitmap.height * ocrScale).toInt()
+
+        val ocrBitmap = Bitmap.createScaledBitmap(bitmap, ocrWidth, ocrHeight, true)
+        Log.d(TAG, "evaluateOcrQuality: OCR scaled to ${ocrBitmap.width}x${ocrBitmap.height} (${String.format("%.1f", ocrScale * 100)}%)")
+
+        // グレースケール化
+        val grayOcr = ImagePreprocessor.toGray(ocrBitmap)
+        ocrBitmap.recycle()
 
         // エッジ検出
-        val edge = ImagePreprocessor.edgeDetect(gray)
+        val edge = ImagePreprocessor.edgeDetect(grayOcr)
 
-        // 文字高さ推定
+        // 文字高さ推定（2400pxスケール）
         val charHeight = ImagePreprocessor.estimateCharHeight(edge)
+        Log.d(TAG, "evaluateOcrQuality: charHeight at OCR scale (2400px) = ${charHeight}px")
         edge.recycle()
+        grayOcr.recycle()
 
-        // フォーカス計算（簡易的にLaplacian分散を計算）
-        val focus = calculateSharpness(gray)
+        // ===============================================
+        // ステップ3: 総合評価
+        // ===============================================
+        val focusScoreValue = focusScore(focus)
+        val charHeightScoreValue = charHeightScore(charHeight)
 
-        // 総合評価
-        val quality = evaluateOcrQuality(focus, charHeight, gray)
-        gray.recycle()
+        // 重み付き総合スコア
+        val total = focusScoreValue * WEIGHT_FOCUS +
+                    charHeightScoreValue * WEIGHT_CHAR_HEIGHT +
+                    contrastValue * WEIGHT_CONTRAST
 
+        val quality = OcrQuality(
+            score = total,
+            focus = focus,
+            focusScore = focusScoreValue,
+            charHeight = charHeight,
+            charHeightScore = charHeightScoreValue,
+            contrast = contrastValue,
+            contrastScore = contrastValue,
+            isGood = total >= QUALITY_THRESHOLD
+        )
+
+        Log.d(TAG, quality.toString())
         return quality
     }
 

@@ -606,6 +606,7 @@ object OCRProcessor {
         }
 
         // 5. OCR結果からTextBoxを抽出
+        // 数量列専用: 1桁数字も取得するため、極小bboxフィルタは適用しない
         val quantityBoxes = mutableListOf<UnderlyingBaseProcessor.TextBox>()
         text.textBlocks.forEach { block ->
             block.lines.forEach { line ->
@@ -618,6 +619,8 @@ object OCRProcessor {
                         bounds.right / 4 + quantityX,
                         bounds.bottom / 4
                     )
+
+                    // 数量列は1桁数字も重要なので、最小サイズ制限なし
                     quantityBoxes.add(
                         UnderlyingBaseProcessor.TextBox(
                             text = line.text.trim(),
@@ -626,7 +629,7 @@ object OCRProcessor {
                             centerY = scaledBounds.centerY()
                         )
                     )
-                    Log.d(TAG, "[QUANTITY] OCR detected: '${line.text}' at Y=${scaledBounds.centerY()}")
+                    Log.d(TAG, "[QUANTITY] OCR detected: '${line.text}' at Y=${scaledBounds.centerY()}, size=${scaledBounds.width()}x${scaledBounds.height()}")
                 }
             }
         }

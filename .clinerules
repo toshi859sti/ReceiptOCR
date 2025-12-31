@@ -667,7 +667,213 @@ adb logcat -d -s UnderlyingBaseProcessor:D OCRProcessor:D CameraViewModel:D
 7. 品質チェック (フォーカス + 輝度) を通過した画像のみ処理
 
 ## 最終更新
-- **日時**: 2025-12-31 15:30
+- **日時**: 2025-12-31 20:50
+- **ブランチ**: feature/underlay-base
+- **セッション概要**: ImageCapture高解像度撮影の問題解決 - ImageAnalysis 4Kアプローチへの方針転換
+- **更新内容**:
+
+  ### 🎯 ImageCapture高解像度撮影の座標変換問題と解決策
+
+  **背景:**
+  - 前セッションで文字高さ評価をOCRスケール(2400px)に対応
+  - しかし実解像度は1836×2448と不十分
+  - ユーザー要求: 「撮影解像度を上げる 2400px → 3600〜4000pxは可能なの？」
+  - ユーザー助言: 「撮影で稼いで、補正で整える」が王道
+
+  **問題①: ImageCapture実装の失敗**
+
+  アプローチ1: ImageCapture + ImageAnalysis併用
+  ```kotlin
+  // ImageAnalysis: 1920×1080 (FHD) - マーカー検出・品質チェック
+  // ImageCapture: 4000×3000 (4K) - 高解像度OCR処理
+  ```
+
+  発生した問題:
+  1. **プレビューと高解像度の向き不一致**
+     - Preview: 1600×1200 (横長 4:3)
+     - High-res capture: 1836×2448 (縦長 3:4)
+     - 原因: カメラが自動的に90度回転
+
+  2. **高解像度画像でArUco検出失敗**
+     - Preview: 4マーカー検出成功 (B_BLOCK)
+     - High-res: 0マーカー検出 → フォールバック必要
+
+  3. **座標スケーリングの複雑化**
+     - 単純スケーリング: 座標スケール (1.1475, 2.04) - アスペクト比不一致
+     - 画像90度回転 + 座標回転: 複雑な変換式が必要
+     - -90度回転試行: 依然として誤った領域を切り出し
+
+  **試行した解決策と失敗:**
+
+  1. **アプローチA: 単純座標スケーリング**
+     ```kotlin
+     scaleX = 1836 / 1600 = 1.1475
+     scaleY = 2448 / 1200 = 2.04
+     ```
+     結果: ヘッダー/フッター領域を誤検出 ❌
+
+  2. **アプローチB: ビットマップ+90度回転 + 座標+90度回転**
+     ```kotlin
+     // 画像回転: 1836×2448 → 2448×1836 (横長化)
+     matrix.postRotate(90f)
+
+     // 座標回転: (x, y) → (height - y, x)
+     rotX = (1200 - y) * (2448/1200)
+     rotY = x * (1836/1600)
+     ```
+     結果: 依然として誤領域検出 ❌
+
+  3. **アプローチC: ビットマップ-90度回転 + 座標-90度回転**
+     ```kotlin
+     matrix.postRotate(-90f)
+
+     // 座標回転: (x, y) → (y, width - x)
+     rotX = y * (2448/1200)
+     rotY = (1600 - x) * (1836/1600)
+     ```
+     結果: 誤領域検出継続 ❌
+
+  **根本原因の特定:**
+  - ImageCaptureとImageAnalysisで異なる解像度・向き
+  - ArUco検出が高解像度画像で失敗
+  - 座標変換の複雑性（回転+スケーリング）が正確性を損なう
+  - **同一画像でArUco検出とOCR処理をしないと座標が合わない**
+
+  **最終解決策: ImageAnalysis 4K化** ✅
+
+  ```kotlin
+  // ImageCaptureを廃止、ImageAnalysisの解像度を向上
+  val imageAnalyzer = ImageAnalysis.Builder()
+      .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+      .setTargetResolution(android.util.Size(3840, 2160))  // 4K
+      .build()
+
+  // 安定した品質のフレームを直接OCR処理
+  if (newCount >= MIN_STABLE_FOCUS_FRAMES) {
+      viewModel.processImage(bitmap, arucoResult)  // 同一画像
+  }
+  ```
+
+  **変更内容:**
+  1. ImageCapture関連コード削除
+  2. ImageAnalysis解像度: 1920×1080 → **3840×2160 (4K)**
+  3. processImage関数簡素化 (imageCapture, context パラメータ削除)
+  4. カメラバインド簡素化 (ImageAnalysisのみ)
+
+  **実測結果:** ✅ 大成功
+  ```
+  実解像度: 3264×2448 (デバイス最大値)
+  検出行数: 31行 → Y範囲フィルタ後 17行
+  商品名補正: 6件成功 / 7件試行 (86%)
+
+  検出商品例:
+  - ドライバー500ml
+  - アフェットフロアブル500ML
+  - グレーシア乳剤500ml
+  - トミーネクサス046 20kg
+  - アグリードCフロアブル100cc
+  - レギュラーガソリン (複数)
+  - JA-OIL SNスペシャル5W-30
+  ```
+
+  **技術的意義:**
+  - **シンプル性**: ImageAnalysisのみで完結、複雑な座標変換不要
+  - **信頼性**: ArUco検出とOCR処理が同一画像で実行
+  - **性能**: 解像度が2倍向上 (1600×1200 → 3264×2448)
+  - **保守性**: コード量削減、デバッグ容易
+
+  **変更ファイル:**
+  - CameraScreen.kt:
+    - ImageCapture削除、ImageAnalysis解像度4K化
+    - processImage簡素化 (imageCapture, context削除)
+    - カメラバインド簡素化
+    - 90度回転・座標変換ロジック削除 (500行以上削減)
+
+  **教訓:**
+  - 「撮影で稼いで、補正で整える」- ユーザー助言が正解
+  - 複雑な座標変換より、同一画像での処理が確実
+  - ImageCapture vs ImageAnalysis: 用途に応じた選択が重要
+  - 解像度向上は座標変換の複雑化よりシンプルな方法で達成可能
+
+## 最終更新 (前回)
+- **日時**: 2025-12-31 19:40
+- **ブランチ**: feature/underlay-base
+- **セッション概要**: 文字高さ評価のOCRスケール対応（問題①の修正）
+- **更新内容**:
+
+  ### 🎯 文字高さ評価をOCR実行時の2400pxスケールで評価 (問題①)
+
+  **問題の特定:**
+  ユーザー分析により、3つの重大な問題が特定された:
+  - ① 【最重要】文字高さ評価が「OCR向き」になっていない
+  - ② 商品名列OCRの「二重OCR」干渉 → ✅ 修正済み (ITEM列スキップ)
+  - ③ 辞書補正が構造を理解していない → ✅ 修正済み (スコアベース補正V2)
+
+  **問題①の詳細分析:**
+  ```
+  現状のフロー:
+  1. 品質評価: 1280pxスケールで実施
+     → 文字高さ 6-7px = 「良好」(score 0.70-0.85)
+
+  2. 実際のOCR: 2400pxスケールで実施
+     → 6-7px × (2400/1280) = 18-21px
+
+  問題:
+  - ML Kit日本語OCRの安定動作: 30-40px/文字
+  - 18-21pxは不足 → 文字化け多発
+  - ❌「読めない状態を高品質と誤判定している」
+  ```
+
+  **修正内容 (OcrQualityEvaluator.kt):**
+
+  1. **文字高さスコアリングの更新 (charHeightScore関数)**
+  ```kotlin
+  // 修正前（1280pxスケール）:
+  height < 3 -> 0.0
+  height < 4 -> 0.4
+  height < 6 -> 0.4-0.7
+  height < 8 -> 0.7-0.85  // 6-7px = 良好
+  height <= 14 -> 0.85-1.0
+
+  // 修正後（2400pxスケール = OCR実行時）:
+  height < 15 -> 0.0
+  height < 20 -> 0.0-0.4  // 認識困難
+  height < 25 -> 0.4-0.6  // 不安定
+  height < 30 -> 0.6-0.75 // 最低限
+  height <= 40 -> 0.75-1.0 // 良好 - ML Kit推奨範囲
+  height <= 50 -> 1.0      // 理想的
+  height <= 70 -> 0.95
+  else -> 0.7
+  ```
+
+  2. **評価フローの分離 (evaluateOcrQuality関数)**
+  ```kotlin
+  // ステップ1: フォーカス・コントラスト評価 (1280px - 高速化)
+  val previewScale = 1280.0f / maxOf(bitmap.width, bitmap.height)
+  val previewBitmap = Bitmap.createScaledBitmap(...)
+  val focus = calculateSharpness(grayPreview)
+  val contrastValue = contrastScore(grayPreview)
+
+  // ステップ2: 文字高さ評価 (2400px - OCRスケール)
+  val ocrScale = 2400.0f / maxOf(bitmap.width, bitmap.height)
+  val ocrBitmap = Bitmap.createScaledBitmap(...)
+  val charHeight = ImagePreprocessor.estimateCharHeight(edge)
+  // → charHeight は2400pxスケールでの値
+  ```
+
+  **期待される効果:**
+  - 文字高さ < 30px の画像 → スコア低下 → 撮り直し要求
+  - 文字高さ 30-40px → 良好スコア → OCR実行
+  - OCR精度の大幅向上（目標: 45% → 60-80%）
+  - 残存する文字化け（'ョシギニラーボフガ', '這星一のSIスシャル5軍一3'）の解消
+
+  **変更ファイル:**
+  - OcrQualityEvaluator.kt:
+    - 文字高さスコアリング: 1280pxスケール → 2400pxスケール対応
+    - 評価フローの2段階分離（preview 1280px + OCR 2400px）
+    - ドキュメント更新（V2表記追加）
+
+- **前回の更新 (2025-12-31 15:30)**:
 - **ブランチ**: feature/underlay-base
 - **セッション概要**: 品質閾値調整とパフォーマンス最適化の完成
 - **コミット**: `5e3912e` - Implement OCR quality evaluation and performance optimization

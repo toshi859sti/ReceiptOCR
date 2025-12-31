@@ -8,7 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.receiptorc.data.ReceiptDatabase
 import com.example.receiptorc.util.ImageProcessor
 import com.example.receiptorc.util.OCRProcessor
-import com.example.receiptorc.util.ProductNameCorrector
+import com.example.receiptorc.util.ProductNameCorrectorV2
 import com.example.receiptorc.util.UnderlyingBaseProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -180,8 +180,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         val correctedRows = rowsWithCategories.map { (row, category) ->
             if (row.rowType == UnderlyingBaseProcessor.RowType.NORMAL && row.itemName != null) {
-                // 通常行の商品名を補正
-                val correctionResult = ProductNameCorrector.correctProductName(
+                // 通常行の商品名を補正（V2: スコアベース）
+                val correctionResult = ProductNameCorrectorV2.correctProductName(
                     ocrName = row.itemName,
                     category = category,
                     productDao = productDao,
@@ -189,7 +189,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 )
 
                 if (correctionResult.matched) {
-                    Log.d(TAG, "[CORRECTION] ${row.itemName} -> ${correctionResult.correctedName} (${correctionResult.similarity})")
+                    Log.d(TAG, "[CORRECTION-V2] ${row.itemName} -> ${correctionResult.correctedName} (score=${correctionResult.score}, ${correctionResult.details})")
                     row.copy(itemName = correctionResult.correctedName)
                 } else {
                     row
