@@ -190,70 +190,75 @@ private fun InitialScreen(
  * カメラ画面（OCR用）
  */
 @Composable
-private fun CameraScreenForOcr(
+fun CameraScreenForOcr(
     targetBlock: String,
     expectedMarkerIds: String,
     onOcrComplete: (List<Any>) -> Unit,
     onCancel: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    forceAutoComplete: Boolean = false  // 非推奨: プレビューは常に無効化されています
 ) {
+    android.util.Log.d("CameraScreenForOcr", "=== CameraScreenForOcr composed === targetBlock: $targetBlock")
+
     val context = LocalContext.current
 
     // targetBlockをキーにして、B/Cブロックごとに異なるViewModelインスタンスを作成
     val cameraViewModel: CameraViewModel = viewModel(key = targetBlock)
     val uiState by cameraViewModel.uiState.collectAsState()
 
-    // プレビュー設定を読み込む
-    val appPreferences = remember { com.example.receiptorc.data.AppPreferences(context) }
-    val showPreview = appPreferences.cameraPreview
+    android.util.Log.d("CameraScreenForOcr", "Current uiState: ${uiState::class.simpleName}")
+
+    // プレビューは常に無効化（下に敷くタイプのみ使用）
+    val showPreview = false
+
+    android.util.Log.d("CameraScreenForOcr", "showPreview = $showPreview (always disabled)")
 
     // 再撮影時にViewModelの状態をリセット
     LaunchedEffect(targetBlock) {
         cameraViewModel.resetToPreview()
     }
 
-    // OCR完了時の処理（プレビュー表示OFFの場合のみ自動で次へ）
+    // OCR完了時の処理（プレビューは常に無効化、自動で次へ）
     LaunchedEffect(uiState) {
-        if (uiState is CameraViewModel.CameraUiState.Success) {
-            if (!showPreview) {
-                val successState = uiState as CameraViewModel.CameraUiState.Success
-                onOcrComplete(successState.ocrResults)
+        android.util.Log.d("CameraScreenForOcr", "LaunchedEffect triggered - uiState: ${uiState::class.simpleName}, showPreview: $showPreview")
+
+        // Success状態を処理
+        when (val state = uiState) {
+            is CameraViewModel.CameraUiState.Success -> {
+                android.util.Log.d("CameraScreenForOcr", "OCR Success state detected!")
+                if (!showPreview) {
+                    android.util.Log.d("CameraScreenForOcr", "Calling onOcrComplete...")
+                    // rowsとsubtotalsを結合
+                    val combinedResults: List<Any> = state.rows + state.subtotals
+                    onOcrComplete(combinedResults)
+                } else {
+                    android.util.Log.d("CameraScreenForOcr", "Skipping onOcrComplete - showPreview is true")
+                }
+            }
+            else -> {
+                // Preview, Processing, Error states - do nothing
             }
         }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // カメラプレビュー / 結果表示（全画面）
-        CameraScreen(viewModel = cameraViewModel)
-
-        // ボタン
-        if (uiState is CameraViewModel.CameraUiState.Success && showPreview) {
-            // プレビュー表示ONの場合：次へボタン
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // Success状態では処理中画面を表示（一瞬のプレビュー画面表示を防ぐ）
+        if (uiState is CameraViewModel.CameraUiState.Success) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
-                OutlinedButton(
-                    onClick = { cameraViewModel.resetToPreview() },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("再撮影")
-                }
-                Button(
-                    onClick = {
-                        val successState = uiState as CameraViewModel.CameraUiState.Success
-                        onOcrComplete(successState.ocrResults)
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("次へ")
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(modifier = Modifier.size(64.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(text = "処理中...", fontSize = 18.sp)
                 }
             }
-        } else if (uiState !is CameraViewModel.CameraUiState.Success) {
-            // 撮影前：キャンセルボタン（右下に配置して重ならないように）
+        } else {
+            // カメラプレビュー（全画面）
+            CameraScreen(viewModel = cameraViewModel)
+
+            // キャンセルボタン（撮影前のみ表示）
             OutlinedButton(
                 onClick = onCancel,
                 modifier = Modifier

@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.receiptorc.data.ReceiptDatabase
 import com.example.receiptorc.util.ImageProcessor
 import com.example.receiptorc.util.OCRProcessor
+import com.example.receiptorc.util.OcrResultEvaluator
 import com.example.receiptorc.util.ProductNameCorrectorV2
 import com.example.receiptorc.util.UnderlyingBaseProcessor
 import kotlinx.coroutines.Dispatchers
@@ -24,28 +25,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _useUpscaling = MutableStateFlow(false)
     val useUpscaling: StateFlow<Boolean> = _useUpscaling.asStateFlow()
 
-    // 台紙タイプ（上に乗せる/下に敷く）
-    private val _baseType = MutableStateFlow(BaseType.UNDERLAY)
-    val baseType: StateFlow<BaseType> = _baseType.asStateFlow()
-
-    /**
-     * 台紙タイプ
-     */
-    enum class BaseType {
-        OVERLAY,   // 上に乗せるタイプ（既存）
-        UNDERLAY   // 下に敷くタイプ（新規）
-    }
-
     sealed class CameraUiState {
         object Preview : CameraUiState()
         object Processing : CameraUiState()
         data class Success(
-            val originalBitmap: Bitmap?,
-            val transformedBitmap: Bitmap?,
-            val blockBitmap: Bitmap?,
-            val ocrResults: List<Any>  // BBlockRow, CBlockRow, または ReceiptRow
-        ) : CameraUiState()
-        data class SuccessUnderlay(
             val originalBitmap: Bitmap?,
             val transformedBitmap: Bitmap?,
             val rows: List<UnderlyingBaseProcessor.ReceiptRow>,
@@ -59,21 +42,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         Log.d(TAG, "Upscaling mode: ${if (enabled) "4x upscaling" else "1x (no scaling)"}")
     }
 
-    fun setBaseType(type: BaseType) {
-        _baseType.value = type
-        Log.d(TAG, "Base type changed to: $type")
-    }
-
     fun processImage(bitmap: Bitmap, arucoResult: ImageProcessor.ArucoDetectionResult) {
         viewModelScope.launch {
             try {
                 _uiState.value = CameraUiState.Processing
 
                 val result = withContext(Dispatchers.Default) {
-                    when (_baseType.value) {
-                        BaseType.OVERLAY -> processOverlayType(bitmap, arucoResult)
-                        BaseType.UNDERLAY -> processUnderlayType(bitmap, arucoResult)
-                    }
+                    processUnderlayType(bitmap, arucoResult)
                 }
 
                 _uiState.value = result
@@ -85,58 +60,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 上に乗せるタイプの処理（既存）
-     */
-    private suspend fun processOverlayType(
-        bitmap: Bitmap,
-        arucoResult: ImageProcessor.ArucoDetectionResult
-    ): CameraUiState {
-        val upscaling = _useUpscaling.value
-        val scalingMode = if (upscaling) "4x upscaling" else "1x (no scaling)"
-        Log.d(TAG, "[OVERLAY] Processing: ${bitmap.width}x${bitmap.height} with $scalingMode")
-
-        // 透視変換
-        val transformedBitmap = ImageProcessor.perspectiveTransform(
-            bitmap,
-            arucoResult.corners,
-            arucoResult.ids,
-            arucoResult.blockType!!
-        ) ?: throw IllegalStateException("Perspective transform failed")
-
-        Log.d(TAG, "[OVERLAY] Transformed image size: ${transformedBitmap.width}x${transformedBitmap.height}")
-
-        // ブロック全体をOCR
-        Log.d(TAG, "[OVERLAY] Starting OCR for ${arucoResult.blockType}...")
-
-        val ocrResults: List<Any> = when (arucoResult.blockType) {
-            ImageProcessor.BlockType.B_BLOCK -> {
-                OCRProcessor.recognizeWholeBlock(
-                    transformedBitmap,
-                    arucoResult.blockType,
-                    upscaling
-                )
-            }
-            ImageProcessor.BlockType.C_BLOCK -> {
-                OCRProcessor.recognizeWholeCBlock(
-                    transformedBitmap,
-                    arucoResult.blockType,
-                    upscaling
-                )
-            }
-        }
-
-        Log.d(TAG, "[OVERLAY] OCR completed: ${ocrResults.size} rows")
-
-        return CameraUiState.Success(
-            originalBitmap = bitmap,
-            transformedBitmap = transformedBitmap,
-            blockBitmap = transformedBitmap,
-            ocrResults = ocrResults
-        )
-    }
-
-    /**
-     * 下に敷くタイプの処理（新規）
+     * 下に敷くタイプの処理
      */
     private suspend fun processUnderlayType(
         bitmap: Bitmap,
@@ -144,13 +68,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     ): CameraUiState {
         Log.d(TAG, "[UNDERLAY] Processing: ${bitmap.width}x${bitmap.height}")
 
-        // 透視変換（伝票全体、固定2400×1700出力）
+        // 透視変換（伝票全体、動的サイズ出力）
         val transformedBitmap = ImageProcessor.perspectiveTransform(
             bitmap,
             arucoResult.corners,
             arucoResult.ids,
             arucoResult.blockType ?: ImageProcessor.BlockType.B_BLOCK,  // Use default when bypassing marker check
-            useFixedOutput = true  // UNDERLAY台紙用: A4全体を固定サイズで出力
+            useFixedOutput = true  // UNDERLAY台紙用: A4全体を動的サイズで出力
         ) ?: throw IllegalStateException("Perspective transform failed")
 
         Log.d(TAG, "[UNDERLAY] Transformed image size: ${transformedBitmap.width}x${transformedBitmap.height}")
@@ -159,9 +83,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val enhancedBitmap = ImageProcessor.enhanceImageForOCR(transformedBitmap)
         Log.d(TAG, "[UNDERLAY] Applied image enhancement (sharpening + CLAHE)")
 
-        // 固定2400×1700出力では mm->px比率は8.1で確定（再計算不要）
+        // mm->px比率を取得（ArUcoマーカーから動的に計算済み）
         val mmToPixelRatio = ImageProcessor.getMmToPixelRatio()
-        Log.d(TAG, "[UNDERLAY] Using fixed mm->px ratio: $mmToPixelRatio (8.1px/mm)")
+        Log.d(TAG, "[UNDERLAY] Using mm->px ratio: $mmToPixelRatio px/mm (dynamically calculated)")
 
         // 下に敷くタイプのOCR処理
         Log.d(TAG, "[UNDERLAY] Starting OCR with row clustering...")
@@ -173,12 +97,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val rowsWithCategories = UnderlyingBaseProcessor.assignCategories(result.rows)
         Log.d(TAG, "[UNDERLAY] Categories assigned to ${rowsWithCategories.size} rows")
 
-        // 辞書ベース商品名補正
+        // 辞書ベース商品名補正 + ダブルOCR選択
         val database = ReceiptDatabase.getDatabase(getApplication())
         val productDao = database.productMasterDao()
         val variantDao = database.ocrVariantDao()
 
-        val correctedRows = rowsWithCategories.map { (row, category) ->
+        val correctedRows = rowsWithCategories.mapIndexed { index, (row, category) ->
             if (row.rowType == UnderlyingBaseProcessor.RowType.NORMAL && row.itemName != null) {
                 // 通常行の商品名を補正（V2: スコアベース）
                 val correctionResult = ProductNameCorrectorV2.correctProductName(
@@ -189,7 +113,43 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 )
 
                 if (correctionResult.matched) {
-                    Log.d(TAG, "[CORRECTION-V2] ${row.itemName} -> ${correctionResult.correctedName} (score=${correctionResult.score}, ${correctionResult.details})")
+                    // 辞書マッチング成功 → ダブルOCR結果があれば段階B評価で最良選択
+                    val doubleOcrResult = result.productNameDoubleOcrMap[index]
+                    if (doubleOcrResult != null) {
+                        val grayText = doubleOcrResult.grayText
+                        val binaryText = doubleOcrResult.binaryText
+                        val binaryCandidateScore = doubleOcrResult.binaryCandidateScore
+
+                        // 段階B: OCR結果の最良選択（グレーは常に主系）
+                        if (grayText != null) {
+                            val grayOcrResult = OcrResultEvaluator.OcrResult(
+                                text = grayText,
+                                confidence = null,
+                                source = "gray",
+                                binaryCandidateScore = 0.0  // グレーには段階Aスコアなし
+                            )
+
+                            val binaryOcrResult = if (binaryText != null) {
+                                OcrResultEvaluator.OcrResult(
+                                    text = binaryText,
+                                    confidence = null,
+                                    source = "binary",
+                                    binaryCandidateScore = binaryCandidateScore
+                                )
+                            } else null
+
+                            Log.d(TAG, "[OCR-SELECT] Row $index: Evaluating OCR results...")
+                            val bestResult = OcrResultEvaluator.chooseBestResult(
+                                grayOcrResult,
+                                binaryOcrResult,
+                                correctionResult.correctedName  // 辞書の正規名で評価
+                            )
+                            Log.d(TAG, "[OCR-SELECT] Row $index: Selected ${bestResult.source}")
+                        }
+                    }
+
+                    // 最終的には辞書の正規名を使用
+                    Log.d(TAG, "[CORRECTION-V2] Row $index: ${row.itemName} -> ${correctionResult.correctedName} (score=${correctionResult.score}, ${correctionResult.details})")
                     row.copy(itemName = correctionResult.correctedName)
                 } else {
                     row
@@ -201,7 +161,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         Log.d(TAG, "[UNDERLAY] Product name correction completed")
 
-        return CameraUiState.SuccessUnderlay(
+        return CameraUiState.Success(
             originalBitmap = bitmap,
             transformedBitmap = transformedBitmap,
             rows = correctedRows,

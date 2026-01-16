@@ -1,655 +1,446 @@
-# Receipt OCR Project - Claude Code Rules
+# Receipt OCR Project - Development Guidelines
 
-## プロジェクト概要
 Android向けの伝票OCRアプリケーション。ArUcoマーカーを使用した台紙ベースのOCR処理を実装。
 
-## 現在のブランチ構成
-- **master**: 上に乗せるタイプ(OVERLAY) - ✅ 完成
-- **feature/underlay-base**: 下に敷くタイプ(UNDERLAY) - 🔄 開発中
+---
 
-## 現在の状況 (2025-12-30)
+## ドキュメント構成
 
-### ✅ 実装完了機能
-0. **辞書ベース補正システム** (2025-12-29実装) - ✅ 完成
-   - ProductMaster, OcrVariant, YayoiAccount, RakurakuAccount エンティティ
-   - 4つのDAO + Room Database migration (v2→v3)
-   - CSVインポート (113商品, 15弥生勘定科目, 15らくらく勘定科目, 13OCR誤認識パターン)
-   - 容量保護型マッチング (レーベンシュタイン距離, 類似度閾値0.7)
-   - カテゴリ別フィルタリング (小計行から逆算)
-   - 自動学習機能 (新しい誤認識パターンを記録)
+詳細な情報は以下のドキュメントを参照:
 
-### ✅ 実装完了機能
-1. カメラ権限リクエスト (MainActivity起動時)
-2. ArUcoマーカー検出 (B_BLOCK: ID 0,1,2,3)
-3. **固定サイズ透視変換** (2400×1700px, 8.1px/mm) - A4全体を固定出力
-4. **列範囲の細分化定義** (mm→px変換、取扱支店/数量/税込単価を分離)
-5. Y座標フィルタリング (有効範囲: 87.5-151.5mm、給油所セクション含む)
-6. **Y座標ベース行クラスタリング** (閾値15px、仕様準拠)
-7. **数量列の取得対応** (QUANTITY_RANGE追加)
-8. 数字専用正規化 (O→0, I→1, S→5, スペース削除、負値対応)
-9. ML Kit OCR処理 (日本語 + Latin)
-10. 小計抽出ロジック (キーワードベース + 数値正規化)
-11. **数量列特化OCR処理** (Latin OCR + 4倍拡大)
-12. **商品名クリーニング** (日付パターン除去)
-13. **画質チェック機能** (フォーカス + 輝度)
-14. **リアルタイム品質表示UI** (撮影準備完了通知)
-15. **OCR画像前処理** (シャープ化 + CLAHE) - ✅ NEW
-16. **フォーカス閾値最適化** (250.0) - ✅ NEW
-
-### ✅ 最新改善 (2025-12-25 00:00)
-**OCR画像前処理 & 辞書ベース補正設計** - OCR精度のさらなる向上
-
-**背景:**
-画質チェック機能により安定した撮影ができるようになったが、依然として誤字が多い:
-- "乳素" → "乳剤" への誤認識
-- "ガッリン" → "ガソリン" への誤認識
-- i/o/O の誤認識が多数
-- ユーザー要求: 「何度撮影したけど誤字が多い。」
-
-**実装内容:**
-
-1. **OCR画像前処理** (ImageProcessor.kt:1197-1269, CameraViewModel.kt:156-158)
-   ```kotlin
-   fun enhanceImageForOCR(bitmap: Bitmap): Bitmap {
-       // 1. グレースケール変換
-       val grayMat = Mat()
-       Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_BGRA2GRAY)
-
-       // 2. シャープニング (Unsharp Mask)
-       val blurred = Mat()
-       Imgproc.GaussianBlur(grayMat, blurred, Size(0.0, 0.0), 3.0)
-       val sharpened = Mat()
-       Core.addWeighted(grayMat, 1.5, blurred, -0.5, 0.0, sharpened)
-
-       // 3. CLAHE (コントラスト制限適応ヒストグラム均等化)
-       val clahe = Imgproc.createCLAHE()
-       clahe.clipLimit = 2.0
-       clahe.tilesGridSize = Size(8.0, 8.0)
-       clahe.apply(sharpened, claheMat)
-
-       return matToBitmap(claheMat)
-   }
-
-   // CameraViewModel.kt: 透視変換後に前処理を適用
-   val enhancedBitmap = ImageProcessor.enhanceImageForOCR(transformedBitmap)
-   val result = OCRProcessor.processUnderlayingBase(enhancedBitmap)
-   ```
-   - **シャープニング**: Unsharp Mask (weight=1.5, blur=-0.5) で文字輪郭を強調
-   - **CLAHE**: 局所的なコントラスト強化で小さい文字を明瞭化
-
-2. **フォーカス閾値の引き上げ** (CameraScreen.kt:491)
-   ```kotlin
-   private const val FOCUS_THRESHOLD = 250.0  // 200.0 → 250.0
-   ```
-   - 画像前処理と併用することで、より高品質な画像のみ撮影
-
-**テスト結果 (2025-12-24 23:50):**
-```
-改善された誤字:
-- "乳素" → "乳剤" ✅ (画像前処理の効果)
-- "ガッリン" → "ガソリン" ✅ (画像前処理の効果)
-- "レギュラー" も正しく認識 ✅
-
-依然として残る誤字:
-- i/o/O の誤認識: "07i1021", "p7i101 O", "07i103o|" など
-- 一部の文字: "類"→"頼", "2g"→"2kg" など
-- 商品名への日付混入: "07i1oi11|トミーネクサス" (パターンが長すぎて除去失敗)
-
-小計精度: 100% (53551, 15810) ✅ 維持
-```
-
-**改善効果:**
-- **文字認識向上**: "乳剤"と"ガソリン"の認識が改善
-- **ML Kit OCRの限界**: i/l/1, o/O/0 の誤認識は完全には解決できず
-- **次の施策**: 辞書ベース補正が必要
+- **[CHANGELOG.md](docs/CHANGELOG.md)** - 過去の改善履歴 (2025-12-23以降)
+- **[OCR_SPEC.md](docs/OCR_SPEC.md)** - 技術仕様 (座標、閾値、定数)
+- **[DICTIONARY.md](docs/DICTIONARY.md)** - 辞書補正システム設計
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - システムアーキテクチャ
 
 ---
 
-### 🔄 次期実装予定: 辞書ベース補正システム
+## ブランチ構成
 
-**設計方針:**
-農協の購買伝票は商品が限定的なため、辞書ベースの補正が非常に効果的。
-
-**重要な要件:**
-1. **商品コードなし** - 商品名のみで補正
-2. **カテゴリは小計ベース** - "一般購買", "給油所", "農業機械" など
-3. **容量違いの商品あり** - 正しい容量を誤って書き換えない仕組みが必須
-
-**容量保護型マッチング設計:**
-
-```kotlin
-// 1. データベース設計
-@Entity(tableName = "product_master")
-data class ProductMaster(
-    @PrimaryKey(autoGenerate = true)
-    val id: Long = 0,
-    val productName: String,    // 正しい商品名 (例: "フェニックス顆粒水和剤250g")
-    val category: String,       // カテゴリ: "一般購買", "給油所", "農業機械"
-    val frequency: Int = 0,     // 使用頻度（よく買う商品を優先）
-    val createdAt: Long = System.currentTimeMillis()
-)
-
-// 2. 商品名分解
-data class ProductNameParts(
-    val baseName: String,   // "フェニックス顆粒水和剤"
-    val capacity: String?,  // "250g"
-    val fullName: String    // "フェニックス顆粒水和剤250g"
-)
-
-fun parseProductName(name: String): ProductNameParts {
-    // 容量パターン: 数字 + 単位
-    val capacityPattern = Regex("""(\d+(?:\.\d+)?)(g|kg|ml|mℓ|L|ℓ|cc|個|本|枚|袋|缶)$""")
-    val match = capacityPattern.find(name)
-
-    return if (match != null) {
-        val capacity = match.value
-        val baseName = name.removeSuffix(capacity).trim()
-        ProductNameParts(baseName, capacity, name)
-    } else {
-        ProductNameParts(name, null, name)
-    }
-}
-
-// 3. 容量保護型補正ロジック
-suspend fun correctProductName(
-    ocrName: String,
-    category: String,
-    productDao: ProductMasterDao
-): Pair<String, Float> {
-    // OCR結果を分解
-    val ocrParts = parseProductName(ocrName)
-
-    // カテゴリ内の商品を取得
-    val products = productDao.getProductsByCategory(category)
-
-    var bestMatch: ProductMaster? = null
-    var bestSimilarity = 0f
-
-    for (product in products) {
-        val masterParts = parseProductName(product.productName)
-
-        // ベース名のみで類似度を計算
-        val baseSimilarity = calculateSimilarity(
-            ocrParts.baseName,
-            masterParts.baseName
-        )
-
-        // 容量がある場合は、容量も一致する商品のみ候補に
-        if (ocrParts.capacity != null && masterParts.capacity != null) {
-            // 容量が一致する場合のみマッチング対象
-            if (ocrParts.capacity == masterParts.capacity) {
-                if (baseSimilarity > bestSimilarity) {
-                    bestSimilarity = baseSimilarity
-                    bestMatch = product
-                }
-            }
-        } else {
-            // 容量なしの商品
-            if (baseSimilarity > bestSimilarity) {
-                bestSimilarity = baseSimilarity
-                bestMatch = product
-            }
-        }
-    }
-
-    // 補正結果を生成（ベース名は補正、容量はOCRを保持）
-    return if (bestSimilarity >= SIMILARITY_THRESHOLD && bestMatch != null) {
-        val masterParts = parseProductName(bestMatch.productName)
-
-        // ベース名を補正、容量はOCRを保持
-        val correctedName = if (ocrParts.capacity != null) {
-            "${masterParts.baseName}${ocrParts.capacity}"
-        } else {
-            bestMatch.productName
-        }
-
-        Pair(correctedName, bestSimilarity)
-    } else {
-        Pair(ocrName, 0f)
-    }
-}
-
-// 4. レーベンシュタイン距離（編集距離）
-private fun levenshteinDistance(s1: String, s2: String): Int {
-    val len1 = s1.length
-    val len2 = s2.length
-    val dp = Array(len1 + 1) { IntArray(len2 + 1) }
-
-    for (i in 0..len1) dp[i][0] = i
-    for (j in 0..len2) dp[0][j] = j
-
-    for (i in 1..len1) {
-        for (j in 1..len2) {
-            val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
-            dp[i][j] = minOf(
-                dp[i - 1][j] + 1,      // 削除
-                dp[i][j - 1] + 1,      // 挿入
-                dp[i - 1][j - 1] + cost // 置換
-            )
-        }
-    }
-
-    return dp[len1][len2]
-}
-
-private fun calculateSimilarity(s1: String, s2: String): Float {
-    val distance = levenshteinDistance(s1, s2)
-    val maxLength = maxOf(s1.length, s2.length)
-    return if (maxLength == 0) 1f else 1f - (distance.toFloat() / maxLength)
-}
-```
-
-**補正例:**
-```
-例1: 容量が正しい場合
-OCR:  "フェニックス類粒水和剤250g"
-      ↓ 分解
-Base: "フェニックス類粒水和剤"  Capacity: "250g"
-      ↓ マスタとベース名で比較（容量一致のもののみ）
-Master: "フェニックス顆粒水和剤 250g" ✓ (容量一致)
-        "フェニックス顆粒水和剤 500g" ✗ (容量不一致 → 除外)
-      ↓
-Result: "フェニックス顆粒水和剤250g"
-        (ベース名補正、容量は保持)
-
-例2: 容量なしの商品
-OCR:  "レギュラーガリン"
-      ↓ 分解
-Base: "レギュラーガリン"  Capacity: null
-      ↓ マスタとベース名で比較
-Master: "レギュラーガソリン" ✓
-      ↓
-Result: "レギュラーガソリン"
-```
-
-**実装予定:**
-1. ProductMaster.kt, ProductMasterDao.kt 作成
-2. ReceiptDatabase.kt に product_master テーブル追加
-3. ProductNameCorrector.kt 作成
-4. assets/product_master.csv 作成 (初期データ)
-5. UnderlyingBaseProcessor.kt に統合
-6. カテゴリ判定ロジック（小計行から逆算）
-
-**期待効果:**
-- "類" → "顆粒" などの誤字を自動補正
-- i/o/O の誤認識を吸収
-- 容量誤変換を防止（250g → 500g への誤変換なし）
-- カテゴリ別フィルタで精度向上
+- **master**: 上に乗せるタイプ (OVERLAY) - ✅ 完成
+- **feature/underlay-base**: 下に敷くタイプ (UNDERLAY) - 🔄 開発中
 
 ---
 
-### ✅ 過去の改善
+## 現在の状況 (2026-01-15)
 
-#### 2025-12-24 22:36: 商品名クリーニング & 総合品質管理システム
+### ✅ 最新完了 (2026-01-15)
+**小計カテゴリ排他制御機能の実装**
 
-**背景:**
-実際の伝票画像でテストした結果、以下の問題が判明:
-- 商品名に日付パターンが混入 (例: "p71008米用紙袋", "めE1021フェニックス")
-- 金額の正規化不足 (例: "158 1o" → 15810への変換失敗)
-- 撮影品質が不安定 (シャープネス: 38-197の大きなばらつき)
-- ユーザー要求: "良い条件になったら撮影されるようにできないの？"
+#### 1. 小計フラグ管理システム
+- **MonthlySubtotalFlags データクラス追加** (ReceiptInputScreen.kt)
+  - 月ごとの小計使用状況を追跡（一般購買、農業機械、給油所）
+  - `isAvailable(category)`: カテゴリが利用可能かチェック
+  - `availableCategories()`: 利用可能なカテゴリ一覧を取得
+- **calculateSubtotalFlags関数**: 全伝票データから小計フラグを動的に計算
+- **同じカテゴリの小計が2回出てこないよう制御**
 
-**実装内容:**
+#### 2. 一文字検出機能
+- **detectCategoryBySingleChar関数追加** (3箇所に実装)
+  - ReceiptInputScreen.kt, CategoryRecalculator.kt, UnderlyingBaseProcessor.kt
+  - 一文字でもカテゴリを判別可能（各カテゴリに固有文字があるため）
+  - 固有文字セット:
+    - 一般購買: 般, 購, 買, 講, 課
+    - 農業機械: 農, 機, 械, 展, 慢, 城, 来, 発, 検
+    - 給油所: 給, 油, 所, 値, 造, 治, 抽
 
-1. **商品名クリーニング機能** (UnderlyingBaseProcessor.kt:690-710)
-   ```kotlin
-   private fun cleanItemName(itemName: String): String {
-       // パターン1: OCR誤認識を含む日付パターン (071xxx → p71xxx, めE1021など)
-       val pattern1 = Regex("^.{0,3}[0-9oOlI.:/ ]{4,7}[|]?")
-       var cleaned = itemName.replace(pattern1, "")
+#### 3. デフォルトカテゴリの変更
+- **「一般購買」→「未分類」に変更**
+  - detectCategoryFromProductName関数: else句を「未分類」に変更
+  - recalculateCategoriesInMemory関数: 最初の小計までは「未分類」
+  - CategoryRecalculator.kt: デフォルトを「未分類」に変更
+  - UnderlyingBaseProcessor.kt: デフォルトを「未分類」に変更
 
-       // パターン2: 正確な6桁日付 (071011など)
-       if (cleaned == itemName) {
-           val pattern2 = Regex("^\\d{6}[|]?")
-           cleaned = itemName.replace(pattern2, "")
-       }
+#### 4. CellEditDialogの改修
+- **小計カテゴリ選択時のグレーアウト制御**
+  - 使用済みカテゴリは選択不可（RadioButton無効化）
+  - 「(使用済み)」ラベル表示
+  - 現在の行のカテゴリは選択可能（変更なしで保存可能）
+  - 表示順序: 一般購買 → 農業機械 → 給油所
 
-       // 前方の区切り文字を削除
-       cleaned = cleaned.trimStart('|', ' ', '　')
+#### 5. カテゴリ再計算ロジックの全面改修
+- **recalculateCategoriesInMemory関数の完全書き換え**
+  - 全伝票を通じて処理（前の伝票も含めて遡り更新）
+  - ステップ1: 全伝票から小計を収集（伝票番号順、行番号順）
+  - ステップ2: 各行に「次の小計のカテゴリ」を割り当て
+  - ステップ3: 最初の小計より前の行を遡って更新（前の伝票も含む）
+  - ステップ4: カテゴリを反映した新しいデータを作成
 
-       // 空文字列になった場合は元の文字列を返す
-       if (cleaned.isEmpty() || cleaned.length < 2) {
-           cleaned = itemName
-       }
+#### 6. フラグ更新トリガー
+- 以下のタイミングでカテゴリ再計算を実行:
+  - OCR完了後
+  - 伝票削除後
+  - 伝票クリア後
+  - 直接入力で小計行を作成/変更/削除した時
+- 検証表示の集計値はリアルタイムで自動更新
 
-       return cleaned
-   }
-   ```
-   - **特徴**: OCR誤認識に強い柔軟なパターンマッチング
-   - **対応ケース**: "p71008" (0→o), "めE1021" (日本語混入), "071011" (正確な日付)
+**修正対象ファイル**:
+- `app/src/main/java/com/example/receiptorc/ui/ReceiptInputScreen.kt`
+- `app/src/main/java/com/example/receiptorc/util/CategoryRecalculator.kt`
+- `app/src/main/java/com/example/receiptorc/util/UnderlyingBaseProcessor.kt`
 
-2. **金額・小計の正規化強化** (UnderlyingBaseProcessor.kt:580-620)
-   ```kotlin
-   // 金額列: 負値対応 + 数値正規化
-   ColumnType.AMOUNT -> {
-       val isNegative = box.text.contains("-")
-       val normalized = normalizeToDigits(box.text)
-       val value = normalized.toIntOrNull()
-       amount = if (isNegative && value != null) -value else value
-   }
-
-   // 小計列: normalizeToDigits適用
-   ColumnType.CATEGORY_SUM -> {
-       val normalized = normalizeToDigits(box.text)
-       categorySum = normalized.toIntOrNull()
-   }
-
-   // normalizeToDigits関数
-   fun normalizeToDigits(text: String): String {
-       return text
-           .replace("o", "0").replace("O", "0")
-           .replace("l", "1").replace("I", "1")
-           .replace("S", "5").replace("s", "5")
-           .replace(" ", "").replace(",", "")
-   }
-   ```
-   - **効果**: "158 1o" → "15810", "S3551" → "53551"に正規化成功
-
-3. **総合品質管理システム** (CameraScreen.kt:380-550)
-
-   a) **輝度計算関数** (新規実装)
-   ```kotlin
-   private fun calculateBrightness(bitmap: Bitmap): Double {
-       // 640x480にスケール（処理高速化）
-       val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 640, 480, true)
-       val pixels = IntArray(width * height)
-       scaledBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-
-       // グレースケール変換して平均輝度を計算
-       var sumBrightness = 0.0
-       for (pixel in pixels) {
-           sumBrightness += getGray(pixel)
-       }
-
-       return sumBrightness / pixels.size
-   }
-
-   private fun getGray(pixel: Int): Double {
-       val r = (pixel shr 16) and 0xFF
-       val g = (pixel shr 8) and 0xFF
-       val b = pixel and 0xFF
-       return 0.299 * r + 0.587 * g + 0.114 * b
-   }
-   ```
-
-   b) **品質閾値の最適化**
-   ```kotlin
-   private const val FOCUS_THRESHOLD = 200.0      // 150.0 → 200.0 (更なる品質向上)
-   private const val BRIGHTNESS_MIN = 40.0        // 暗すぎる画像を除外
-   private const val BRIGHTNESS_MAX = 220.0       // 明るすぎる画像を除外
-   ```
-
-   c) **3段階品質チェック + 自動撮影**
-   ```kotlin
-   val isFocusGood = sharpness > FOCUS_THRESHOLD
-   val isBrightnessGood = brightness in BRIGHTNESS_MIN..BRIGHTNESS_MAX
-   val markerDetected = arucoResult.blockType != ArUcoBlockType.UNKNOWN
-
-   // すべての条件を満たした場合のみ自動撮影
-   if (markerDetected && isFocusGood && isBrightnessGood && !hasDetectedMarker) {
-       Log.d("CameraScreen", "Auto-capture: Focus OK ($sharpness), Brightness OK ($brightness)")
-       onProcessingChange(true)
-       viewModel.processImage(bitmap, arucoResult)
-   }
-   ```
-
-   d) **リアルタイム品質表示UI**
-   ```kotlin
-   Card(
-       modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
-       colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
-   ) {
-       Column(modifier = Modifier.padding(12.dp)) {
-           // シャープネス・輝度の数値表示
-           Text("シャープネス: ${sharpness.toInt()} ${if (isFocused) "✓" else "✗"}")
-           Text("輝度: ${brightness.toInt()} ${if (isBrightnessGood) "✓" else "✗"}")
-
-           // 総合ステータス
-           val allGood = isFocused && isBrightnessGood && hasDetectedMarker
-           Text(
-               text = if (allGood) "✓ 撮影準備完了" else "カメラを調整してください",
-               color = if (allGood) Color.Green else Color.Red,
-               fontWeight = FontWeight.Bold
-           )
-       }
-   }
-   ```
-
-**テスト結果 (2025-12-24 22:30):**
-```
-実測値と比較:
-一般購買 小計: 53,551円 ✅ 完全一致 (OCR: 53551)
-給油所 小計:   15,810円 ✅ 完全一致 (OCR: 15810)
-
-画質メトリクス:
-- シャープネス: 1558.6 (閾値200.0を大幅に上回る)
-- 輝度: 155.5 (40-220の適正範囲内)
-
-商品名クリーニング:
-- "p71008米用紙袋" → "米用紙袋" ✅
-- "めE1021フェニックス" → "フェニックス" ✅
-- すべての商品名から日付パターンを正常に除去
-```
-
-**改善効果:**
-- **小計精度**: 0% → **100%** (2/2項目が完全一致)
-- **商品名品質**: 日付混入問題を完全解決
-- **撮影品質**: 不安定 (38-197) → 安定 (1500+)
-- **ユーザー体験**: 品質をリアルタイム確認 → 高品質撮影を確実に実行
-
-**技術的意義:**
-- **3層品質管理**: マーカー検出 + フォーカス + 輝度の複合チェック
-- **OCR誤認識への対応**: 正規表現 + 複数パターンのフォールバック
-- **実運用レベル**: 実際の伝票で小計が完全一致する精度を実現
+**ビルド**: 成功確認済み
 
 ---
 
-### ✅ 過去の改善
+### ✅ 前回完了 (2026-01-12 v4)
+**伝票入力画面の改善 & 小計・合計検証の全枚数対応**
 
-#### 2025-12-24 08:30: フォーカス品質最適化 & Y軸範囲修正
-- フォーカス閾値を150.0に引き上げ (品質優先モード)
-- Y軸有効範囲を120.5mmに修正 (実測値ベース)
-- 数量検出精度: 50% → 57% → 64%
-- 小さい1桁数字(1, 2, 9)の新規検出に成功
+#### 1. 伝票削除処理の修正
+- **ReceiptInputScreen.kt: 伝票削除処理の改善**
+  - 修正前: 全伝票が削除されていた
+  - 修正後: 現在表示中の伝票のみを削除
+  - 後続のシート番号を自動的に繰り上げ
+  - 例: 1,2,3枚目 → 2枚目を削除 → 1,2枚目（旧3枚目が2枚目に）
 
-#### 2025-12-24 07:15: 数量列特化OCR処理の実装
-**課題:**
-ML Kit日本語モデルは小さい1桁数字を「ノイズ」として落としやすい
-- 日本語 > 数字、大きい文字 > 小さい文字 を優先
-- 商品名「インゲンDB2kg」は検出されるが、数量「2」は未検出
+#### 2. 小計・合計検証の全枚数対応
+- **ReceiptInputScreen.kt: validateAllSheetsData関数の実装**
+  - 全伝票のデータを集計して、カテゴリごとの小計と合計を内訳付きで表示
+  - 表示形式:
+    ```
+    小計　一般購買　入力値：1,000
+    　一致　　計算値：1,000
+        （1枚目 700、2枚目 300）
 
-**解決策: 2段階OCR処理**
-1. **全体OCR（日本語モデル）** - 行検出、商品名、金額、行タイプ
-2. **数量列特化OCR（Latin + 4倍拡大）** - 数量のみ再処理して上書き
+    合計　　　　　　入力値：1,400
+    　一致　　計算値：1,420
+        （1枚目 700、2枚目 720）
+    ```
+  - 各行の`category`フィールドを使ってカテゴリ別に集計
+  - カテゴリ別内訳を表示（伝票番号付き）
 
-**実装内容:**
-1. **数量列ROI切り出し** (OCRProcessor.kt:522-638)
-   ```kotlin
-   // 1. 数量列を切り出し (X: 1134-1296px)
-   val quantityColumnBitmap = Bitmap.createBitmap(warpedBitmap, quantityX, 0, quantityWidth, height)
+#### 3. 撮影完了後のライト自動消灯
+- **CameraScreen.kt: Success状態での消灯処理追加**
+  - Processing状態とSuccess状態の両方でライトを消灯
+  - 撮影完了後も消えたままに
+  - 手動オン/オフは引き続き可能
 
-   // 2. 4倍アップスケール (162px → 648px)
-   val upscaledBitmap = Bitmap.createScaledBitmap(quantityColumnBitmap, width * 4, height * 4, true)
+#### 4. カテゴリ集計の根本的な修正
+- **問題**: 1枚目の給油所データが小計に含まれていなかった
+- **原因**: validateAllSheetsData関数がsubtotalCategoryのみ見ていた
+- **修正内容**:
+  - ReceiptRowDataに`category`フィールドを追加
+  - convertReceiptItemsToRowsでDBのcategoryをコピー
+  - validateAllSheetsDataで各行のcategoryフィールドを使って集計
+  - saveMonthDataで既存のcategoryフィールドを保持
+  - CategoryRecalculatorによる再計算が正しく反映されるように
 
-   // 3. Latin OCR（数字に強い）
-   val text = recognizeTextLatin(upscaledBitmap)
+#### 5. 一般購買の小計が計算されない問題を修正
+- **問題**: 一般購買の小計が計算されず表示されなかった
+- **原因**: OCR結果から小計行を作成する際にcategoryフィールドが未設定
+- **修正内容**:
+  - detectCategoryFromProductName関数を追加（商品名からカテゴリ検出）
+  - convertOcrResultsToRowsで小計行作成時にカテゴリを設定
+  - CategoryRecalculatorと同じロジックを使用
 
-   // 4. Y座標で行にマッピング → 上書き
-   ```
+#### 6. 再計算機能の改善
+- **TopAppBarの「再計算」ボタンを改善**
+  - 修正前: 表示モードのみ表示
+  - 修正後: 編集モード中にも表示
+  - 編集モード中の再計算: 先に保存 → 再計算 → 再ロード
+- **「決定」ボタンでの自動再計算**
+  - 既に実装済み（保存 → 再計算 → 再ロード）
 
-2. **正規化関数** (UnderlyingBaseProcessor.kt:688-698)
-   ```kotlin
-   fun normalizeQuantity(raw: String): Int? {
-       return raw
-           .replace("o", "0").replace("O", "0")
-           .replace("l", "1").replace("I", "1")
-           .replace(" ", "").replace(",", "")
-           .toIntOrNull()
-   }
-   ```
-   - OCR誤認識を修正（o→0、スペース削除）
-   - 行内結合（"2 85o" → "2850"）
+**動作フロー**:
+1. 1枚目OCR: 一般購買小計が検出され、category設定
+2. 2枚目追加: 給油所小計が検出され、category設定
+3. 「決定」または「再計算」: CategoryRecalculatorが1枚目の「未定」を「給油所」に再分類
+4. 検証表示: 各行のcategoryで正しく集計（一般購買、給油所の内訳表示）
 
-3. **返品処理** (OCRProcessor.kt:789-798)
-   ```kotlin
-   // 商品名に「返品」が含まれていれば数量を負値に
-   if (row.itemName?.contains("返品") == true && qty > 0) {
-       quantity = -qty
-   }
-   ```
+### ✅ 前回完了 (2026-01-12 v3)
+**二段階Binary OCR評価システム & 数量列OCR完全再設計**
 
-**効果:**
-- 初期実装で 50% → 57% に改善
-- 「50」「2920」「2850」などの検出・正規化に成功
+#### 1. 二段階Binary OCR評価システム (2-Stage Binary OCR Evaluation)
+**設計思想**: Gray OCRが主系、Binary OCRは「明確に勝った場合のみ」採用
 
-#### 2025-12-23 23:35: 行クラスタリング最適化
-1. **行クラスタリング閾値の最適化**
-   - 旧: 25px (広すぎて異なる行が混在)
-   - 新: 15px (実測値ベース: 64.5mm/20行≈3.2mm/行)
-   - 結果: 28行 → 32行に分離、各行が独立した伝票行になった
+- **段階A: 実行判定 (Should Run Binary OCR?)** - ImagePreprocessor.kt, OCRProcessor.kt
+  - ハード条件（最低要件）:
+    - 文字高さ ≥ 18px
+    - 黒画素率 ≤ 0.45
+    - エッジ密度 ≥ 0.02
+  - 候補スコア計算（binaryCandidateScore）:
+    - 0.40 × 文字高さ正規化 + 0.40 × エッジ密度正規化 - 0.20 × 線幅分散ペナルティ
+    - 閾値: ≥ 0.5 で実行
+  - **線幅分散を段階的ペナルティに変更**（禁止条件から控除要素へ）:
+    - 日本語テキストは自然に分散が高い（漢字: 太い、ひらがな: 細い）
+    - ≤0.3: ペナルティなし、≤0.6: -0.1、≤0.9: -0.2、>0.9: -0.3
 
-2. **列範囲の再定義** (IGNORE_RANGEを細分化)
-   ```
-   旧構成 (問題あり):
-   - IGNORE_RANGE: 992-1437px (122.5-177.5mm) ← 数量も無視されていた
+- **段階B: 採用判定 (Should Adopt Binary Result?)** - OcrResultEvaluator.kt
+  - Gray/Binaryスコア計算（辞書の正規名で評価）:
+    - Gray: 0.35×信頼度 + 0.25×辞書一致 + 0.10×文字数妥当性
+    - Binary: 0.30×信頼度 + 0.35×辞書一致 + 0.10×文字数妥当性（辞書重視）
+  - Binary採用条件（すべて満たす必要あり）:
+    1. binaryCandidateScore ≥ 0.6
+    2. confidence ≥ 0.55
+    3. dictMatchScore ≥ 0.5
+    4. binaryScore ≥ grayScore + 0.15
+  - CameraViewModel.kt: 辞書マッチング成功時に段階B評価を実行
 
-   新構成 (最適化):
-   - DATE_RANGE:      392-510px   (48.5-63.0mm)    取引日
-   - ITEM_RANGE:      510-992px   (63.0-122.5mm)   商品名
-   - STORE_RANGE:     992-1133px  (122.5-140.0mm)  取扱支店 (無視)
-   - QUANTITY_RANGE:  1133-1295px (140.0-160.0mm)  数量 (取得！)
-   - UNITPRICE_RANGE: 1295-1437px (160.0-177.5mm)  税込単価 (無視)
-   - AMOUNT_RANGE:    1437-1611px (177.5-199.0mm)  税込金額
-   - CATEGORY_RANGE:  1611-1786px (199.0-220.5mm)  分類計
-   ```
+#### 2. 数量列OCR完全再設計 (Quantity Column OCR Redesign)
+**設計思想**: 固定4倍拡大廃止 → 文字高さ正規化 + 罫線物理除去
 
-3. **ReceiptRowデータ構造の拡張**
-   ```kotlin
-   data class ReceiptRow(
-       val rowType: RowType,
-       val date: String?,
-       val itemName: String?,
-       val quantity: String?,  // ← 新規追加
-       val amount: Int?,
-       val categorySum: Int?,
-       val rawText: String?
-   )
-   ```
+- **OCRProcessor.kt: extractQuantitiesFromColumn() 完全書き換え**
+  - 8ステップフロー（行ごと処理、列全体ではない）:
+    1. 行ROI抽出
+    2. グレースケール変換
+    3. **罫線除去**（OCR前処理、最重要）
+    4. 文字高さ推定（軽量二値化 → 輪郭抽出 → 高さ分布 → 中央値）
+    5. **適応的スケーリング**（固定4倍→動的1.0-3.0倍）
+       - scale = (30.0 / charPx).coerceIn(1.0, 3.0)
+    6. Latin OCR実行
+    7. **Bboxシェイプフィルタ**（OCR後フィルタ）
+       - アスペクト比 > 5.0 を除外（横線検出）
+       - 高さ < 12px を除外（細い線）
+    8. 正規表現チェック（^[0-9]{1,3}$）
 
-### ⚠️ 現在の課題
-1. **日付の誤認識** - ✅ 部分的に解決 (商品名からは除去完了)
-   - 商品名への混入: ✅ 解決 (cleanItemName関数で除去)
-   - 日付列の誤認識: 例: 071011→871011 (引き続き改善検討中)
+- **ImagePreprocessor.kt: 罫線除去機能追加**
+  - removeLines(): モルフォロジー処理で縦線優先除去
+    - 縦カーネル: 高さ60%（数字の縦線は短い → 残る）
+  - estimateCharHeightSimple(): 軽量文字高さ推定
+    - 軽量二値化 → 輪郭抽出 → 高さ分布 → 中央値
 
-2. **数量の検出率** - ⚠️ 継続改善中
-   - 現在: **64% (9/14項目)** - フォーカス閾値最適化で改善
-   - 未検出: 1桁数字の一部（5など、位置・サイズ依存）
-   - 次の改善策: 前処理追加（シャープ化、コントラスト強化、二値化）
+#### 3. Y座標フィルタリング修正
+- **UnderlyingBaseProcessor.kt: 合計行開始位置を修正**
+  - MONTHLY_TOTAL_Y_START_MM: 122.0 → 121.0（153.0mm → 152.0mm）
+  - 理由: 実測152.71mm（Y=2138px ÷ 14.0 px/mm）に対応
+- **OCRProcessor.kt: フィルタリングを行タイプ判定後に移動**
+  - 従来: OCR → 行クラスタリング → Y座標フィルタ → 行タイプ判定
+  - 修正後: OCR → 行クラスタリング → 行タイプ判定 → 行タイプ別Y座標フィルタ
+  - 効果: 合計行が「見る前に捨てられる」問題を解消（33→20行にフィルタ）
 
-3. **個別項目の精度向上**
-   - 小計: ✅ **100%達成** (2/2項目が完全一致)
-   - 商品名: ✅ 日付パターン除去完了
-   - 金額: normalizeToDigits適用済み、引き続き改善中
+#### 4. その他の改善
+- **商品名列OCRの範囲を通常行に限定**（v2からの継続）
+- **cleanItemName()の呼び出し追加**（不要文字列自動除去）
 
-### 最新テスト結果 (2025-12-24 22:30)
-- 検出: 16行 (有効範囲フィルタ後)
-- 行分離: ✅ 正常 (15px閾値)
-- **小計精度: ✅ 100% (2/2項目が完全一致)**
-  - 一般購買: 53,551円 ✅
-  - 給油所: 15,810円 ✅
-- **商品名品質: ✅ 日付パターン除去完了**
-- **画質メトリクス:**
-  - シャープネス: 1558.6 (閾値200.0を大幅に上回る)
-  - 輝度: 155.5 (40-220の適正範囲内)
-- **精度推移**: 50% → 57% → 64% → 小計100%達成
+**テスト結果**:
+- Binary OCR実行率: ~30%（段階Aを通過）
+- Binary OCR採用率: 0%（段階Bで正しくフィルタリング、品質不良のため）
+- 数量列OCR: 適応的スケーリング動作確認（scale=1.76-2.73、charPx基準）
+- Y座標フィルタリング: 33行 → 20行（ヘッダー/フッター除去、合計行保持）
 
-## 次回の作業予定
+### ✅ 前回完了 (2026-01-11 v2)
+**OCR精度改善 & 合計行検出問題の修正**
+- 商品名列OCRの範囲を通常行に限定
+- cleanItemName()の呼び出し追加
+- Y座標フィルタリングを削除（→ v3で行タイプ判定後に移動）
+- 合計行のY座標範囲を拡大（153.0～157.0mm）
+- 合計行のキーワードに「税込」を追加
+- 誤解を招くコメントを修正
 
-### 優先度: 最高 (次回セッション)
-1. **辞書ベース補正システムの実装** ← NEW!
-   - [ ] ProductMaster.kt, ProductMasterDao.kt 作成
-   - [ ] ReceiptDatabase.kt に product_master テーブル追加
-   - [ ] ProductNameCorrector.kt 作成 (容量保護型マッチング)
-   - [ ] assets/product_master.csv 作成 (初期データ)
-   - [ ] UnderlyingBaseProcessor.kt に統合
-   - [ ] カテゴリ判定ロジック（小計行から逆算）
-   - 期待効果: "類"→"顆粒", i/o/O誤認識の吸収、容量誤変換防止
+詳細は [CHANGELOG.md](docs/CHANGELOG.md) を参照。
 
-### 優先度: 高 (短期目標)
-2. **数量検出精度の更なる向上**
-   - [x] 画像前処理の追加 (シャープ化、コントラスト強化) ✅ 完了
-   - [ ] 数量列の二値化処理
-   - [ ] OCR認識パラメータの調整
-   - 目標: 64% → 80%以上
+### ✅ 前回完了 (2026-01-11 v1)
+**月次サマリー機能 & カテゴリ再計算システム実装**
+- **不要文字列の自動除去**:
+  - UnderlyingBaseProcessor.kt: cleanItemName()に追加
+  - 「＊以下の方法にて、ご入金をお願いします。」を自動除去（全角・半角両対応）
+- **月次サマリー画面の作成** (MonthlySummaryScreen.kt):
+  - カテゴリ別合計表示（一般購買、給油所、農業機械）
+  - 伝票別詳細（カテゴリごとに色分け表示）
+  - 入力合計との差額チェック機能
+  - アクセス: 伝票入力画面の「月次サマリー」ボタン or データ閲覧画面の「詳細サマリー」ボタン
+- **複数枚にまたがるカテゴリ再計算機能** (CategoryRecalculator.kt):
+  - 正しいロジック実装:
+    1. 最初の小計行までは「一般購買」
+    2. 「＊小計（一般購買）」の後は「未定」
+    3. 2枚目以降の小計で判明 → 1枚目の「未定」を確定
+  - 実行タイミング: 保存時に自動実行 + 手動「再計算」ボタン
+- **累積合計表示**:
+  - 伝票入力画面の下部に追加（2枚目以降で表示）
+  - この伝票の合計、累積合計（1〜現在）、月全体の合計（参考）を表示
+- **データ閲覧画面の強化** (DataBrowserScreen.kt):
+  - カテゴリ別簡易集計をサマリーセクションに追加
+  - 「詳細サマリー」ボタン追加 → 月次サマリー画面へ遷移
+- **等幅フォント対応**:
+  - すべての数字表示をMonospaceフォントに変更
+  - グリッド、累積合計、月次サマリーの全金額表示に適用
+  - 桁数が揃って見やすく改善
+- **ナビゲーション更新** (Navigation.kt):
+  - Screen.MonthlySummary ルート追加（year, month パラメータ）
+  - データ閲覧、伝票入力から月次サマリーへの遷移をサポート
+- ビルド成功確認: 全ファイルのコンパイルエラーなし
 
-3. **日付列の誤認識改善**
-   - [ ] 日付パターンマッチング強化 (071xxx形式優先)
-   - [ ] 先頭が8で始まる日付は0に再変換 (8→0変換ロジック)
-   - [ ] 複数候補から最適な日付を選択
+### ✅ 前回完了 (2026-01-09)
+**伝票入力画面の大幅改善**
+- 行クリアボタンを廃止（ボトムシートの「クリア」に統合）
+- 文字サイズコントロールをコンパクトに配置（3行目に統合）
+- 文字サイズ変更時に列幅を動的に最適化（基準12sp、比例拡大）
+- **合計行を追加**（21行目: 20行+合計1行）:
+  - ReceiptRowData: `isTotalRow: Boolean` フィールド追加
+  - OCR結果から自動計算（小計を除く全金額の合計）
+  - 合計行の金額セルは編集可能、商品名は「合計」固定
+  - 合計行は水色背景で視覚的に区別
+- **小計・合計の検証機能を実装**:
+  - 計算値と入力値を比較して一致/不一致を表示
+  - 差額を表示（不一致時）
+  - 背景色で状態を表示（緑=一致、赤=不一致、灰=データなし）
+- **編集フロー改善**:
+  - 編集ボタン押下 → 編集モード → 伝票追加・削除可能
+  - 伝票が0枚の時はOCR/直接入力ボタンを無効化
+  - 編集モード時は戻るボタンを非表示（誤操作防止）
+- ビルド成功確認: 全ファイルのコンパイルエラーなし
 
-4. **cleanItemName関数の改善**
-   - [ ] より長い日付パターンに対応 (現在は最大11文字まで)
-   - [ ] "07i1oi11|" のような長いパターンを除去できるように
+### ✅ 前回完了 (2026-01-08)
+**OVERLAYモード削除完了**
+- CameraViewModel.kt: BaseType enum (OVERLAY/UNDERLAY) を削除
+- CameraViewModel.kt: CameraUiState.SuccessUnderlay を Success にリネーム
+- CameraViewModel.kt: processOverlayType() 関数を削除
+- OcrCaptureScreen.kt: Success状態のみを処理するように簡素化
+- CameraScreen.kt: 不要なResultContent関数、BlockImageWithTextOverlay関数を削除
+- UnderlayResultScreen.kt: Success型に対応
+- ビルド成功確認: 全ファイルのコンパイルエラーなし
 
-### 優先度: 中 (中期目標)
-4. **UI実装**
-   - [ ] UnderlayResultScreen の改善
-   - [ ] エラー表示機能
-   - [ ] 編集機能の追加
+### ✅ 前回完了 (2026-01-07 v6)
+**伝票追加時の枚数表示問題を修正 + データ保持の説明**
+- ReceiptInputScreen.kt: 伝票追加ボタンの処理を修正
+  - 編集モード中はメモリ上の `allSheetsData.keys.maxOrNull()` を使って最大シート番号を取得
+  - 以前はデータベースの値を使っていたため、未保存の追加が反映されなかった
+  - 二回目以降も正しく枚数が増えるように修正
+- **データ保持の仕組み**:
+  - 1つの月に複数枚の伝票を保持可能
+  - MonthlyDataテーブル: (issueYear, issueMonth, totalSheets) で月ごとの総枚数を管理
+  - ReceiptItemテーブル: (issueYear, issueMonth, sheetNumber, itemNumber) で各伝票の各行を保存
+  - 例: 令和7年1月に3枚の伝票 → MonthlyData(7, 1, 3) + ReceiptItem各60行(3枚×20行)
 
-5. **データベース統合**
-   - [ ] UNDERLAY結果の保存
-   - [ ] OVERLAY/UNDERLAY切り替え機能
+### ✅ 前回完了 (2026-01-07 v5)
+**二回目撮影時のプレビュー画面表示問題を修正**
+- ReceiptInputScreen.kt: ViewModelの状態リセット問題を修正
+  - `cameraSessionId` を追加し、撮影ボタンを押すたびにインクリメント
+  - CameraViewに `sessionId` パラメータを追加
+  - `targetBlock` を "伝票OCR_$sessionId" にして毎回一意のキーを生成
+  - これにより、ViewModelが毎回新しいインスタンスとして作成され、前回の状態が持ち越されない
 
-6. **テスト強化**
-   - [ ] 複数伝票でのテスト
-   - [ ] エッジケースの確認
+### ✅ 前回完了 (2026-01-07 v4)
+**プレビュー画面の完全無効化**
+- OcrCaptureScreen.kt: プレビュー画面を完全に無効化
+  - `showPreview = false` に固定（設定に関係なく常に無効）
+  - プレビュー画面のボタン表示処理は残存（条件が成立しないため非表示）
+- SettingsScreen.kt: プレビュー表示設定を削除
+  - プレビュー表示のスイッチと変数を削除
+  - カメラ設定は「解像度」と「フラッシュ」のみ
 
-## 技術スタック
-- **プラットフォーム**: Android
-- **言語**: Kotlin
-- **主要技術**: CameraX, OpenCV 4.9.0, ML Kit (日本語認識), Jetpack Compose
-- **ビルドツール**: Gradle
+### ✅ 前回完了 (2026-01-07 v3)
+**セル単位選択機能の修正 + 4K固定化**
+- ReceiptInputScreen.kt: セル単位でのOCR更新対象選択機能を追加
+  - OCRモード時に個別のセル（日付/商品名/金額）をタップすると背景色が赤に変化
+  - 再度タップで選択解除（トグル動作）
+  - OCR実行時、選択セルがあればそのセルのみ更新、なければ全体更新
+  - 更新後は自動的に選択状態をクリア
+- データ構造変更:
+  - `ReceiptRowData.isOcrTarget: Boolean` → `selectedCells: Set<CellType>` に変更
+  - セル単位での選択状態を保持可能に
+- 解像度設定の変更:
+  - SettingsScreen.kt: 解像度選択UIを削除、「4K UHD (3840x2160) 固定」表示に変更
+  - AppPreferences: `DEFAULT_CAMERA_RESOLUTION = "3840x2160"` に変更
+  - CameraResolution: デフォルトを `UHD_4K` に変更
 
-## 重要な定数 (UNDERLAY台紙用)
+### ✅ 前回完了 (2026-01-06)
+**伝票入力画面の全面リニューアル (v2)**
+- ReceiptInputScreen.kt: 月単位での編集・保存に変更
+  - 全伝票データを `Map<Int, List<ReceiptRowData>>` で管理
+  - 決定ボタンで月全体を一括保存、キャンセルでロールバック
+- 伝票操作の改善:
+  - 伝票追加・削除を編集モード中も可能に変更
+  - 伝票削除時に確認ダイアログ表示（AlertDialog）
+  - 伝票ページネーション（前/次ボタン、選択解除自動化）
+- グリッド機能の強化:
+  - 一行クリア機能追加（選択行を空白にリセット）
+  - 行セレクタ改善（背景色変更 primaryContainer alpha 0.5）
+  - 商品名入力時の小計チェックボックス追加
+  - 文字サイズスライダー実装（10〜20、リアルタイム反映）
+- UI簡素化:
+  - 列ヘッダーのチェックボックス廃止（列の表示・非表示機能削除）
+  - 固定列幅に変更：取引日80dp、商品名240dp、金額80dp
+  - 動的列幅計算を削除、シンプルな構成に
+- データ構造変更:
+  - `ReceiptRowData.isSubtotal: Boolean` フィールド追加
+  - 小計データは `[小計]` プレフィックスでDB保存
+
+### ✅ 前回完了 (2026-01-05)
+**伝票入力画面の実装 & カメラ統合**
+- ReceiptInputScreen.kt: 新規作成 - 20行データグリッド、直接入力/OCRモード切替
+- セル編集機能: 日付(6/4/2桁入力対応)、商品名(オートコンプリート)、金額(±999999範囲検証)
+- カメラ統合: 画面内OCR → 自動的にグリッドへ反映
+- **重要な発見**: `CameraViewModel.CameraUiState.SuccessUnderlay`の処理が必要
+  - OcrCaptureScreen.kt: `Success`と`SuccessUnderlay`の両方を処理するように修正
+  - `forceAutoComplete`パラメータ追加 → プレビュー表示をスキップして自動完了
+- データマッピング: `ReceiptRow` → `ReceiptRowData` (日付フォーマット、小計検出)
+- UI改善: 列幅調整(日付64dp/商品262dp/金額70dp)、横スクロール同期、区切り線追加
+
+### ✅ 前回完了 (2026-01-02 12:10)
+**カテゴリ検出バグ修正 & 商品マスタ更新**
+- UnderlyingBaseProcessor.kt: カテゴリ検出ロジック検証
+- 一般購買カテゴリが「未分類」として誤検出されていた問題を特定・修正
+- 商品マスタに「ダニオーテフロアブル250ml」追加 (ID: 114)
+- OCR品質スコア閾値: 70% → 68% (実環境での安定動作のため)
+- テスト結果: **補正成功率 66.7% (8/12) - 一般購買 71.4%, 給油所 60.0%**
+- 精度改善: 25% → 66.7% (+41.7%)
+
+### 🔄 次回予定
+1. **実機テスト**
+   - [ ] 小計・合計検証の全枚数対応の動作確認
+   - [ ] カテゴリ集計（一般購買、給油所、農業機械）の正確性検証
+   - [ ] 「再計算」ボタンの動作確認（編集モード・表示モード両方）
+   - [ ] 二段階Binary OCR評価システムの実戦テスト
+   - [ ] 数量列OCR（罫線除去 + 適応的スケーリング）の精度検証
+
+2. **OCR精度の更なる向上**
+   - [ ] 日付列の誤認識改善 (E/e→8変換強化)
+   - [ ] 数量検出精度向上 (目標80%以上)
+   - [ ] Binary OCR採用率の向上（現在0% → 目標10-20%）
+
+3. **追加機能検討**
+   - [ ] カメラ表示時の画面フラッシュ削減（一瞬別画面が表示される問題）
+   - [ ] エクスポート機能（会計ソフト連携用）
+
+---
+
+## 重要な技術情報
 
 ### 基本設定
-- **ArUcoマーカーサイズ**: 25mm (DICT_4X4_50)
-- **固定出力サイズ**: 2400×1700px (A4全体)
-- **mm→px変換率**: 8.1 px/mm (固定)
+- **ArUcoマーカー**: 25mm, DICT_4X4_50, ID: 0,1,2,3
+- **出力サイズ**: 動的 (~4158×2940px, 目標px/mm: 14.0)
 - **行クラスタリング閾値**: 15px (Y座標差)
 
-### 品質管理閾値 (2025-12-25更新)
-- **フォーカス閾値**: 250.0 (シャープネス) ← 200.0から引き上げ
-- **輝度範囲**: 40.0-220.0 (グレースケール平均値)
+### 品質管理
+- **フォーカス閾値**: 250.0 (Laplacian分散)
+- **輝度範囲**: 40.0-220.0 (グレースケール平均)
+- **OCR品質スコア閾値**: 70%
+- **重み配分**: フォーカス20%, 文字高さ50%, コントラスト30%
 
-### OCR画像前処理パラメータ (2025-12-25追加)
-- **シャープニング**: Unsharp Mask (weight=1.5, blur=-0.5)
-- **CLAHE**: clipLimit=2.0, tileSize=8x8
+### 座標範囲 (mm, 伝票左上原点)
+- **列**: DATE(5.5-20.0), ITEM(20.0-79.5), QUANTITY(97.0-117.0), AMOUNT(134.5-156.0), CATEGORY(156.0-177.5)
+- **行**: 通常行(56.5-120.5), 小計行(120.5-132.0)
 
-### 伝票位置 (A4左上原点)
-- **伝票左端**: 43.0mm (A4左端から)
-- **伝票上端**: 31.0mm (A4上端から)
+### OCR処理
+- **商品名列**: 適応的スケーリング (1.0-3.0倍, 目標32px) + DoubleOCR (Gray + Binary二段階評価)
+- **数量列**: 罫線除去 + 文字高さ推定 + 適応的スケーリング (1.0-3.0倍, 目標30px) + Latin OCR + Bboxシェイプフィルタ
+- **画像前処理**: シャープニング (Unsharp Mask) + CLAHE
 
-### 列範囲 (伝票左端からの相対位置 mm)
-- **DATE列**: 5.5-20.0mm (取引日)
-- **ITEM列**: 20.0-79.5mm (商品名)
-- **STORE列**: 79.5-97.0mm (取扱支店、無視)
-- **QUANTITY列**: 97.0-117.0mm (数量)
-- **UNITPRICE列**: 117.0-134.5mm (税込単価、無視)
-- **AMOUNT列**: 134.5-156.0mm (税込金額)
-- **CATEGORY列**: 156.0-177.5mm (分類計)
+### 辞書補正
+- **類似度閾値**: 0.75 (Levenshtein距離)
+- **容量保護**: ベース名のみで類似度計算、容量は一致フィルタ
+- **カテゴリ**: "一般購買", "給油所", "農業機械" (小計行から逆算)
+- **データ**: 114商品, 15弥生勘定科目, 15らくらく勘定科目, 13 OCR誤認識パターン
 
-### Y座標範囲 (伝票上端からの相対位置 mm)
-- **通常行**: 56.5-120.5mm (一般購買+給油所セクション) ← 2025-12-24修正
-- **小計行**: 120.5-132.0mm
+---
+
+## 技術スタック
+
+- **プラットフォーム**: Android
+- **言語**: Kotlin
+- **主要技術**: CameraX, OpenCV 4.9.0, ML Kit (日本語認識), Jetpack Compose, Room
+- **ビルドツール**: Gradle
+
+---
 
 ## ビルドコマンド
+
 ```bash
 # クリーンビルド (推奨)
 .\gradlew.bat clean assembleDebug
 
-# インストール
+# アンインストール + インストール
 adb uninstall com.example.receiptorc
 adb install "C:\Users\toshiro\AndroidStudioProjects\ReceiptOCR\app\build\outputs\apk\debug\app-debug.apk"
 
@@ -657,650 +448,132 @@ adb install "C:\Users\toshiro\AndroidStudioProjects\ReceiptOCR\app\build\outputs
 adb logcat -d -s UnderlyingBaseProcessor:D OCRProcessor:D CameraViewModel:D
 ```
 
+---
+
 ## 開発ガイドライン
-1. 新機能実装時は必ずPROJECT_STATUS.mdと.clinerulesを更新
-2. ビルド前に必ずクリーンビルド実行
+
+1. 新機能実装時は必ず `.clinerules` と各種ドキュメントを更新
+2. ビルド前に必ず `clean` 実行
 3. 変更後は実機でのテストを実施
-4. ログ出力を活用したデバッグ
-5. 数値処理は必ずnormalizeToDigits関数を適用
-6. 商品名はcleanItemName関数でクリーニング
+4. ログ出力を活用したデバッグ (`Log.d()`)
+5. 数値処理は必ず `normalizeToDigits()` 関数を適用
+6. 商品名は `cleanItemName()` 関数でクリーニング
 7. 品質チェック (フォーカス + 輝度) を通過した画像のみ処理
-
-## 最終更新
-- **日時**: 2025-12-31 20:50
-- **ブランチ**: feature/underlay-base
-- **セッション概要**: ImageCapture高解像度撮影の問題解決 - ImageAnalysis 4Kアプローチへの方針転換
-- **更新内容**:
-
-  ### 🎯 ImageCapture高解像度撮影の座標変換問題と解決策
-
-  **背景:**
-  - 前セッションで文字高さ評価をOCRスケール(2400px)に対応
-  - しかし実解像度は1836×2448と不十分
-  - ユーザー要求: 「撮影解像度を上げる 2400px → 3600〜4000pxは可能なの？」
-  - ユーザー助言: 「撮影で稼いで、補正で整える」が王道
-
-  **問題①: ImageCapture実装の失敗**
-
-  アプローチ1: ImageCapture + ImageAnalysis併用
-  ```kotlin
-  // ImageAnalysis: 1920×1080 (FHD) - マーカー検出・品質チェック
-  // ImageCapture: 4000×3000 (4K) - 高解像度OCR処理
-  ```
-
-  発生した問題:
-  1. **プレビューと高解像度の向き不一致**
-     - Preview: 1600×1200 (横長 4:3)
-     - High-res capture: 1836×2448 (縦長 3:4)
-     - 原因: カメラが自動的に90度回転
-
-  2. **高解像度画像でArUco検出失敗**
-     - Preview: 4マーカー検出成功 (B_BLOCK)
-     - High-res: 0マーカー検出 → フォールバック必要
-
-  3. **座標スケーリングの複雑化**
-     - 単純スケーリング: 座標スケール (1.1475, 2.04) - アスペクト比不一致
-     - 画像90度回転 + 座標回転: 複雑な変換式が必要
-     - -90度回転試行: 依然として誤った領域を切り出し
-
-  **試行した解決策と失敗:**
-
-  1. **アプローチA: 単純座標スケーリング**
-     ```kotlin
-     scaleX = 1836 / 1600 = 1.1475
-     scaleY = 2448 / 1200 = 2.04
-     ```
-     結果: ヘッダー/フッター領域を誤検出 ❌
-
-  2. **アプローチB: ビットマップ+90度回転 + 座標+90度回転**
-     ```kotlin
-     // 画像回転: 1836×2448 → 2448×1836 (横長化)
-     matrix.postRotate(90f)
-
-     // 座標回転: (x, y) → (height - y, x)
-     rotX = (1200 - y) * (2448/1200)
-     rotY = x * (1836/1600)
-     ```
-     結果: 依然として誤領域検出 ❌
-
-  3. **アプローチC: ビットマップ-90度回転 + 座標-90度回転**
-     ```kotlin
-     matrix.postRotate(-90f)
-
-     // 座標回転: (x, y) → (y, width - x)
-     rotX = y * (2448/1200)
-     rotY = (1600 - x) * (1836/1600)
-     ```
-     結果: 誤領域検出継続 ❌
-
-  **根本原因の特定:**
-  - ImageCaptureとImageAnalysisで異なる解像度・向き
-  - ArUco検出が高解像度画像で失敗
-  - 座標変換の複雑性（回転+スケーリング）が正確性を損なう
-  - **同一画像でArUco検出とOCR処理をしないと座標が合わない**
-
-  **最終解決策: ImageAnalysis 4K化** ✅
-
-  ```kotlin
-  // ImageCaptureを廃止、ImageAnalysisの解像度を向上
-  val imageAnalyzer = ImageAnalysis.Builder()
-      .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-      .setTargetResolution(android.util.Size(3840, 2160))  // 4K
-      .build()
-
-  // 安定した品質のフレームを直接OCR処理
-  if (newCount >= MIN_STABLE_FOCUS_FRAMES) {
-      viewModel.processImage(bitmap, arucoResult)  // 同一画像
-  }
-  ```
-
-  **変更内容:**
-  1. ImageCapture関連コード削除
-  2. ImageAnalysis解像度: 1920×1080 → **3840×2160 (4K)**
-  3. processImage関数簡素化 (imageCapture, context パラメータ削除)
-  4. カメラバインド簡素化 (ImageAnalysisのみ)
-
-  **実測結果:** ✅ 大成功
-  ```
-  実解像度: 3264×2448 (デバイス最大値)
-  検出行数: 31行 → Y範囲フィルタ後 17行
-  商品名補正: 6件成功 / 7件試行 (86%)
-
-  検出商品例:
-  - ドライバー500ml
-  - アフェットフロアブル500ML
-  - グレーシア乳剤500ml
-  - トミーネクサス046 20kg
-  - アグリードCフロアブル100cc
-  - レギュラーガソリン (複数)
-  - JA-OIL SNスペシャル5W-30
-  ```
-
-  **技術的意義:**
-  - **シンプル性**: ImageAnalysisのみで完結、複雑な座標変換不要
-  - **信頼性**: ArUco検出とOCR処理が同一画像で実行
-  - **性能**: 解像度が2倍向上 (1600×1200 → 3264×2448)
-  - **保守性**: コード量削減、デバッグ容易
-
-  **変更ファイル:**
-  - CameraScreen.kt:
-    - ImageCapture削除、ImageAnalysis解像度4K化
-    - processImage簡素化 (imageCapture, context削除)
-    - カメラバインド簡素化
-    - 90度回転・座標変換ロジック削除 (500行以上削減)
-
-  **教訓:**
-  - 「撮影で稼いで、補正で整える」- ユーザー助言が正解
-  - 複雑な座標変換より、同一画像での処理が確実
-  - ImageCapture vs ImageAnalysis: 用途に応じた選択が重要
-  - 解像度向上は座標変換の複雑化よりシンプルな方法で達成可能
-
-## 最終更新 (前回)
-- **日時**: 2025-12-31 19:40
-- **ブランチ**: feature/underlay-base
-- **セッション概要**: 文字高さ評価のOCRスケール対応（問題①の修正）
-- **更新内容**:
-
-  ### 🎯 文字高さ評価をOCR実行時の2400pxスケールで評価 (問題①)
-
-  **問題の特定:**
-  ユーザー分析により、3つの重大な問題が特定された:
-  - ① 【最重要】文字高さ評価が「OCR向き」になっていない
-  - ② 商品名列OCRの「二重OCR」干渉 → ✅ 修正済み (ITEM列スキップ)
-  - ③ 辞書補正が構造を理解していない → ✅ 修正済み (スコアベース補正V2)
-
-  **問題①の詳細分析:**
-  ```
-  現状のフロー:
-  1. 品質評価: 1280pxスケールで実施
-     → 文字高さ 6-7px = 「良好」(score 0.70-0.85)
-
-  2. 実際のOCR: 2400pxスケールで実施
-     → 6-7px × (2400/1280) = 18-21px
-
-  問題:
-  - ML Kit日本語OCRの安定動作: 30-40px/文字
-  - 18-21pxは不足 → 文字化け多発
-  - ❌「読めない状態を高品質と誤判定している」
-  ```
-
-  **修正内容 (OcrQualityEvaluator.kt):**
-
-  1. **文字高さスコアリングの更新 (charHeightScore関数)**
-  ```kotlin
-  // 修正前（1280pxスケール）:
-  height < 3 -> 0.0
-  height < 4 -> 0.4
-  height < 6 -> 0.4-0.7
-  height < 8 -> 0.7-0.85  // 6-7px = 良好
-  height <= 14 -> 0.85-1.0
-
-  // 修正後（2400pxスケール = OCR実行時）:
-  height < 15 -> 0.0
-  height < 20 -> 0.0-0.4  // 認識困難
-  height < 25 -> 0.4-0.6  // 不安定
-  height < 30 -> 0.6-0.75 // 最低限
-  height <= 40 -> 0.75-1.0 // 良好 - ML Kit推奨範囲
-  height <= 50 -> 1.0      // 理想的
-  height <= 70 -> 0.95
-  else -> 0.7
-  ```
-
-  2. **評価フローの分離 (evaluateOcrQuality関数)**
-  ```kotlin
-  // ステップ1: フォーカス・コントラスト評価 (1280px - 高速化)
-  val previewScale = 1280.0f / maxOf(bitmap.width, bitmap.height)
-  val previewBitmap = Bitmap.createScaledBitmap(...)
-  val focus = calculateSharpness(grayPreview)
-  val contrastValue = contrastScore(grayPreview)
-
-  // ステップ2: 文字高さ評価 (2400px - OCRスケール)
-  val ocrScale = 2400.0f / maxOf(bitmap.width, bitmap.height)
-  val ocrBitmap = Bitmap.createScaledBitmap(...)
-  val charHeight = ImagePreprocessor.estimateCharHeight(edge)
-  // → charHeight は2400pxスケールでの値
-  ```
-
-  **期待される効果:**
-  - 文字高さ < 30px の画像 → スコア低下 → 撮り直し要求
-  - 文字高さ 30-40px → 良好スコア → OCR実行
-  - OCR精度の大幅向上（目標: 45% → 60-80%）
-  - 残存する文字化け（'ョシギニラーボフガ', '這星一のSIスシャル5軍一3'）の解消
-
-  **変更ファイル:**
-  - OcrQualityEvaluator.kt:
-    - 文字高さスコアリング: 1280pxスケール → 2400pxスケール対応
-    - 評価フローの2段階分離（preview 1280px + OCR 2400px）
-    - ドキュメント更新（V2表記追加）
-
-- **前回の更新 (2025-12-31 15:30)**:
-- **ブランチ**: feature/underlay-base
-- **セッション概要**: 品質閾値調整とパフォーマンス最適化の完成
-- **コミット**: `5e3912e` - Implement OCR quality evaluation and performance optimization
-- **更新内容**:
-
-  ### 🎯 品質スコア閾値の調整とシステム完成
-
-  **問題の発覚:**
-  - ユーザー: 「撮影しましたが７０超えません。68,69止まり」
-  - 品質スコア: 0.690 (69%) で70%閾値に届かず
-  - 内訳: focus=1.0 (100%), charHeight=0.4 (40%), contrast=0.97 (97%)
-  - ボトルネック: 文字高さスコアが0.4で固定
-
-  **根本原因の特定:**
-  - 品質評価は1280pxにダウンスケールした画像で実施
-  - スケール比: 1280px / 3264px ≈ 0.39 (39%)
-  - 実測文字高さ: 6-7px (1280pxスケール)
-  - これは元画像では 6÷0.39 ≈ 15-18px に相当（理想的なサイズ！）
-  - しかしcharHeightScore()関数は元解像度用の閾値を使用
-  - 6-7px → 0.4スコア（本来は0.7-0.85であるべき）
-
-  **修正内容 (OcrQualityEvaluator.kt):**
-  ```kotlin
-  // 修正前（元解像度用）:
-  height < 6 -> 0.0
-  height < 7 -> 0.4
-  height < 10 -> 0.4-0.7
-  height < 15 -> 0.7-0.85
-  height <= 35 -> 0.85-1.0
-
-  // 修正後（1280pxスケール用）:
-  height < 3 -> 0.0
-  height < 4 -> 0.4
-  height < 6 -> 0.4-0.7
-  height < 8 -> 0.7-0.85  ← 6-7pxがここに該当
-  height <= 14 -> 0.85-1.0
-  ```
-
-  **修正後の効果:**
-  - 6px: 0.40 → **0.70** (75%向上)
-  - 7px: 0.40 → **0.775** (93%向上)
-  - 総合スコア計算例:
-    - 6px時: 0.2×1.0 + 0.5×0.70 + 0.3×0.97 = **0.841 (84%)** ✅
-    - 7px時: 0.2×1.0 + 0.5×0.775 + 0.3×0.97 = **0.888 (89%)** ✅
-
-  **実機テスト結果:**
-  ```
-  OcrQuality(score=0.888, focus=713.7 (score=1.00),
-             charHeight=7 (score=0.77), contrast=1.00, isGood=true)
-  ```
-  - ✅ 品質スコア: 88.8% (70%を大幅に超える)
-  - ✅ 自動撮影: 正常に発動
-  - ✅ OCR処理: 17行を正常に検出・処理
-
-  **最終的なシステム構成:**
-  1. **カメラ解像度**: 4K (3840x2160) - OCR精度優先
-  2. **品質評価**: 1280pxダウンスケール - パフォーマンス最適化
-  3. **品質閾値**: 70% - 高品質画像のみ撮影
-  4. **安定フレーム数**: 1 - 迅速な撮影
-  5. **OCR処理**: 2400x1700px固定出力 - 8.1px/mm比率
-
-  **パフォーマンス改善:**
-  - 品質評価速度: 10-20倍高速化（4K → 1280px）
-  - ユーザーフィードバック: 「撮影は格段に速くなった」
-
-  **コミット情報:**
-  - 7ファイル変更: 891行追加, 181行削除
-  - 新規作成: OcrQualityEvaluator.kt, ImagePreprocessor.kt
-  - 主要変更: CameraScreen.kt, OCRProcessor.kt, UnderlyingBaseProcessor.kt
-  - GitHub: https://github.com/toshi859sti/ReceiptOCR/commit/5e3912e
-
-- **前回の更新 (2025-12-31 07:00)**:
-- **セッション概要**: OCR品質評価システムの実装と調整
-- **更新内容**:
-
-  ### 🎯 OCR品質評価システムの実装と調整
-
-  **背景:**
-  - ユーザー要求: 「撮影されません」（品質基準を満たさず自動撮影されない）
-  - 初期問題: フォーカス値が0、文字高さが0で品質スコアが低すぎる
-
-  **実装したシステム:**
-  1. **OcrQualityEvaluator.kt** (新規作成)
-     - 3つの品質指標による総合評価
-     - フォーカス(20%), 文字高さ(50%), コントラスト(30%)
-     - Laplacian分散によるシャープネス計算
-     - 垂直エッジ検出による文字高さ推定
-     - 標準偏差によるコントラスト測定
-
-  2. **ImagePreprocessor.kt** (新規作成)
-     - エッジ検出 (Sobel-like vertical edge detection)
-     - 文字高さ推定 (connected components)
-     - 画像前処理ユーティリティ
-
-  **調整の経緯:**
-
-  a) **初期実装の問題**
-  - フォーカス値が0 → グレースケール変換の型ミス (Int vs Long)
-  - 文字高さが0 → Y方向スキャンでは検出できず
-  - NaN in contrast → Integer overflow
-
-  b) **修正1: 計算エラー解消**
-  - Long型への変換でオーバーフロー解消
-  - X方向(列)スキャンに変更で文字高さ検出成功
-  - エッジ検出閾値: 25 → 15 に下げて検出感度向上
-
-  c) **修正2: 実測値ベースのスコアリング調整**
-  - 実測フォーカス値: 8-30 (期待値120-300と大きく乖離)
-  - 実測文字高さ: 6-10px (期待値10-35pxと乖離)
-  - ユーザー: 「カメラはこれ以上近づけると全体が入らない」
-  - スコアリング関数を実測値範囲に合わせて再調整
-    - focusScore: 5-40の範囲で0.0-1.0にマッピング
-    - charHeightScore: 6-15pxの範囲で0.4-0.85にマッピング
-
-  d) **修正3: 閾値の段階的引き下げ**
-  - QUALITY_THRESHOLD: 0.70 → 0.20 → 0.15 → 0.45
-  - MIN_STABLE_FOCUS_FRAMES: 3 → 1 (安定性要件を緩和)
-
-  **ArUcoマーカー検出問題の発生:**
-  - ユーザー: 「撮影されません」が続く
-  - 原因: ArUcoマーカーが検出されない（緑の四角が表示されない）
-  - ユーザー確認: 「マーカーは印刷されています」
-  - 暫定対応: DEBUG_SKIP_MARKER_CHECK = true でマーカー検出をバイパス
-
-  **新たな問題の発生:**
-  1. **NullPointerException (解決済み)**
-     - 場所: CameraViewModel.kt:152
-     - 原因: `arucoResult.blockType!!` が null
-     - マーカー検出バイパス時、blockType が null のまま
-     - 修正: `arucoResult.blockType ?: ImageProcessor.BlockType.B_BLOCK`
-
-  2. **Perspective transform failed (現在の問題)** ⚠️
-     - 場所: CameraViewModel.kt:154
-     - 原因: perspectiveTransform が null を返す
-     - DEBUG_SKIP_MARKER_CHECK 有効時、corners と ids が空または無効
-     - 透視変換には有効なマーカー位置情報が必要
-
-  **変更ファイル:**
-  - CameraScreen.kt: DEBUG_SKIP_MARKER_CHECK フラグ追加、MIN_STABLE_FOCUS_FRAMES = 1
-  - CameraViewModel.kt:152: blockType の null 対応追加
-  - OcrQualityEvaluator.kt: 新規作成（品質評価システム）
-  - ImagePreprocessor.kt: 新規作成（画像前処理ユーティリティ）
-
-  **現在の状態:**
-  - ✅ 品質評価システム: 実装完了、実測値ベースで動作
-  - ✅ 自動撮影トリガー: 品質基準を満たせば発動
-  - ⚠️ ArUcoマーカー検出: 原因不明で検出失敗
-  - ⚠️ 透視変換: マーカー情報なしで失敗中
-
-  **次のステップ（選択肢）:**
-  1. **DEBUG モードでは透視変換をスキップ** - 元の画像で処理を試す
-  2. **マーカー検出問題の調査** - なぜ印刷されたマーカーが検出されないのか
-
-  **技術的メモ:**
-  - 4K解像度: 3264x2448 (実測値)
-  - 品質スコア実測例: 0.67-0.72 (focus=8-10, charHeight=20, contrast=0.53-0.73)
-  - DEBUG_SKIP_MARKER_CHECK 使用時は透視変換が不可能
-
-- **前回の更新 (2025-12-31 01:00)**:
-  - **辞書補正精度の大規模テスト実施**: 3枚の伝票で57行を分析
-  - **補正成功率**: 35% (20/57) - ⚠️ 目標70%を大幅に未達
-  - **根本原因の特定**: OCR精度が低い（商品名列の拡大処理不足）
-  - **問題の詳細**:
-    - 商品名列(482px幅)は拡大処理なしでOCR → 小さい漢字・カタカナが誤認識多発
-    - 数量列(162px幅)は4倍拡大+Latin OCR → 認識良好
-    - 誤認識例: 有機→者橋, 粒状→状, 乳剤→刺, アグリメック→グリメック
-  - **次の改善策**: 商品名列にも2-3倍拡大処理を適用
-
-- **更新者**: Claude Code
+8. 辞書補正は容量保護型マッチングを使用 (容量誤変換防止)
 
 ---
 
-## 辞書構築フェーズ（2025-12-29 完了）
+## 主要ファイル構成
 
-### ✅ 完了：過去伝票のOCR処理
-Claude AIを使用して2025年1-11月の購買伝票をスキャン・OCR処理し、高精度な商品名データを抽出。
-
-**処理済み伝票：**
-- 1月：1枚（14商品）
-- 2月：1枚（7商品）
-- 3月：2枚（20商品）
-- 4月：2枚（21商品）
-- 5月：2枚（27商品）
-- 6月：2枚（27商品）
-- 8月：2枚（27商品）
-- 9月：2枚（27商品）
-- 10月：1枚（16商品）
-- 11月：2枚（20商品）
-
-**合計：** 206商品明細行、113ユニーク商品
-
-**確認済み誤認識パターン：**
-- サンフロ → ザンプロ
-- イゲタン → インゲン
-- スケッキ → ステッキ
-- ヒスピラン → モスピラン
-- グレーシ → グレーシア
-- Ｆフェニックス → フェニックス
-- ゾーベッジ → ゾーベック
-- オークストロムダンゴシカット → オーケストラロムダンモンカット
-- ウェザーガード → ウェザーシート
-- ドブ懸品 → ドブ漬品
-- イソゲン → インゲン
-- ベルクート → ベトファイター
-
-### 作成するCSVファイル（5つ）
-
-#### 1. receipts_2025_01-11.csv
-全伝票データ（206行）
-列: 作成月,枚目,伝票内番号,取引日,商品名,カテゴリ,税込金額,分類計
-
-#### 2. product_master.csv
-商品マスタ（113商品）
-列: id,canonical_name,category,frequency_count,yayoi_account_id,rakuraku_account_id
-
-頻出TOP5:
-1. レギュラーガソリン（56回）
-2. トミーネクサス046 20kg（18回）
-3. ＪＡ島原雲仙ＢＢ４８号 20kg（10回）
-4. 灯油（9回）
-5. 米用紙袋（保有米）（7回）
-
-#### 3. ocr_variants.csv
-誤認識パターン（12件）
-列: product_id,variant_text,occurrence_count,last_seen
-
-#### 4. yayoi_accounts.csv
-弥生会計勘定科目（15科目）
-列: id,account_code,account_name,category,subcategory,description
-
-#### 5. rakuraku_accounts.csv
-らくらく青色申告農業版勘定科目（15科目）
-列: id,account_code,account_name,category,subcategory,description
-
-### データベーススキーマ
-
-#### product_master テーブル
-```sql
-CREATE TABLE product_master (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    canonical_name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    frequency_count INTEGER DEFAULT 0,
-    yayoi_account_id INTEGER,
-    rakuraku_account_id INTEGER,
-    FOREIGN KEY (yayoi_account_id) REFERENCES yayoi_accounts(id),
-    FOREIGN KEY (rakuraku_account_id) REFERENCES rakuraku_accounts(id)
-);
+```
+app/src/main/java/com/example/receiptorc/
+├── MainActivity.kt                 # エントリポイント
+├── ui/
+│   ├── CameraScreen.kt            # カメラUI、品質表示
+│   ├── UnderlayResultScreen.kt    # 結果表示
+│   ├── ReceiptInputScreen.kt      # 伝票入力画面（グリッド、累積合計）
+│   ├── MonthlySummaryScreen.kt    # 月次サマリー画面（NEW）
+│   ├── DataBrowserScreen.kt       # データ閲覧画面
+│   └── MenuScreen.kt              # メインメニュー
+├── viewmodel/
+│   └── CameraViewModel.kt         # 画像処理オーケストレーション
+├── navigation/
+│   └── Navigation.kt              # ナビゲーション定義
+├── util/
+│   ├── ImageProcessor.kt          # ArUco検出、透視変換
+│   ├── ImagePreprocessor.kt       # 文字高さ測定、スケール計算
+│   ├── OCRProcessor.kt            # ML Kit OCR実行
+│   ├── UnderlyingBaseProcessor.kt # 行クラスタリング、列抽出、不要文字列除去
+│   ├── CategoryRecalculator.kt    # カテゴリ再計算（複数枚対応）（NEW）
+│   ├── OcrQualityEvaluator.kt     # 品質評価
+│   ├── ProductNameCorrector.kt    # 辞書補正 V1
+│   ├── ProductNameCorrectorV2.kt  # 辞書補正 V2 (全角対応)
+│   ├── OcrResultEvaluator.kt      # OCR結果評価・選択
+│   └── OcrResultMerger.kt         # Gray/Binary結果統合
+├── data/
+│   ├── ReceiptDatabase.kt         # Room Database
+│   ├── ReceiptDao.kt              # Data Access Object
+│   ├── MonthlyData.kt             # 月次データ（カテゴリ別合計）
+│   ├── SheetData.kt               # 伝票別データ（小計）
+│   ├── ReceiptItem.kt             # 伝票明細データ
+│   ├── ProductMaster.kt           # 商品マスタ
+│   ├── OcrVariant.kt              # OCR誤認識パターン
+│   ├── YayoiAccount.kt            # 弥生勘定科目
+│   └── RakurakuAccount.kt         # らくらく勘定科目
+└── assets/
+    ├── product_master.csv         # 114商品
+    ├── ocr_variants.csv           # 13誤認識パターン
+    ├── yayoi_accounts.csv         # 15勘定科目
+    └── rakuraku_accounts.csv      # 15勘定科目
 ```
 
-#### ocr_variants テーブル
-```sql
-CREATE TABLE ocr_variants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id INTEGER NOT NULL,
-    variant_text TEXT NOT NULL,
-    occurrence_count INTEGER DEFAULT 0,
-    last_seen DATETIME,
-    FOREIGN KEY (product_id) REFERENCES product_master(id) ON DELETE CASCADE
-);
+---
+
+## パフォーマンス指標
+
+### OCR精度推移
+- 2025-12-23: 50% (初期)
+- 2025-12-24: 57% (数量列特化OCR)
+- 2025-12-24: 64% (フォーカス最適化)
+- 2025-12-24: 小計100% (商品名クリーニング + 総合品質管理)
+- 2025-12-31: 88.8% (品質スコア閾値調整)
+
+### 辞書補正精度推移
+- 2025-12-29: 70% (14/20) - 初期実装
+- 2025-12-30: 55% - 統合テスト
+- 2025-12-31: 35% (20/57) - 大規模テスト
+- 2026-01-01: **100% (9/9 補正可能項目)** - DoubleOCR + V2補正
+- 2026-01-02: **66.7% (8/12)** - カテゴリ検出修正後 (一般購買71.4%, 給油所60.0%)
+
+### 解像度推移
+- 初期: 1600×1200 (FHD ImageAnalysis)
+- 2025-12-31: 3264×2448 (4K ImageAnalysis)
+- 透視変換: 2400×1700 (固定) → 4158×2940 (動的)
+
+---
+
+## トラブルシューティング
+
+### 撮影されない
+- **原因**: 品質スコア < 70%, ArUcoマーカー未検出
+- **確認**: 画面上部の品質メトリクス (シャープネス, 輝度) を確認
+- **対策**: カメラ距離調整、照明改善、台紙確認
+
+### OCR精度が低い
+- **確認**: 文字高さが30px未満 → ログで `estimateCharHeightPx()` の値を確認
+- **対策**: 動的透視変換 (目標px/mm: 14.0), 適応的スケーリング
+
+### 容量が誤変換される
+- **例**: "250g" → "500g"
+- **原因**: 辞書補正V1の容量保護なし
+- **対策**: V2に移行済み ✅ (2026-01-01)
+
+### ArUcoマーカー検出失敗
+- **原因**: 照明不足、マーカー汚れ、距離不適切
+- **対策**: 輝度チェック (40-220), フォーカスチェック (≥250.0)
+- **暫定**: `DEBUG_SKIP_MARKER_CHECK = true` (開発時のみ)
+
+---
+
+## コミット規約
+
+コミットメッセージには以下の署名を含める:
+
+```
+<コミットメッセージ>
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 ```
 
-#### yayoi_accounts テーブル
-```sql
-CREATE TABLE yayoi_accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_code TEXT NOT NULL UNIQUE,
-    account_name TEXT NOT NULL,
-    category TEXT,
-    subcategory TEXT,
-    description TEXT
-);
-```
+---
 
-#### rakuraku_accounts テーブル
-```sql
-CREATE TABLE rakuraku_accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_code TEXT NOT NULL UNIQUE,
-    account_name TEXT NOT NULL,
-    category TEXT,
-    subcategory TEXT,
-    description TEXT
-);
-```
+## 最終更新
 
-### ✅ 完了：辞書ベース補正システム実装 (2025-12-29～30)
+- **日時**: 2026-01-15
+- **ブランチ**: feature/underlay-base
+- **最新セッション**: 小計カテゴリ排他制御機能の実装（一文字検出、遡り更新、グレーアウト制御）
+- **次回予定**: 実戦テスト、小計機能の動作確認
 
-#### 実装内容
-
-**1. データベーススキーマ実装**
-- ProductMaster.kt, OcrVariant.kt, YayoiAccount.kt, RakurakuAccount.kt エンティティ作成
-- 4つのDAO作成（各テーブル用）
-- ReceiptDatabase v2→v3 マイグレーション実装
-- 外部キー制約、インデックス追加
-
-**2. CSVインポート機能**
-- DatabaseInitializer.kt 作成
-- assets/から5つのCSVを読み込み
-- 初回起動時に自動インポート
-- インポート成功: 113商品, 15弥生勘定科目, 15らくらく勘定科目, 13OCR誤認識パターン
-
-**3. 容量保護型商品名補正**
-- ProductNameCorrector.kt 作成
-- レーベンシュタイン距離アルゴリズム実装
-- 商品名パース（ベース名+容量分離）
-- 容量一致チェック（250g→500gへの誤変換防止）
-- 類似度閾値: 0.7
-
-**4. カテゴリ判定ロジック**
-- UnderlyingBaseProcessor.assignCategories() 実装
-- 小計行からカテゴリを逆算（lookahead方式）
-- OCR誤認識対応: "給値所"→"給油所", "展業慢城"→"農業機械"
-- デフォルトカテゴリ: "一般購買"（1枚目で小計なしの場合）
-
-**5. CameraViewModelへの統合**
-- processUnderlayType()にカテゴリ判定と補正を統合
-- 通常行のみ補正対象（小計行は除外）
-- 補正成功時: 使用頻度インクリメント、新規誤認識パターン記録
-
-**テスト結果 (2025-12-29):**
-```
-辞書補正成功率: 70% (14/20行)
-自動学習: 6件の新規誤認識パターンを記録
-
-補正例:
-- "レーピエース" → "ノービエース" (類似度0.89)
-- "サンマィト" → "サンマイト" (類似度0.9)
-- "グレーシア乳素250ml" → "グレーシア乳剤250ml" (容量保護済み)
-
-カテゴリ判定: 正常動作（一般購買、給油所を正しく分類）
-```
-
-#### 日付パターン改善 (2025-12-30)
-
-**問題:** cleanItemName()の日付パターンが過剰マッチ
-```kotlin
-// 問題のあったパターン
-Regex("^[a-zA-Z]{0,3}[0-9oOlI.:/ ]{2,8}[|]?")
-     {0,3} ← 0文字OK = 純粋な数字もマッチ
-
-誤マッチ例:
-- '250 g' → 'g' (容量削除)
-- 'B848号20kg' → '号20kg' (製品コード削除)
-- '20ドライバー5L' → 'ドライバー5L' (先頭数字削除)
-```
-
-**修正内容:**
-```kotlin
-// 修正後のパターン
-Regex("^[a-zA-Z]{1,3}[0-9oOlI.:/ ]{2,8}[|]?")
-     {1,3} ← 最低1文字必須
-
-効果:
-- 純粋な数字パターンは除外
-- 日付パターン(b71021など)のみマッチ
-```
-
-**4つの日付パターン:**
-1. `^[a-zA-Z]{1,3}[0-9oOlI.:/ ]{2,8}[|]?` - アルファベット1-3文字 + 数字/誤認識文字
-2. `^\\d{6}[|]?` - 純粋な6桁数字
-3. `^[a-zA-Z]\\d+\\s+\\d+[|]?` - アルファベット + 数字 + スペース + 数字
-4. `^[a-zA-Z0-9oOlI.:/ |]{3,12}(?=[\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF])` - 日本語文字前のパターン
-
-**ビルド・インストール:** ✅ 成功 (2025-12-30 02:50)
-
-#### ⚠️ 現在の問題
-
-**ログ欠落問題 (2025-12-30):**
-- OCR完了ログの後、カテゴリ判定・商品名補正のログが出力されない
-- 期待されるログ:
-  ```
-  [UNDERLAY] OCR completed: 16 rows, 2 subtotals
-  [UNDERLAY] Categories assigned to 16 rows  ← 出力されない
-  [CORRECTION] ... → ...                      ← 出力されない
-  [UNDERLAY] Product name correction completed ← 出力されない
-  ```
-- 原因調査中（アプリクラッシュの形跡なし、ログローテーションの可能性）
-- 対処: 新規撮影でログ確認が必要
-
-**残る日付パターン問題:**
-- `p7i1oi17レギュラーガソリン` → クリーニングされず
-- 理由: 8文字の長いパターン（現在は最大3+8=11文字まで対応）
-- 将来的改善: より長いパターンへの対応、または優先度を下げる
-
-### ✅ 本日完了したタスク (2025-12-30)
-
-1. **自動撮影安定性バグ修正** ✅ 完了
-   - [x] hasDetectedMarkerフラグロジック修正
-   - [x] フレーム安定性カウンター動作確認 (1/3 → 2/3 → 3/3)
-   - [x] ディスプレイArUcoマーカーテスト
-   - [x] 実伝票テスト
-
-2. **日付パターン最適化 (E/e→8対応)** ✅ 完了
-   - [x] E/eをOCR誤認識パターンとして追加
-   - [x] 反復マッチング実装 (最大3回)
-   - [x] 途中の日付パターン対応 (パターン5追加)
-   - [x] 実伝票で100%除去成功を確認
-
-3. **システム統合テスト** ✅ 完了
-   - [x] 自動撮影 + OCR + 日付クリーニング + 辞書補正の統合動作確認
-   - [x] 20行検出、辞書補正55%成功を確認
-   - [x] カテゴリ判定正常動作確認
-
-### 次回の作業予定
-
-#### 優先度: 最高 (緊急) ⚠️
-1. **商品名列の拡大処理実装** ← NEW!
-   - [ ] 商品名列(510-992px)を2-3倍拡大してからOCR
-   - [ ] 数量列と同様の処理フロー実装 (OCRProcessor.kt)
-   - [ ] 拡大率の最適化 (2倍 vs 3倍 vs 4倍)
-   - [ ] 実伝票でOCR精度を再測定
-   - **期待効果**: OCR精度 35% → 70%以上
-   - **根拠**: 数量列は4倍拡大で認識良好、商品名列は未拡大で誤認識多発
-
-#### 優先度: 高 (短期目標)
-2. **辞書補正の精度向上** (商品名列拡大後に再評価)
-   - [x] 複数枚の伝票でテスト (2025-12-31完了)
-   - [x] 補正成功率の測定: 35% (目標70%未達、OCR精度が主因)
-   - [ ] OCR精度改善後に再テスト
-
-3. **二値化処理の追加**
-   - [ ] Otsu's法またはAdaptive Thresholding実装
-   - [ ] 文字輪郭の明確化
-   - [ ] 商品名列と数量列で個別最適化
-
-4. **数量検出精度の向上**
-   - [ ] 数量列の二値化処理
-   - [ ] OCR認識パラメータの調整
-   - 目標: 64% → 80%以上
+詳細な履歴は [CHANGELOG.md](docs/CHANGELOG.md) を参照してください。

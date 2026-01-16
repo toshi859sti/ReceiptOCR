@@ -81,7 +81,8 @@ class MainActivity : ComponentActivity() {
                     ReceiptNavGraph(
                         navController = navController,
                         appPreferences = appPreferences,
-                        dao = dao
+                        dao = dao,
+                        database = database
                     )
                 }
             }

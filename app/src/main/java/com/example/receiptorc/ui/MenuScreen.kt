@@ -18,8 +18,8 @@ import com.example.receiptorc.data.AppPreferences
 fun MenuScreen(
     appPreferences: AppPreferences,
     onNavigateToDataBrowser: () -> Unit,
-    onNavigateToOcrCapture: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToReceiptInput: () -> Unit
 ) {
     val eraYear = remember { appPreferences.eraYear }
 
@@ -69,8 +69,8 @@ fun MenuScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             MenuButton(
-                text = "OCR撮影",
-                onClick = onNavigateToOcrCapture
+                text = "伝票入力",
+                onClick = onNavigateToReceiptInput
             )
 
             Spacer(modifier = Modifier.height(16.dp))

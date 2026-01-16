@@ -14,7 +14,7 @@ import com.example.receiptorc.viewmodel.CameraViewModel
  */
 @Composable
 fun UnderlayResultScreen(
-    state: CameraViewModel.CameraUiState.SuccessUnderlay,
+    state: CameraViewModel.CameraUiState.Success,
     viewModel: CameraViewModel
 ) {
     LazyColumn(
@@ -63,7 +63,7 @@ fun UnderlayResultScreen(
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
-                        state.subtotals.forEach { subtotal ->
+                        for (subtotal in state.subtotals) {
                             Text(
                                 text = "¥${subtotal.value}",
                                 style = MaterialTheme.typography.bodyLarge

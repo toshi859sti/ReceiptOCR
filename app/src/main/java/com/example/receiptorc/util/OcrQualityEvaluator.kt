@@ -32,8 +32,8 @@ object OcrQualityEvaluator {
     private const val WEIGHT_CHAR_HEIGHT = 0.5
     private const val WEIGHT_CONTRAST = 0.3
 
-    // 合格閾値 (OCR精度最優先)
-    const val QUALITY_THRESHOLD = 0.70  // 高品質な画像のみを撮影（OCR精度最優先）
+    // 合格閾値 (実測値ベースに調整)
+    const val QUALITY_THRESHOLD = 0.68  // 実環境で安定して達成可能な値に設定
 
     /**
      * OCR品質評価結果

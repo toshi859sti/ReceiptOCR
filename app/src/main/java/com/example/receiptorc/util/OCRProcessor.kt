@@ -554,8 +554,21 @@ object OCRProcessor {
     /**
      * 数量列を特化OCRで再処理（高精度化）
      *
-     * 全体OCR（日本語モデル）は小さい1桁数字を落としやすい
-     * → 数量列だけ切り出して、Latin OCR + 4倍拡大で再処理
+     * 設計思想:
+     * - 固定4倍拡大を廃止 → 文字高さ正規化を使用
+     * - 罫線をOCR前に物理的に消す
+     * - OCR後にも形状で最終防御
+     * - 行単位で処理（列全体一括はNG）
+     *
+     * フロー:
+     * 1. 数量列ROI切り出し（行単位）
+     * 2. グレースケール化
+     * 3. 罫線除去（縦罫線優先）
+     * 4. 文字高さ推定
+     * 5. 適応的スケーリング（1.0-3.0倍、目標30px）
+     * 6. Latin OCR実行
+     * 7. bbox形状フィルタ
+     * 8. 正規表現チェック
      *
      * @param warpedBitmap warp後の伝票画像
      * @param rows 既存の行データ（Y座標でマッピングするために使用）
@@ -567,117 +580,136 @@ object OCRProcessor {
         rows: List<UnderlyingBaseProcessor.ReceiptRow>,
         rowYCoordinates: List<Int>
     ): Map<Int, String> {
-        Log.d(TAG, "[QUANTITY] ========== Quantity Column Re-OCR Start ==========")
+        Log.d(TAG, "[QTY] ========== Quantity Column Re-OCR Start ==========")
 
-        // 1. 数量列ROIを取得
+        // 1. 数量列ROI範囲を取得
         val quantityRange = UnderlyingBaseProcessor.getQuantityRange()
         val quantityX = quantityRange.first
         val quantityWidth = quantityRange.last - quantityRange.first
 
-        Log.d(TAG, "[QUANTITY] Quantity column ROI: X=$quantityX, Width=$quantityWidth")
+        Log.d(TAG, "[QTY] Quantity column ROI: X=$quantityX, Width=$quantityWidth")
 
-        // 2. 数量列を切り出し
-        val quantityColumnBitmap = Bitmap.createBitmap(
-            warpedBitmap,
-            quantityX,
-            0,
-            quantityWidth.coerceAtMost(warpedBitmap.width - quantityX),
-            warpedBitmap.height
-        )
-
-        // 3. 4倍アップスケール（小さい数字を検出しやすくする）
-        val upscaledBitmap = Bitmap.createScaledBitmap(
-            quantityColumnBitmap,
-            quantityColumnBitmap.width * 4,
-            quantityColumnBitmap.height * 4,
-            true
-        )
-
-        Log.d(TAG, "[QUANTITY] Upscaled to ${upscaledBitmap.width}x${upscaledBitmap.height}")
-
-        // 4. Latin OCR（数字に強い）
-        val text = recognizeTextLatin(upscaledBitmap)
-        quantityColumnBitmap.recycle()
-        upscaledBitmap.recycle()
-
-        if (text == null) {
-            Log.w(TAG, "[QUANTITY] Latin OCR failed")
-            return emptyMap()
-        }
-
-        // 5. OCR結果からTextBoxを抽出
-        // 数量列専用: 1桁数字も取得するため、極小bboxフィルタは適用しない
-        val quantityBoxes = mutableListOf<UnderlyingBaseProcessor.TextBox>()
-        text.textBlocks.forEach { block ->
-            block.lines.forEach { line ->
-                val bounds = line.boundingBox
-                if (bounds != null) {
-                    // Y座標をオリジナル画像のスケールに戻す（4倍拡大していたため）
-                    val scaledBounds = android.graphics.Rect(
-                        bounds.left / 4 + quantityX,  // X座標も元に戻す
-                        bounds.top / 4,
-                        bounds.right / 4 + quantityX,
-                        bounds.bottom / 4
-                    )
-
-                    // 数量列は1桁数字も重要なので、最小サイズ制限なし
-                    quantityBoxes.add(
-                        UnderlyingBaseProcessor.TextBox(
-                            text = line.text.trim(),
-                            bounds = scaledBounds,
-                            centerX = scaledBounds.centerX(),
-                            centerY = scaledBounds.centerY()
-                        )
-                    )
-                    Log.d(TAG, "[QUANTITY] OCR detected: '${line.text}' at Y=${scaledBounds.centerY()}, size=${scaledBounds.width()}x${scaledBounds.height()}")
-                }
-            }
-        }
-
-        // 6. Y座標でソート
-        quantityBoxes.sortBy { it.centerY }
-
-        // 7. 行にマッピング（Y座標の近さで判定）
         val quantityMap = mutableMapOf<Int, String>()
-        val yThreshold = 15  // 15px以内なら同じ行とみなす
 
+        // 2. 行単位で処理（列全体一括はNG）
         rows.forEachIndexed { rowIndex, row ->
-            // 実際の行Y座標を使用
             val rowY = rowYCoordinates.getOrNull(rowIndex)
-            if (rowY == null) {
+            if (rowY == null || row.rowType != UnderlyingBaseProcessor.RowType.NORMAL) {
                 return@forEachIndexed
             }
 
-            // この行に対応する数量テキストを検索
-            val matchingBoxes = quantityBoxes.filter { box ->
-                kotlin.math.abs(box.centerY - rowY) <= yThreshold
-            }
+            try {
+                // 2-1. 行のROIを切り出し（Y方向はその行のみ）
+                val rowHeight = 50  // 行の高さ（推定）
+                val roiY = (rowY - rowHeight / 2).coerceAtLeast(0)
+                val roiHeight = rowHeight.coerceAtMost(warpedBitmap.height - roiY)
 
-            if (matchingBoxes.isNotEmpty()) {
-                // 同じ行内の複数の断片を結合（X座標順）
-                val combinedText = matchingBoxes
-                    .sortedBy { it.centerX }
-                    .joinToString("") { it.text }
+                val rowRoiBitmap = Bitmap.createBitmap(
+                    warpedBitmap,
+                    quantityX,
+                    roiY,
+                    quantityWidth.coerceAtMost(warpedBitmap.width - quantityX),
+                    roiHeight
+                )
 
-                // 正規化
-                val normalized = UnderlyingBaseProcessor.normalizeQuantity(combinedText)
-                if (normalized != null) {
-                    quantityMap[rowIndex] = normalized.toString()
-                    Log.d(TAG, "[QUANTITY] Row $rowIndex (Y=$rowY): '$combinedText' → $normalized")
+                // 2-2. グレースケール化（必須）
+                val grayMat = org.opencv.core.Mat()
+                org.opencv.android.Utils.bitmapToMat(rowRoiBitmap, grayMat)
+                val grayMatGray = org.opencv.core.Mat()
+                org.opencv.imgproc.Imgproc.cvtColor(grayMat, grayMatGray, org.opencv.imgproc.Imgproc.COLOR_RGBA2GRAY)
+                grayMat.release()
+
+                // 2-3. 罫線除去（OCR前・最重要）
+                val cleanedMat = ImagePreprocessor.removeLines(grayMatGray, removeVertical = true, removeHorizontal = false)
+                grayMatGray.release()
+
+                // 2-4. 文字高さ推定
+                val charPx = ImagePreprocessor.estimateCharHeightSimple(cleanedMat)
+
+                // 2-5. 適応的スケーリング（固定4倍は使わない）
+                val targetHeight = 30.0  // 目標文字高さ
+                val scale = (targetHeight / charPx).coerceIn(1.0, 3.0)
+
+                val scaledMat = org.opencv.core.Mat()
+                org.opencv.imgproc.Imgproc.resize(
+                    cleanedMat,
+                    scaledMat,
+                    org.opencv.core.Size(0.0, 0.0),
+                    scale,
+                    scale,
+                    org.opencv.imgproc.Imgproc.INTER_CUBIC
+                )
+                cleanedMat.release()
+
+                Log.d(TAG, "[QTY] Row $rowIndex: charPx=${charPx.toInt()}, scale=${String.format("%.2f", scale)}")
+
+                // 2-6. Latin OCR実行
+                val scaledBitmap = matToBitmap(scaledMat)
+                val ocrText = recognizeTextLatin(scaledBitmap)
+                scaledMat.release()
+                scaledBitmap.recycle()
+                rowRoiBitmap.recycle()
+
+                if (ocrText == null) {
+                    Log.d(TAG, "[QTY] Row $rowIndex: OCR failed")
+                    return@forEachIndexed
                 }
+
+                // 2-7. OCR結果を処理（bbox形状フィルタ + 正規表現）
+                ocrText.textBlocks.forEach { block ->
+                    block.lines.forEach { line ->
+                        val text = line.text.trim()
+                        val bounds = line.boundingBox
+
+                        if (bounds != null) {
+                            // 2-7-A. bbox形状フィルタ（罫線っぽい結果を弾く）
+                            val aspectRatio = bounds.width().toFloat() / bounds.height()
+                            if (aspectRatio > 5.0) {
+                                Log.d(TAG, "[QTY] Row $rowIndex: Rejected '$text' (横線, aspect=${String.format("%.2f", aspectRatio)})")
+                                return@forEach
+                            }
+                            if (bounds.height() < 12) {
+                                Log.d(TAG, "[QTY] Row $rowIndex: Rejected '$text' (細線, height=${bounds.height()})")
+                                return@forEach
+                            }
+
+                            // 2-7-B. 正規表現チェック（1-3桁の数字のみ）
+                            if (text.matches(Regex("^[0-9]{1,3}$"))) {
+                                quantityMap[rowIndex] = text
+                                Log.d(TAG, "[QTY] Row $rowIndex: Accepted '$text' (charPx=${charPx.toInt()}, scale=${String.format("%.2f", scale)})")
+                            } else {
+                                Log.d(TAG, "[QTY] Row $rowIndex: Rejected '$text' (regex mismatch)")
+                            }
+                        }
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "[QTY] Row $rowIndex: Error", e)
             }
         }
 
-        Log.d(TAG, "[QUANTITY] ========== Quantity Column Re-OCR Complete: ${quantityMap.size} quantities ==========")
+        Log.d(TAG, "[QTY] ========== Quantity Column Re-OCR Complete: ${quantityMap.size} quantities ==========")
         return quantityMap
     }
+
+    /**
+     * OpenCV Mat を Bitmap に変換（ヘルパー）
+     */
+    private fun matToBitmap(mat: org.opencv.core.Mat): Bitmap {
+        val bitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
+        org.opencv.android.Utils.matToBitmap(mat, bitmap)
+        return bitmap
+    }
+
 
     /**
      * ダブルOCR結果（グレー版 + 二値版）
      */
     data class DoubleOcrResult(
         val grayText: String?,
-        val binaryText: String?
+        val binaryText: String?,
+        val binaryCandidateScore: Double = 0.0  // 段階Aスコア
     )
 
     /**
@@ -736,29 +768,48 @@ object OCRProcessor {
         val charPx = ImagePreprocessor.estimateCharHeightPx(enhancedBitmap)
         Log.d(TAG, "[PRODUCT] Character height: ${charPx}px")
 
-        // 6. エッジ密度計測（グレー vs 二値判定用）
+        // 6. 画像特徴計測（段階A: 二値OCRを走らせるか判定）
         val edgeDensity = ImagePreprocessor.calcEdgeDensity(grayMatGray)
+        val blackRatio = ImagePreprocessor.calcBlackRatio(grayMatGray)
+        val strokeWidthVar = ImagePreprocessor.calcStrokeWidthVariance(grayMatGray)
 
-        // 7. モルフォロジーOpen（ノイズ除去）
+        // 7. 二値OCR候補スコアを計算
+        val binaryCandidateScore = ImagePreprocessor.calcBinaryCandidateScore(
+            charPx, edgeDensity, blackRatio, strokeWidthVar
+        )
+
+        // 8. モルフォロジーOpen（ノイズ除去）
         val openedMat = ImagePreprocessor.safeMorphOpen(grayMatGray, charPx)
         Log.d(TAG, "[PRODUCT] Applied morph open")
 
-        // 8. ダブルOCR戦略: グレー版 + 二値版
-        val shouldUseBinary = charPx >= 18f && edgeDensity >= 0.02
-        Log.d(TAG, "[PRODUCT] Double OCR: charPx=$charPx, edgeDensity=$edgeDensity, useBinary=$shouldUseBinary")
+        // 9. 段階A判定: 二値OCRを走らせるか
+        // ハード条件（最低限）: strokeWidthVarは減点要素として使用（ハード条件ではない）
+        val canTryBinary = (
+            charPx >= 18f &&
+            blackRatio <= 0.45 &&
+            edgeDensity >= 0.02
+        )
+
+        // スコア条件
+        val shouldUseBinary = canTryBinary && binaryCandidateScore >= 0.5
+
+        Log.d(TAG, "[PRODUCT] 段階A - Binary candidate: score=${String.format("%.3f", binaryCandidateScore)}, " +
+            "charPx=$charPx, blackRatio=${String.format("%.3f", blackRatio)}, " +
+            "edgeDensity=${String.format("%.3f", edgeDensity)}, " +
+            "canTry=$canTryBinary, useBinary=$shouldUseBinary")
 
         // スケールファクター計算（座標逆変換用）
         val scaleFactor = ImagePreprocessor.calcScaleFactor(charPx, 32f)
         Log.d(TAG, "[PRODUCT] Scale factor: $scaleFactor")
 
-        // 8-1. グレー版OCR
+        // 10. グレー版OCR（常に実行 = 主系）
         val grayMatForOcr = openedMat.clone()
         val grayBitmapForOcr = matToBitmap(grayMatForOcr)
         val scaledGrayBitmap = scaleForOcr(grayBitmapForOcr, charPx)
         val grayOcrText = recognizeText(scaledGrayBitmap)
         Log.d(TAG, "[PRODUCT-GRAY] OCR result: ${if (grayOcrText != null) "success" else "failed"}")
 
-        // 8-2. 二値版OCR（条件付き）
+        // 11. 二値版OCR（条件付き = 補助火力）
         var binaryOcrText: com.google.mlkit.vision.text.Text? = null
         if (shouldUseBinary) {
             val binaryMat = ImagePreprocessor.safeAdaptiveThreshold(openedMat, charPx)
@@ -770,6 +821,8 @@ object OCRProcessor {
             binaryMat.release()
             binaryBitmapForOcr.recycle()
             scaledBinaryBitmap.recycle()
+        } else {
+            Log.d(TAG, "[PRODUCT-BINARY] Skipped (段階A条件を満たさず)")
         }
 
         // クリーンアップ
@@ -876,7 +929,7 @@ object OCRProcessor {
             }
         }
 
-        // 14. ダブルOCR結果を統合
+        // 14. ダブルOCR結果を統合（binaryCandidateScoreを含む）
         val doubleOcrMap = mutableMapOf<Int, DoubleOcrResult>()
         val allIndices = (grayProductMap.keys + binaryProductMap.keys).toSet()
 
@@ -885,7 +938,11 @@ object OCRProcessor {
             val binaryText = binaryProductMap[index]
 
             if (grayText != null || binaryText != null) {
-                doubleOcrMap[index] = DoubleOcrResult(grayText, binaryText)
+                doubleOcrMap[index] = DoubleOcrResult(
+                    grayText = grayText,
+                    binaryText = binaryText,
+                    binaryCandidateScore = binaryCandidateScore  // 段階Aスコアを保存
+                )
                 Log.d(TAG, "[PRODUCT] Row $index: gray='$grayText', binary='$binaryText'")
             }
         }
@@ -1005,26 +1062,15 @@ object OCRProcessor {
         val filteredBoxes = UnderlyingBaseProcessor.filterNoise(textBoxes)
         Log.d(TAG, "[UNDERLAY] Step 4: Noise filtering (${textBoxes.size} → ${filteredBoxes.size})")
 
-        // 5. 行クラスタリング（Y座標、閾値25px）
+        // 5. 行クラスタリング（Y座標、閾値15px）
         val rows = UnderlyingBaseProcessor.clusterRows(filteredBoxes)
         Log.d(TAG, "[UNDERLAY] Step 5: Row clustering (${rows.size} rows)")
 
-        // 5.5. Y座標範囲でフィルタリング（ヘッダー・フッター除外、合計行含む）
-        val validYRange = UnderlyingBaseProcessor.getValidRowYRange()
-        val validRows = rows.filter { rowBoxes ->
-            val avgY = rowBoxes.map { it.centerY }.average().toInt()
-            val isInRange = avgY in validYRange
-            if (!isInRange) {
-                Log.d(TAG, "[UNDERLAY]   Filtered out row at Y=$avgY (outside $validYRange)")
-            }
-            isInRange
-        }
-        Log.d(TAG, "[UNDERLAY] Step 5.5: Y-range filtering (${rows.size} → ${validRows.size} rows)")
-
         // 6-7. 各行を処理（行タイプ判定 → 列判定 → 行データ生成）
+        // Y座標フィルタリングは行タイプ判定後に実施（合計行を取りこぼさないため）
         // また、各行のY座標も記録（数量列OCRのマッピングに使用）
         val rowYCoordinates = mutableListOf<Int>()
-        val receiptRows = validRows.mapIndexed { index, rowBoxes ->
+        val receiptRows = rows.mapIndexed { index, rowBoxes ->
             Log.d(TAG, "[UNDERLAY] Processing row $index (${rowBoxes.size} boxes):")
 
             // 行のY座標を計算（行内の全TextBoxのY座標平均）
@@ -1043,16 +1089,65 @@ object OCRProcessor {
 
         Log.d(TAG, "[UNDERLAY] Step 7: Processed ${receiptRows.size} rows")
 
+        // 7.5. 行タイプに応じたY座標フィルタリング（ヘッダー・フッターの不要な行を除外）
+        val normalRange = UnderlyingBaseProcessor.getNormalRowYRange()
+        val totalRange = UnderlyingBaseProcessor.getMonthlyTotalYRange()
+
+        val filteredRowsWithIndices = receiptRows.mapIndexedNotNull { index, row ->
+            val y = rowYCoordinates[index]
+
+            when (row.rowType) {
+                UnderlyingBaseProcessor.RowType.NORMAL -> {
+                    if (y in normalRange.first..normalRange.last) {
+                        index to row
+                    } else {
+                        Log.d(TAG, "[UNDERLAY]   ✗ Filtered: NORMAL row at Y=$y (outside ${normalRange.first}-${normalRange.last})")
+                        null
+                    }
+                }
+                UnderlyingBaseProcessor.RowType.SUBTOTAL -> {
+                    if (y in normalRange.first..normalRange.last) {
+                        index to row
+                    } else {
+                        Log.d(TAG, "[UNDERLAY]   ✗ Filtered: SUBTOTAL row at Y=$y (outside ${normalRange.first}-${normalRange.last})")
+                        null
+                    }
+                }
+                UnderlyingBaseProcessor.RowType.MONTHLY_TOTAL -> {
+                    if (y in totalRange.first..totalRange.last) {
+                        index to row
+                    } else {
+                        Log.d(TAG, "[UNDERLAY]   ✗ Filtered: MONTHLY_TOTAL row at Y=$y (outside ${totalRange.first}-${totalRange.last})")
+                        null
+                    }
+                }
+                UnderlyingBaseProcessor.RowType.EMPTY -> {
+                    Log.d(TAG, "[UNDERLAY]   ✗ Filtered: EMPTY row at Y=$y")
+                    null
+                }
+            }
+        }
+
+        // 元のインデックスから新しいインデックスへのマッピング（数量列・商品名列OCRで使用）
+        val oldIndexToNewIndex = filteredRowsWithIndices.mapIndexed { newIndex, (oldIndex, _) ->
+            oldIndex to newIndex
+        }.toMap()
+
+        val filteredRows = filteredRowsWithIndices.map { it.second }
+        val filteredYCoordinates = filteredRowsWithIndices.map { rowYCoordinates[it.first] }
+
+        Log.d(TAG, "[UNDERLAY] Step 7.5: Y-coordinate filtering (${receiptRows.size} → ${filteredRows.size} rows)")
+
         // 8. 数量列特化OCR処理（Latin OCR + 4倍拡大）
-        val quantityMap = extractQuantitiesFromColumn(warpedBitmap, receiptRows, rowYCoordinates)
+        val quantityMap = extractQuantitiesFromColumn(warpedBitmap, filteredRows, filteredYCoordinates)
         Log.d(TAG, "[UNDERLAY] Step 8: Quantity re-OCR completed (${quantityMap.size} quantities)")
 
         // 8.5. 商品名列特化OCR処理（Japanese OCR + ダブルOCR）
-        val productNameDoubleOcrMap = extractProductNamesFromColumn(warpedBitmap, receiptRows, rowYCoordinates)
+        val productNameDoubleOcrMap = extractProductNamesFromColumn(warpedBitmap, filteredRows, filteredYCoordinates)
         Log.d(TAG, "[UNDERLAY] Step 8.5: Product name re-OCR completed (${productNameDoubleOcrMap.size} product names)")
 
         // 9. 数量・商品名を上書き & 返品処理
-        val updatedRows = receiptRows.mapIndexed { index, row ->
+        val updatedRows = filteredRows.mapIndexed { index, row ->
             // 数量列OCRで取得した値で上書き
             val newQuantity = quantityMap[index] ?: row.quantity
 
@@ -1122,15 +1217,6 @@ object OCRProcessor {
         val subtotals: List<UnderlyingBaseProcessor.SubtotalData>,
         val productNameDoubleOcrMap: Map<Int, DoubleOcrResult>  // 行インデックス → ダブルOCR結果
     )
-
-    /**
-     * Mat → Bitmap 変換
-     */
-    private fun matToBitmap(mat: org.opencv.core.Mat): Bitmap {
-        val bitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
-        org.opencv.android.Utils.matToBitmap(mat, bitmap)
-        return bitmap
-    }
 
     /**
      * OCR用スケーリング

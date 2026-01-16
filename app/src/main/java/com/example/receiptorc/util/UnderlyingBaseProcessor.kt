@@ -38,32 +38,34 @@ object UnderlyingBaseProcessor {
     private const val RECEIPT_TOP_MM = 31.0    // A4上端から伝票上端まで
 
     /**
-     * 列範囲（mm単位、A4左上原点、固定2400×1700出力用）
-     * 伝票左端43mm + 各列位置（実測値ベース）
+     * 列範囲（mm単位、A4左上原点、伝票左上原点からの実測値ベース）
+     * 伝票左端43mm + 各列位置
      */
-    private const val DATE_START_MM = RECEIPT_LEFT_MM + 5.5        // 48.5mm
-    private const val DATE_END_MM = RECEIPT_LEFT_MM + 20.0         // 63.0mm
-    private const val ITEM_START_MM = RECEIPT_LEFT_MM + 20.0       // 63.0mm
-    private const val ITEM_END_MM = RECEIPT_LEFT_MM + 79.5         // 122.5mm
-    private const val STORE_START_MM = RECEIPT_LEFT_MM + 79.5      // 122.5mm (取扱支店、無視)
-    private const val STORE_END_MM = RECEIPT_LEFT_MM + 97.0        // 140.0mm
-    private const val QUANTITY_START_MM = RECEIPT_LEFT_MM + 97.0   // 140.0mm (数量)
-    private const val QUANTITY_END_MM = RECEIPT_LEFT_MM + 117.0    // 160.0mm
-    private const val UNITPRICE_START_MM = RECEIPT_LEFT_MM + 117.0 // 160.0mm (税込単価、無視)
-    private const val UNITPRICE_END_MM = RECEIPT_LEFT_MM + 134.5   // 177.5mm
-    private const val AMOUNT_START_MM = RECEIPT_LEFT_MM + 134.5    // 177.5mm (税込金額)
+    private const val DATE_START_MM = RECEIPT_LEFT_MM + 6.0        // 49.0mm
+    private const val DATE_END_MM = RECEIPT_LEFT_MM + 20.5         // 63.5mm
+    private const val ITEM_START_MM = RECEIPT_LEFT_MM + 20.5       // 63.5mm
+    private const val ITEM_END_MM = RECEIPT_LEFT_MM + 80.0         // 123.0mm
+    private const val STORE_START_MM = RECEIPT_LEFT_MM + 80.0      // 123.0mm (取扱支店、無視)
+    private const val STORE_END_MM = RECEIPT_LEFT_MM + 135.0       // 178.0mm
+    private const val QUANTITY_START_MM = RECEIPT_LEFT_MM + 80.0   // 123.0mm (数量、計測不要範囲内)
+    private const val QUANTITY_END_MM = RECEIPT_LEFT_MM + 135.0    // 178.0mm
+    private const val UNITPRICE_START_MM = RECEIPT_LEFT_MM + 80.0  // 123.0mm (税込単価、無視)
+    private const val UNITPRICE_END_MM = RECEIPT_LEFT_MM + 135.0   // 178.0mm
+    private const val AMOUNT_START_MM = RECEIPT_LEFT_MM + 135.0    // 178.0mm (税込金額)
     private const val AMOUNT_END_MM = RECEIPT_LEFT_MM + 156.0      // 199.0mm
     private const val CATEGORY_START_MM = RECEIPT_LEFT_MM + 156.0  // 199.0mm (分類計)
     private const val CATEGORY_END_MM = RECEIPT_LEFT_MM + 177.5    // 220.5mm
 
     /**
-     * Y座標範囲（mm単位、A4左上原点、固定2400×1700出力用）
+     * Y座標範囲（mm単位、A4左上原点、伝票左上原点からの実測値ベース）
      * 伝票上端31mm + 各行位置
      */
-    private const val NORMAL_ROW_Y_START_MM = RECEIPT_TOP_MM + 56.5   // 87.5mm
-    private const val NORMAL_ROW_Y_END_MM = RECEIPT_TOP_MM + 120.5    // 151.5mm（実測値に修正）
-    private const val SUBTOTAL_Y_START_MM = RECEIPT_TOP_MM + 120.5    // 151.5mm
-    private const val SUBTOTAL_Y_END_MM = RECEIPT_TOP_MM + 132.0      // 163.0mm
+    private const val NORMAL_ROW_Y_START_MM = RECEIPT_TOP_MM + 56.5   // 87.5mm（通常行・小計行）
+    private const val NORMAL_ROW_Y_END_MM = RECEIPT_TOP_MM + 120.5    // 151.5mm（通常行・小計行）
+    private const val SUBTOTAL_Y_START_MM = RECEIPT_TOP_MM + 56.5     // 87.5mm（小計行も通常行と同じ範囲）
+    private const val SUBTOTAL_Y_END_MM = RECEIPT_TOP_MM + 120.5      // 151.5mm（小計行も通常行と同じ範囲）
+    private const val MONTHLY_TOTAL_Y_START_MM = RECEIPT_TOP_MM + 121.0 // 152.0mm（合計欄、実測値Y=2138pxに対応）
+    private const val MONTHLY_TOTAL_Y_END_MM = RECEIPT_TOP_MM + 126.0   // 157.0mm（合計欄、範囲を拡大）
 
     /**
      * 列範囲（px単位、実行時に初期化）
@@ -81,6 +83,7 @@ object UnderlyingBaseProcessor {
      */
     private var SUBTOTAL_Y_RANGE: IntRange = 968..996
     private var NORMAL_ROW_Y_RANGE: IntRange = 446..968
+    private var MONTHLY_TOTAL_Y_RANGE: IntRange = 1320..1530
 
     // ============================================
     // 列挙型
@@ -165,6 +168,7 @@ object UnderlyingBaseProcessor {
 
         NORMAL_ROW_Y_RANGE = (NORMAL_ROW_Y_START_MM * mmToPixelRatio).toInt()..(NORMAL_ROW_Y_END_MM * mmToPixelRatio).toInt()
         SUBTOTAL_Y_RANGE = (SUBTOTAL_Y_START_MM * mmToPixelRatio).toInt()..(SUBTOTAL_Y_END_MM * mmToPixelRatio).toInt()
+        MONTHLY_TOTAL_Y_RANGE = (MONTHLY_TOTAL_Y_START_MM * mmToPixelRatio).toInt()..(MONTHLY_TOTAL_Y_END_MM * mmToPixelRatio).toInt()
 
         Log.d(TAG, "Column ranges initialized with mmToPixelRatio=$mmToPixelRatio")
         Log.d(TAG, "  DATE_RANGE: $DATE_RANGE")
@@ -176,6 +180,7 @@ object UnderlyingBaseProcessor {
         Log.d(TAG, "  CATEGORY_RANGE: $CATEGORY_RANGE")
         Log.d(TAG, "  NORMAL_ROW_Y_RANGE: $NORMAL_ROW_Y_RANGE")
         Log.d(TAG, "  SUBTOTAL_Y_RANGE: $SUBTOTAL_Y_RANGE")
+        Log.d(TAG, "  MONTHLY_TOTAL_Y_RANGE: $MONTHLY_TOTAL_Y_RANGE")
     }
 
     /**
@@ -183,6 +188,18 @@ object UnderlyingBaseProcessor {
      * @return Y座標範囲（px）
      */
     fun getNormalRowYRange(): IntRange = NORMAL_ROW_Y_RANGE
+
+    /**
+     * 合計行のY座標範囲を取得
+     * @return Y座標範囲（px）
+     */
+    fun getMonthlyTotalYRange(): IntRange = MONTHLY_TOTAL_Y_RANGE
+
+    /**
+     * 有効な行のY座標範囲を取得（通常行+合計行）
+     * @return Y座標範囲（px）
+     */
+    fun getValidRowYRange(): IntRange = NORMAL_ROW_Y_RANGE.first..MONTHLY_TOTAL_Y_RANGE.last
 
     /**
      * 数量列のX座標範囲を取得
@@ -256,22 +273,34 @@ object UnderlyingBaseProcessor {
         // 行全体のテキストを結合
         val rowText = rowBoxes.joinToString(" ") { it.text }
 
-        // 小計判定（「小計」「一般購買」「給油所」「農業機械」などのキーワード）
+        // 行のY座標（代表値として最初のボックスのY座標を使用）
+        val rowY = rowBoxes.firstOrNull()?.centerY ?: 0
+
+        // 小計判定（「小計」「一般購買」「給油所」「農業機械」などのキーワード + Y座標範囲）
         val subtotalKeywords = listOf("小計", "一般購買", "給油所", "農業機械")
-        if (subtotalKeywords.any { rowText.contains(it) }) {
-            Log.d(TAG, "  Row type: SUBTOTAL (text='$rowText')")
+        if (subtotalKeywords.any { rowText.contains(it) } && rowY in SUBTOTAL_Y_RANGE) {
+            Log.d(TAG, "  Row type: SUBTOTAL (text='$rowText', Y=$rowY)")
             return RowType.SUBTOTAL
         }
 
-        // 月合計判定（「月合計」「合計」など）
-        val monthlyTotalKeywords = listOf("月合計", "合　計")
-        if (monthlyTotalKeywords.any { rowText.contains(it) }) {
-            Log.d(TAG, "  Row type: MONTHLY_TOTAL (text='$rowText')")
-            return RowType.MONTHLY_TOTAL
+        // 月合計判定
+        // 条件1: 「月合計」「合計」などのキーワード + Y座標範囲
+        // 条件2: Y座標範囲内 + 5-6桁の数値 + フッターキーワード（「※」「以下」「入金」など）
+        val monthlyTotalKeywords = listOf("月合計", "合　計", "合計", "税込", "合計（税込）")
+        val hasMonthlyTotalKeyword = monthlyTotalKeywords.any { rowText.contains(it) }
+        val hasMoney = rowText.matches(Regex(".*\\d{5,6}.*"))  // 5-6桁の数値を含む
+        val hasFooterKeyword = listOf("※", "以下", "入金").any { rowText.contains(it) }  // フッター関連キーワード
+
+        if (rowY in MONTHLY_TOTAL_Y_RANGE) {
+            // キーワードがあるか、または数値とフッターキーワードの両方がある場合
+            if (hasMonthlyTotalKeyword || (hasMoney && hasFooterKeyword)) {
+                Log.d(TAG, "  Row type: MONTHLY_TOTAL (text='$rowText', Y=$rowY, keyword=$hasMonthlyTotalKeyword, money=$hasMoney, footer=$hasFooterKeyword)")
+                return RowType.MONTHLY_TOTAL
+            }
         }
 
         // 通常行
-        Log.d(TAG, "  Row type: NORMAL")
+        Log.d(TAG, "  Row type: NORMAL (Y=$rowY)")
         return RowType.NORMAL
     }
 
@@ -735,6 +764,25 @@ object UnderlyingBaseProcessor {
      */
     fun cleanItemName(itemName: String): String {
         var cleaned = itemName
+
+        // 不要な文字列を最初に除去（合計欄と同じ行に出現する文字列）
+        val unwantedStrings = listOf(
+            "＊以下の方法にて、ご入金をお願いします。",
+            "＊以下の方法にて、ご入金をお願いします",
+            "*以下の方法にて、ご入金をお願いします。",
+            "*以下の方法にて、ご入金をお願いします"
+        )
+
+        for (unwanted in unwantedStrings) {
+            if (cleaned.contains(unwanted)) {
+                cleaned = cleaned.replace(unwanted, "")
+                Log.d(TAG, "  Removed unwanted string: '$unwanted'")
+            }
+        }
+
+        // 前後の空白・区切り文字を除去
+        cleaned = cleaned.trim('|', ' ', '　')
+
         var previousCleaned = ""
         var iteration = 0
         val maxIterations = 3  // 無限ループ防止
@@ -836,15 +884,21 @@ object UnderlyingBaseProcessor {
                     categoryName.contains("農発検") ||  // 別の誤認識パターン
                     categoryName.contains("農業") -> "農業機械"
 
-                    else -> "未分類"
+                    // パターンマッチ失敗時は一文字検出を試行
+                    else -> detectCategoryBySingleChar(categoryName) ?: "未分類"
                 }
                 subtotalIndices.add(Pair(index, category))
                 Log.d(TAG, "Subtotal found at index $index: $categoryName → category: $category")
             }
         }
 
-        // 2. 各行にカテゴリを適用（小計行から逆算）
+        // 2. 各行にカテゴリを適用（新ロジック）
+        // 最初の小計行が出るまでは「未分類」
+        // 最初の小計行より後は「未定」（2枚目以降で判明）
         val result = mutableListOf<Pair<ReceiptRow, String>>()
+
+        // 最初の小計行のインデックスを探す（カテゴリに関係なく）
+        val firstSubtotalIndex = subtotalIndices.firstOrNull()?.first
 
         rows.forEachIndexed { index, row ->
             val category = when (row.rowType) {
@@ -853,10 +907,17 @@ object UnderlyingBaseProcessor {
                     subtotalIndices.find { it.first == index }?.second ?: "未分類"
                 }
                 RowType.NORMAL -> {
-                    // 通常行：直後の小計行のカテゴリを適用
-                    // 小計行がない場合（1枚目など）は「一般購買」をデフォルトとする
-                    val nextSubtotal = subtotalIndices.find { it.first > index }
-                    nextSubtotal?.second ?: "一般購買"
+                    // 通常行のカテゴリ判定
+                    if (firstSubtotalIndex == null) {
+                        // 小計行がない場合、すべて「未分類」
+                        "未分類"
+                    } else if (index < firstSubtotalIndex) {
+                        // 最初の小計より前：「未分類」
+                        "未分類"
+                    } else {
+                        // 最初の小計より後：「未定」（2枚目以降で判明）
+                        "未定"
+                    }
                 }
                 RowType.MONTHLY_TOTAL -> "月合計"
                 RowType.EMPTY -> "空白"
@@ -869,7 +930,7 @@ object UnderlyingBaseProcessor {
         val categoryCount = result.groupingBy { it.second }.eachCount()
 
         if (subtotalIndices.isEmpty()) {
-            Log.d(TAG, "No subtotal rows found. Using default category: 一般購買")
+            Log.d(TAG, "No subtotal rows found. Using default category: 未分類")
         }
 
         categoryCount.forEach { (category, count) ->
@@ -877,5 +938,30 @@ object UnderlyingBaseProcessor {
         }
 
         return result
+    }
+
+    /**
+     * 一文字でもカテゴリを判別
+     * 各カテゴリには固有文字があるため、一文字でも判別可能
+     */
+    private fun detectCategoryBySingleChar(text: String): String? {
+        // 一般購買の固有文字（誤認識パターンも含む）
+        val generalChars = setOf('般', '購', '買', '講', '課')
+
+        // 農業機械の固有文字（誤認識パターンも含む）
+        val agriChars = setOf('農', '機', '械', '展', '慢', '城', '来', '発', '検')
+
+        // 給油所の固有文字（誤認識パターンも含む）
+        val gasChars = setOf('給', '油', '所', '値', '造', '治', '抽')
+
+        for (char in text) {
+            when {
+                generalChars.contains(char) -> return "一般購買"
+                agriChars.contains(char) -> return "農業機械"
+                gasChars.contains(char) -> return "給油所"
+            }
+        }
+
+        return null  // 判別不可
     }
 }

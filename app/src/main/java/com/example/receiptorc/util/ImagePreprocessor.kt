@@ -252,4 +252,518 @@ object ImagePreprocessor {
             true
         )
     }
+
+    /**
+     * 文字高さを実測（OpenCV + 輪郭検出）
+     *
+     * エッジ検出→膨張→輪郭抽出→高さ統計で文字高さを推定
+     *
+     * @param bitmap 入力画像（商品名列などのROI）
+     * @return 推定文字高さ（px）、検出失敗時は0
+     */
+    fun estimateCharHeightPx(bitmap: Bitmap): Float {
+        try {
+            // Bitmap → Mat
+            val src = org.opencv.core.Mat()
+            org.opencv.android.Utils.bitmapToMat(bitmap, src)
+
+            // グレースケール化
+            val gray = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.cvtColor(src, gray, org.opencv.imgproc.Imgproc.COLOR_RGBA2GRAY)
+
+            // エッジ検出（Canny）
+            val edges = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.Canny(gray, edges, 80.0, 160.0)
+
+            // 膨張（文字をまとめる）
+            val kernel = org.opencv.imgproc.Imgproc.getStructuringElement(
+                org.opencv.imgproc.Imgproc.MORPH_RECT,
+                org.opencv.core.Size(3.0, 3.0)
+            )
+            org.opencv.imgproc.Imgproc.dilate(edges, edges, kernel)
+
+            // 輪郭検出
+            val contours = mutableListOf<org.opencv.core.MatOfPoint>()
+            val hierarchy = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.findContours(
+                edges,
+                contours,
+                hierarchy,
+                org.opencv.imgproc.Imgproc.RETR_EXTERNAL,
+                org.opencv.imgproc.Imgproc.CHAIN_APPROX_SIMPLE
+            )
+
+            // 高さを収集
+            val heights = contours.mapNotNull { cnt ->
+                val rect = org.opencv.imgproc.Imgproc.boundingRect(cnt)
+                when {
+                    rect.height < 6 -> null       // ノイズ
+                    rect.height > 80 -> null      // 行・罫線
+                    else -> rect.height.toFloat()
+                }
+            }
+
+            // リソース解放
+            src.release()
+            gray.release()
+            edges.release()
+            kernel.release()
+            hierarchy.release()
+            contours.forEach { it.release() }
+
+            if (heights.isEmpty()) {
+                Log.w(TAG, "estimateCharHeightPx: No valid contours found")
+                return 0f
+            }
+
+            // 中央値（外れ値に強い）
+            val sorted = heights.sorted()
+            val median = sorted[sorted.size / 2]
+
+            Log.d(TAG, "estimateCharHeightPx: found ${heights.size} contours, median height=${median}px")
+            return median
+
+        } catch (e: Exception) {
+            Log.e(TAG, "estimateCharHeightPx: Error", e)
+            return 0f
+        }
+    }
+
+    /**
+     * 最適拡大率を計算
+     *
+     * ML Kit日本語の最適域（30-40px）に収まるよう拡大率を決定
+     *
+     * @param currentCharPx 現在の文字高さ
+     * @param targetCharPx 目標文字高さ（デフォルト32px）
+     * @return 拡大率（1.0〜3.0）
+     */
+    fun calcScaleFactor(
+        currentCharPx: Float,
+        targetCharPx: Float = 32f
+    ): Float {
+        if (currentCharPx <= 0f) return 1f
+
+        val rawScale = targetCharPx / currentCharPx
+
+        // 1倍以上3倍以下に制限
+        // 3倍超: 補間ノイズ地獄
+        // 1倍未満: 縮小は無意味
+        return rawScale.coerceIn(1.0f, 3.0f)
+    }
+
+    /**
+     * 商品名列を自動スケーリング（文字高さベース）
+     *
+     * 文字高さを実測し、ML Kit最適域（30-40px）になるよう自動拡大
+     *
+     * @param itemBitmap 商品名列の画像
+     * @return スケーリング後の画像
+     */
+    fun scaleItemColumnForOcr(itemBitmap: Bitmap): Bitmap {
+        val charPx = estimateCharHeightPx(itemBitmap)
+        val scale = calcScaleFactor(charPx)
+
+        Log.d(TAG, "scaleItemColumnForOcr: charPx=${charPx}, scale=${scale}")
+
+        if (scale == 1f) {
+            Log.d(TAG, "scaleItemColumnForOcr: No scaling needed")
+            return itemBitmap
+        }
+
+        val scaledBitmap = Bitmap.createScaledBitmap(
+            itemBitmap,
+            (itemBitmap.width * scale).toInt(),
+            (itemBitmap.height * scale).toInt(),
+            true  // bilinear filtering
+        )
+
+        Log.d(TAG, "scaleItemColumnForOcr: ${itemBitmap.width}x${itemBitmap.height} → ${scaledBitmap.width}x${scaledBitmap.height}")
+        return scaledBitmap
+    }
+
+    /**
+     * 安全なモルフォロジーOpen（ノイズ除去）
+     *
+     * 文字高さに連動したカーネルサイズで、点ノイズ・印刷カスを除去。
+     * 文字自体は削らない安全設計。
+     *
+     * @param grayMat グレースケール画像（Mat）
+     * @param charPx 文字高さ（ピクセル）
+     * @return ノイズ除去後の画像（Mat）
+     */
+    fun safeMorphOpen(grayMat: org.opencv.core.Mat, charPx: Float): org.opencv.core.Mat {
+        // カーネルサイズ計算（文字高さ連動）
+        val k = maxOf(1, (charPx * 0.08f).toInt())
+        if (k <= 1) {
+            // 文字が小さい → Openしない（安全装置）
+            Log.d(TAG, "safeMorphOpen: charPx=$charPx too small, skipping")
+            return grayMat.clone()
+        }
+
+        // 奇数にする
+        val kernelSize = if (k % 2 == 0) k + 1 else k
+        val kernelSizeCapped = minOf(kernelSize, 5) // 最大5x5
+
+        Log.d(TAG, "safeMorphOpen: charPx=$charPx, kernelSize=$kernelSizeCapped")
+
+        val kernel = org.opencv.imgproc.Imgproc.getStructuringElement(
+            org.opencv.imgproc.Imgproc.MORPH_RECT,
+            org.opencv.core.Size(kernelSizeCapped.toDouble(), kernelSizeCapped.toDouble())
+        )
+
+        val result = org.opencv.core.Mat()
+        org.opencv.imgproc.Imgproc.morphologyEx(
+            grayMat,
+            result,
+            org.opencv.imgproc.Imgproc.MORPH_OPEN,
+            kernel,
+            org.opencv.core.Point(-1.0, -1.0),
+            1  // 1回のみ
+        )
+
+        kernel.release()
+        return result
+    }
+
+    /**
+     * 安全なAdaptive Threshold（二値化）
+     *
+     * 文字高さに連動したblockSizeで、局所的に二値化。
+     * 条件付き適用が前提（charPx >= 18f）
+     *
+     * @param grayMat グレースケール画像（Mat）
+     * @param charPx 文字高さ（ピクセル）
+     * @return 二値化画像（Mat）
+     */
+    fun safeAdaptiveThreshold(grayMat: org.opencv.core.Mat, charPx: Float): org.opencv.core.Mat {
+        // blockSize 計算（文字高さ × 1.8）
+        var blockSize = (charPx * 1.8f).toInt()
+        if (blockSize % 2 == 0) blockSize += 1
+        blockSize = blockSize.coerceIn(31, 81) // 安全範囲
+
+        val cValue = 5.0
+
+        Log.d(TAG, "safeAdaptiveThreshold: charPx=$charPx, blockSize=$blockSize, C=$cValue")
+
+        val binary = org.opencv.core.Mat()
+        org.opencv.imgproc.Imgproc.adaptiveThreshold(
+            grayMat,
+            binary,
+            255.0,
+            org.opencv.imgproc.Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
+            org.opencv.imgproc.Imgproc.THRESH_BINARY,
+            blockSize,
+            cValue
+        )
+
+        return binary
+    }
+
+    /**
+     * エッジ密度を計測
+     *
+     * グレーとバイナリの判定に使用
+     *
+     * @param grayMat グレースケール画像（Mat）
+     * @return エッジ密度（0.0〜1.0）
+     */
+    fun calcEdgeDensity(grayMat: org.opencv.core.Mat): Double {
+        val edges = org.opencv.core.Mat()
+        org.opencv.imgproc.Imgproc.Canny(grayMat, edges, 50.0, 150.0)
+
+        val edgeCount = org.opencv.core.Core.countNonZero(edges)
+        val total = edges.rows() * edges.cols()
+
+        edges.release()
+
+        val density = if (total > 0) edgeCount.toDouble() / total.toDouble() else 0.0
+        Log.d(TAG, "calcEdgeDensity: $density")
+        return density
+    }
+
+    /**
+     * 黒画素率を計算（二値OCR判定用）
+     *
+     * @param grayMat グレースケール画像
+     * @return 黒画素率 0.0〜1.0
+     */
+    fun calcBlackRatio(grayMat: org.opencv.core.Mat): Double {
+        try {
+            val threshold = 128.0
+            var blackCount = 0
+            val total = grayMat.rows() * grayMat.cols()
+
+            for (y in 0 until grayMat.rows()) {
+                for (x in 0 until grayMat.cols()) {
+                    val pixel = grayMat.get(y, x)[0]
+                    if (pixel < threshold) {
+                        blackCount++
+                    }
+                }
+            }
+
+            val ratio = blackCount.toDouble() / total.toDouble()
+            Log.d(TAG, "calcBlackRatio: $ratio")
+            return ratio
+
+        } catch (e: Exception) {
+            Log.e(TAG, "calcBlackRatio: Error", e)
+            return 0.5
+        }
+    }
+
+    /**
+     * ストローク幅のばらつきを計算（二値OCR判定用）
+     *
+     * @param grayMat グレースケール画像
+     * @return ストローク幅のばらつき 0.0〜1.0（低いほど良好）
+     */
+    fun calcStrokeWidthVariance(grayMat: org.opencv.core.Mat): Double {
+        try {
+            // エッジ検出
+            val edges = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.Canny(grayMat, edges, 50.0, 150.0)
+
+            // 輪郭検出
+            val contours = mutableListOf<org.opencv.core.MatOfPoint>()
+            val hierarchy = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.findContours(
+                edges,
+                contours,
+                hierarchy,
+                org.opencv.imgproc.Imgproc.RETR_EXTERNAL,
+                org.opencv.imgproc.Imgproc.CHAIN_APPROX_SIMPLE
+            )
+
+            // 各輪郭の幅を収集
+            val widths = contours.mapNotNull { cnt ->
+                val rect = org.opencv.imgproc.Imgproc.boundingRect(cnt)
+                if (rect.width in 2..50) rect.width.toDouble() else null
+            }
+
+            edges.release()
+            hierarchy.release()
+            contours.forEach { it.release() }
+
+            if (widths.size < 3) {
+                Log.d(TAG, "calcStrokeWidthVariance: Insufficient data")
+                return 0.5
+            }
+
+            // 標準偏差を計算
+            val mean = widths.average()
+            val variance = widths.map { (it - mean) * (it - mean) }.average()
+            val stdDev = kotlin.math.sqrt(variance)
+
+            // 変動係数（CV）を計算（0.0〜1.0に正規化）
+            val cv = if (mean > 0) (stdDev / mean).coerceIn(0.0, 1.0) else 0.5
+
+            Log.d(TAG, "calcStrokeWidthVariance: $cv (mean=$mean, stdDev=$stdDev)")
+            return cv
+
+        } catch (e: Exception) {
+            Log.e(TAG, "calcStrokeWidthVariance: Error", e)
+            return 0.5
+        }
+    }
+
+    /**
+     * 二値OCR候補スコアを計算（段階A: 二値OCRを走らせるか判定）
+     *
+     * 設計思想:
+     * - strokeWidthVarは「ハード条件」ではなく「減点要素」として使う
+     * - 日本語印刷物は漢字・ひらがな・カタカナで自然にばらつきが出る
+     * - 高いstrokeWidthVarは「即NG」ではなく「スコアが少し下がる」程度
+     *
+     * スコア関数:
+     * strokePenalty =
+     *   if (strokeWidthVar <= 0.3) 0.0
+     *   else if (strokeWidthVar <= 0.6) 0.1
+     *   else if (strokeWidthVar <= 0.9) 0.2
+     *   else 0.3
+     *
+     * binaryCandidateScore =
+     *   0.40 * charHeightNorm
+     * + 0.40 * edgeDensityNorm
+     * - 0.20 * strokePenalty
+     *
+     * @param charHeightPx 推定文字高さ
+     * @param edgeDensity エッジ密度
+     * @param blackRatio 黒画素率（ハード条件で使用）
+     * @param strokeWidthVar ストローク幅のばらつき（減点要素）
+     * @return 候補スコア 0.0〜1.0
+     */
+    fun calcBinaryCandidateScore(
+        charHeightPx: Float,
+        edgeDensity: Double,
+        blackRatio: Double,
+        strokeWidthVar: Double
+    ): Double {
+        // 各指標を正規化
+        val charHeightNorm = (charHeightPx / 32f).coerceIn(0f, 1f).toDouble()
+        val edgeDensityNorm = (edgeDensity / 0.1).coerceIn(0.0, 1.0)  // 0.1を最大値と仮定
+
+        // strokeWidthVarを段階的ペナルティに変換（日本語印刷物の自然なばらつきを許容）
+        val strokePenalty = when {
+            strokeWidthVar <= 0.3 -> 0.0  // 理想的
+            strokeWidthVar <= 0.6 -> 0.1  // 許容範囲
+            strokeWidthVar <= 0.9 -> 0.2  // やや高いが試す価値あり
+            else -> 0.3                    // 高い（それでも試す）
+        }
+
+        // 重み付きスコア計算
+        val score = (
+            0.40 * charHeightNorm +
+            0.40 * edgeDensityNorm -
+            0.20 * strokePenalty
+        ).coerceIn(0.0, 1.0)
+
+        Log.d(TAG, "calcBinaryCandidateScore: $score " +
+            "(charH=${charHeightNorm.format(2)}, edge=${edgeDensityNorm.format(2)}, " +
+            "strokePenalty=${strokePenalty.format(2)} [var=${strokeWidthVar.format(2)}])")
+
+        return score
+    }
+
+    /**
+     * 罫線除去（OCR前処理）
+     *
+     * 設計思想:
+     * - 縦罫線は「1」に化ける元凶 → 最優先で除去
+     * - 数字の縦線は短い → 残る
+     * - 横罫線は必要に応じて除去
+     *
+     * @param grayMat グレースケール画像
+     * @param removeVertical 縦罫線を除去するか
+     * @param removeHorizontal 横罫線を除去するか
+     * @return 罫線除去後の画像
+     */
+    fun removeLines(
+        grayMat: org.opencv.core.Mat,
+        removeVertical: Boolean = true,
+        removeHorizontal: Boolean = false
+    ): org.opencv.core.Mat {
+        try {
+            var result = grayMat.clone()
+
+            // 縦罫線除去（最優先）
+            if (removeVertical) {
+                val verticalKernel = org.opencv.imgproc.Imgproc.getStructuringElement(
+                    org.opencv.imgproc.Imgproc.MORPH_RECT,
+                    org.opencv.core.Size(1.0, (grayMat.rows() * 0.6).toDouble())
+                )
+                val noVerticalLines = org.opencv.core.Mat()
+                org.opencv.imgproc.Imgproc.morphologyEx(
+                    result,
+                    noVerticalLines,
+                    org.opencv.imgproc.Imgproc.MORPH_OPEN,
+                    verticalKernel
+                )
+                val temp = org.opencv.core.Mat()
+                org.opencv.core.Core.subtract(result, noVerticalLines, temp)
+
+                result.release()
+                result = temp
+                noVerticalLines.release()
+                verticalKernel.release()
+
+                Log.d(TAG, "removeLines: Removed vertical lines")
+            }
+
+            // 横罫線除去（必要なら）
+            if (removeHorizontal) {
+                val horizontalKernel = org.opencv.imgproc.Imgproc.getStructuringElement(
+                    org.opencv.imgproc.Imgproc.MORPH_RECT,
+                    org.opencv.core.Size((grayMat.cols() * 0.6).toDouble(), 1.0)
+                )
+                val noHorizontalLines = org.opencv.core.Mat()
+                org.opencv.imgproc.Imgproc.morphologyEx(
+                    result,
+                    noHorizontalLines,
+                    org.opencv.imgproc.Imgproc.MORPH_OPEN,
+                    horizontalKernel
+                )
+                val temp = org.opencv.core.Mat()
+                org.opencv.core.Core.subtract(result, noHorizontalLines, temp)
+
+                result.release()
+                result = temp
+                noHorizontalLines.release()
+                horizontalKernel.release()
+
+                Log.d(TAG, "removeLines: Removed horizontal lines")
+            }
+
+            return result
+
+        } catch (e: Exception) {
+            Log.e(TAG, "removeLines: Error", e)
+            return grayMat.clone()
+        }
+    }
+
+    /**
+     * 文字高さ推定（簡易版・数量列用）
+     *
+     * @param grayMat グレースケール画像
+     * @return 推定文字高さ（px）
+     */
+    fun estimateCharHeightSimple(grayMat: org.opencv.core.Mat): Float {
+        try {
+            // 軽めの二値化
+            val binary = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.adaptiveThreshold(
+                grayMat,
+                binary,
+                255.0,
+                org.opencv.imgproc.Imgproc.ADAPTIVE_THRESH_MEAN_C,
+                org.opencv.imgproc.Imgproc.THRESH_BINARY_INV,
+                31,
+                5.0
+            )
+
+            // 輪郭抽出
+            val contours = mutableListOf<org.opencv.core.MatOfPoint>()
+            val hierarchy = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.findContours(
+                binary,
+                contours,
+                hierarchy,
+                org.opencv.imgproc.Imgproc.RETR_EXTERNAL,
+                org.opencv.imgproc.Imgproc.CHAIN_APPROX_SIMPLE
+            )
+
+            // 高さを収集
+            val heights = contours.mapNotNull { cnt ->
+                val rect = org.opencv.imgproc.Imgproc.boundingRect(cnt)
+                if (rect.height in 8..80) rect.height.toFloat() else null
+            }
+
+            binary.release()
+            hierarchy.release()
+            contours.forEach { it.release() }
+
+            if (heights.isEmpty()) {
+                Log.w(TAG, "estimateCharHeightSimple: No contours found, using default 20")
+                return 20f
+            }
+
+            // 中央値
+            val sorted = heights.sorted()
+            val median = sorted[sorted.size / 2]
+
+            Log.d(TAG, "estimateCharHeightSimple: median=${median}px (${heights.size} contours)")
+            return median
+
+        } catch (e: Exception) {
+            Log.e(TAG, "estimateCharHeightSimple: Error", e)
+            return 20f
+        }
+    }
+
+    /**
+     * Double値を指定桁数でフォーマット
+     */
+    private fun Double.format(digits: Int) = "%.${digits}f".format(this)
 }

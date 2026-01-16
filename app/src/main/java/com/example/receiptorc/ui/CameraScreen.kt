@@ -74,6 +74,9 @@ fun CameraScreen(
     var isTorchOn by remember { mutableStateOf(false) }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
+    // 設定からフラッシュの自動点灯を読み込む
+    val autoFlashEnabled = appPreferences.cameraFlash
+
     // UIStateがPreviewに戻った時に状態をリセット
     LaunchedEffect(uiState) {
         if (uiState is CameraViewModel.CameraUiState.Preview) {
@@ -82,13 +85,29 @@ fun CameraScreen(
             detectedMarkerCount = 0
             detectedMarkerIds = ""
             consecutiveGoodFrames = 0  // 安定性カウンターもリセット
-            // フラッシュの状態を再適用
-            camera?.cameraControl?.enableTorch(isTorchOn)
+            // 撮影完了後は自動でトーチを再点灯しない（手動操作またはカメラ起動時のみ）
+        } else if (uiState is CameraViewModel.CameraUiState.Processing) {
+            // OCR処理開始時にトーチを消灯
+            isTorchOn = false
+            camera?.cameraControl?.enableTorch(false)
+            Log.d("CameraScreen", "OCR processing started, torch disabled")
+        } else if (uiState is CameraViewModel.CameraUiState.Success) {
+            // OCR処理完了時にトーチを消灯
+            isTorchOn = false
+            camera?.cameraControl?.enableTorch(false)
+            Log.d("CameraScreen", "OCR completed, torch disabled")
         }
     }
 
     DisposableEffect(Unit) {
         onDispose {
+            // 画面破棄時にトーチを強制的に消灯
+            try {
+                camera?.cameraControl?.enableTorch(false)
+                Log.d("CameraScreen", "CameraScreen disposed, torch disabled")
+            } catch (e: Exception) {
+                Log.e("CameraScreen", "Failed to disable torch on dispose", e)
+            }
             cameraExecutor.shutdown()
         }
     }
@@ -140,6 +159,7 @@ fun CameraScreen(
                                                     imageProxy,
                                                     ctx,
                                                     viewModel,
+                                                    camera,
                                                     hasDetectedMarker,
                                                     consecutiveGoodFrames,
                                                     onFocusChange = { focused ->
@@ -182,6 +202,14 @@ fun CameraScreen(
                                         imageAnalyzer
                                     )
                                     Log.d("CameraScreen", "Camera bound with ImageAnalysis (4K resolution)")
+
+                                    // 設定でフラッシュがONの場合、カメラ起動時にトーチを点灯
+                                    if (appPreferences.cameraFlash) {
+                                        camera?.cameraControl?.enableTorch(true)
+                                        isTorchOn = true
+                                        Log.d("CameraScreen", "Auto torch enabled from settings")
+                                    }
+
                                     // 連続オートフォーカスはデフォルトで有効
                                     // シャープネス計算によってフォーカス判定を行う
                                 } catch (exc: Exception) {
@@ -194,33 +222,34 @@ fun CameraScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // 品質情報表示
+                    // 品質情報表示（画面中央に大きく）
                     if (qualityInfo.isNotEmpty()) {
                         Card(
                             modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 16.dp),
+                                .align(Alignment.Center)
+                                .padding(horizontal = 24.dp),
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
                             )
                         ) {
                             Column(
-                                modifier = Modifier.padding(12.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
+                                modifier = Modifier.padding(20.dp),
+                                horizontalAlignment = Alignment.Start
                             ) {
                                 Text(
                                     text = qualityInfo,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    lineHeight = 26.sp
                                 )
                                 // 総合ステータス
                                 val allGood = isFocused && hasDetectedMarker
                                 Text(
                                     text = if (allGood) "✓ 撮影準備完了" else "カメラを調整してください",
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 20.sp),
                                     color = if (allGood) Color.Green else Color.Red,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(top = 4.dp)
+                                    modifier = Modifier.padding(top = 12.dp)
                                 )
                             }
                         }
@@ -258,24 +287,6 @@ fun CameraScreen(
                 }
             }
             is CameraViewModel.CameraUiState.Success -> {
-                ResultContent(
-                    originalBitmap = state.originalBitmap,
-                    transformedBitmap = state.transformedBitmap,
-                    blockBitmap = state.blockBitmap,
-                    ocrResults = state.ocrResults,
-                    showPreview = showPreview,
-                    onRetry = {
-                        viewModel.setUseUpscaling(false)
-                        viewModel.resetToPreview()
-                    },
-                    onRetryWithUpscaling = {
-                        viewModel.setUseUpscaling(true)
-                        viewModel.resetToPreview()
-                    },
-                    modifier = Modifier.padding(paddingValues)
-                )
-            }
-            is CameraViewModel.CameraUiState.SuccessUnderlay -> {
                 // 下に敷くタイプの結果表示
                 UnderlayResultScreen(
                     state = state,
@@ -312,6 +323,7 @@ private fun processImage(
     imageProxy: ImageProxy,
     context: android.content.Context,
     viewModel: CameraViewModel,
+    camera: Camera?,
     hasDetectedMarker: Boolean,
     consecutiveGoodFrames: Int,
     onFocusChange: (Boolean) -> Unit,
@@ -358,14 +370,28 @@ private fun processImage(
         onFocusChange(isQualityGood)  // 総合判定結果をフォーカスフラグに設定
         onBrightnessChange(true)  // 明るさは個別チェックせず、コントラストで評価
 
-        // 品質情報を更新（詳細表示）
+        // 品質情報を更新（詳細表示 + 目標値）
         val qualityStatus = buildString {
-            append("品質: ${(quality.score * 100).toInt()}% ")
-            append(if (quality.isGood) "✓" else "✗")
-            append("\n")
-            append("文字: ${quality.charHeight}px (${(quality.charHeightScore * 100).toInt()}%) | ")
-            append("コントラスト: ${(quality.contrastScore * 100).toInt()}% | ")
-            append("フォーカス: ${(quality.focusScore * 100).toInt()}%")
+            // 総合スコア
+            append("【撮影品質】\n")
+            append("総合: ${(quality.score * 100).toInt()}% / 目標70%以上 ")
+            append(if (quality.score >= 0.70) "✓" else "✗")
+            append("\n\n")
+
+            // 文字高さ（理想: 10-20px = 85-100%）
+            val charIdeal = if (quality.charHeight in 10..20) "✓" else "✗"
+            append("文字: ${quality.charHeight}px (${(quality.charHeightScore * 100).toInt()}%) $charIdeal\n")
+            append("     目標10-20px (85%以上)\n")
+
+            // コントラスト（理想: 50%以上）
+            val contrastIdeal = if (quality.contrastScore >= 0.50) "✓" else "✗"
+            append("コントラスト: ${(quality.contrastScore * 100).toInt()}% $contrastIdeal\n")
+            append("     目標50%以上\n")
+
+            // フォーカス（理想: 70%以上）
+            val focusIdeal = if (quality.focusScore >= 0.70) "✓" else "✗"
+            append("フォーカス: ${(quality.focusScore * 100).toInt()}% $focusIdeal\n")
+            append("     目標70%以上")
         }
         onQualityInfo(qualityStatus)
 
@@ -423,6 +449,15 @@ private fun processImage(
                 // 安定した状態が続いたのでOCR処理開始
                 Log.d("CameraScreen", "Auto-capture triggered: Stable for $newCount frames (quality=${quality.score}, marker=${arucoResult.blockType})")
                 Log.d("CameraScreen", "Processing with ImageAnalysis: ${bitmap.width}x${bitmap.height}")
+
+                // トーチを強制的に消灯（撮影開始直前）
+                try {
+                    camera?.cameraControl?.enableTorch(false)
+                    Log.d("CameraScreen", "Torch disabled before OCR processing")
+                } catch (e: Exception) {
+                    Log.e("CameraScreen", "Failed to disable torch", e)
+                }
+
                 onProcessingChange(true)
                 onMarkerDetected(true)  // 処理完了フラグを設定
 
@@ -485,370 +520,6 @@ private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
     } catch (e: Exception) {
         Log.e("CameraScreen", "Error converting ImageProxy to Bitmap", e)
         null
-    }
-}
-
-/**
- * ブロック画像の上にOCR結果をオーバーレイ表示（テスト用）
- */
-@Composable
-private fun BlockImageWithTextOverlay(
-    blockBitmap: Bitmap,
-    ocrResults: List<Any>,  // BBlockRowまたはCBlockRow
-    modifier: Modifier = Modifier
-) {
-    val density = LocalDensity.current
-
-    // Canvasを使って直接描画する方が正確
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(blockBitmap.width.toFloat() / blockBitmap.height.toFloat())
-    ) {
-        // ブロック画像を表示
-        Image(
-            bitmap = blockBitmap.asImageBitmap(),
-            contentDescription = "Block with OCR overlay",
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Fit
-        )
-
-        // BoxとImageのサイズが一致するので、単純なスケール計算のみ
-        // aspectRatioによりBoxが画像と同じ比率になる
-        androidx.compose.foundation.Canvas(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            val canvasWidth = size.width
-            val canvasHeight = size.height
-            val bitmapWidth = blockBitmap.width.toFloat()
-            val bitmapHeight = blockBitmap.height.toFloat()
-
-            // スケール計算（オフセットは不要）
-            val scaleX = canvasWidth / bitmapWidth
-            val scaleY = canvasHeight / bitmapHeight
-
-            Log.d("BlockOverlay", "Canvas: ${canvasWidth}x$canvasHeight, Bitmap: ${bitmapWidth}x$bitmapHeight")
-            Log.d("BlockOverlay", "Scale: scaleX=$scaleX, scaleY=$scaleY")
-
-            // 各OCR結果を描画（Bブロックのみ）
-            ocrResults.filterIsInstance<OCRProcessor.BBlockRow>().forEach { row ->
-                // 日付のオーバーレイ（左列）- 緑
-                row.dateWithBounds?.boundingBox?.let { bounds ->
-                    val rect = androidx.compose.ui.geometry.Rect(
-                        left = bounds.left * scaleX,
-                        top = bounds.top * scaleY,
-                        right = bounds.right * scaleX,
-                        bottom = bounds.bottom * scaleY
-                    )
-
-                    // 緑の半透明ボックス
-                    drawRect(
-                        color = Color.Green.copy(alpha = 0.3f),
-                        topLeft = androidx.compose.ui.geometry.Offset(rect.left, rect.top),
-                        size = androidx.compose.ui.geometry.Size(rect.width, rect.height),
-                        style = androidx.compose.ui.graphics.drawscope.Fill
-                    )
-
-                    // 緑の枠線
-                    drawRect(
-                        color = Color.Green,
-                        topLeft = androidx.compose.ui.geometry.Offset(rect.left, rect.top),
-                        size = androidx.compose.ui.geometry.Size(rect.width, rect.height),
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
-                    )
-                }
-
-                // 商品名のオーバーレイ（右列）- 青
-                row.productNameWithBounds?.boundingBox?.let { bounds ->
-                    val rect = androidx.compose.ui.geometry.Rect(
-                        left = bounds.left * scaleX,
-                        top = bounds.top * scaleY,
-                        right = bounds.right * scaleX,
-                        bottom = bounds.bottom * scaleY
-                    )
-
-                    // 青の半透明ボックス
-                    drawRect(
-                        color = Color.Blue.copy(alpha = 0.3f),
-                        topLeft = androidx.compose.ui.geometry.Offset(rect.left, rect.top),
-                        size = androidx.compose.ui.geometry.Size(rect.width, rect.height),
-                        style = androidx.compose.ui.graphics.drawscope.Fill
-                    )
-
-                    // 青の枠線
-                    drawRect(
-                        color = Color.Blue,
-                        topLeft = androidx.compose.ui.geometry.Offset(rect.left, rect.top),
-                        size = androidx.compose.ui.geometry.Size(rect.width, rect.height),
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ResultContent(
-    originalBitmap: Bitmap?,
-    transformedBitmap: Bitmap?,
-    blockBitmap: Bitmap?,
-    ocrResults: List<Any>,  // BBlockRowまたはCBlockRow
-    showPreview: Boolean,
-    onRetry: () -> Unit,
-    onRetryWithUpscaling: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            Button(
-                onClick = onRetry,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("新しい伝票を撮影")
-            }
-        }
-
-        item {
-            Button(
-                onClick = onRetryWithUpscaling,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("新しい伝票を拡大して撮影")
-            }
-        }
-
-        // プレビュー表示がONの場合のみ画像を表示
-        if (showPreview) {
-            if (originalBitmap != null) {
-                item {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = "撮影画像",
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-                            Image(
-                                bitmap = originalBitmap.asImageBitmap(),
-                                contentDescription = "Original",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(200.dp),
-                                contentScale = ContentScale.Fit
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (transformedBitmap != null) {
-                item {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = "透視変換後",
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-                            Image(
-                                bitmap = transformedBitmap.asImageBitmap(),
-                                contentDescription = "Transformed",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(200.dp),
-                                contentScale = ContentScale.Fit
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (blockBitmap != null) {
-                item {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = "切り出されたブロック",
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-                            Image(
-                                bitmap = blockBitmap.asImageBitmap(),
-                                contentDescription = "Block",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(300.dp),
-                                contentScale = ContentScale.Fit
-                            )
-
-                            // 画像情報を表示
-                            Divider(modifier = Modifier.padding(vertical = 8.dp))
-                            Text(
-                                text = "画像情報",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                            Text(
-                                text = "サイズ: ${blockBitmap.width} × ${blockBitmap.height} px",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "列区切り位置: (計算中...)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "※詳細なデバッグ情報はlogcatで確認できます",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
-                    }
-                }
-
-                // テスト用：OCR結果をオーバーレイ表示
-                if (ocrResults.isNotEmpty()) {
-                    item {
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "OCR結果オーバーレイ（テスト）",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    modifier = Modifier.padding(bottom = 8.dp)
-                                )
-                                Text(
-                                    text = "緑=日付、青=商品名",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(bottom = 8.dp)
-                                )
-                                BlockImageWithTextOverlay(
-                                    blockBitmap = blockBitmap,
-                                    ocrResults = ocrResults,
-                                    modifier = Modifier.height(400.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (ocrResults.isNotEmpty()) {
-            // 不正な日付の数をカウント（Bブロックのみ）
-            val bBlockResults = ocrResults.filterIsInstance<OCRProcessor.BBlockRow>()
-            val invalidDateCount = bBlockResults.count { !it.isDateValid }
-
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "OCR結果",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        // 警告メッセージ（不正な日付がある場合）
-                        if (invalidDateCount > 0) {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.errorContainer
-                                )
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "⚠",
-                                        style = MaterialTheme.typography.titleLarge,
-                                        color = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                    Column {
-                                        Text(
-                                            text = "${invalidDateCount}件の不正な日付を検出",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onErrorContainer
-                                        )
-                                        Text(
-                                            text = "赤字の日付を確認してください",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onErrorContainer
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            items(bBlockResults) { row ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (!row.isDateValid) {
-                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        }
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 警告アイコン（不正な日付の場合）
-                        if (!row.isDateValid) {
-                            Text(
-                                text = "⚠",
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.width(20.dp)
-                            )
-                        } else {
-                            Spacer(modifier = Modifier.width(20.dp))
-                        }
-
-                        Text(
-                            text = "行${row.rowIndex + 1}:",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.width(50.dp)
-                        )
-                        Text(
-                            text = "日付: ${row.date}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (!row.isDateValid) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.width(100.dp)
-                        )
-                        Text(
-                            text = "商品: ${row.productName}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 

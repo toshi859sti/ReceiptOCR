@@ -32,7 +32,8 @@ fun DataBrowserScreen(
     eraYear: Int,
     onBack: () -> Unit,
     onNavigateToOcrCapture: () -> Unit,
-    onEditItem: (Int, Int, Int) -> Unit  // (year, month, sheetNumber)
+    onEditItem: (Int, Int, Int) -> Unit,  // (year, month, sheetNumber)
+    onNavigateToSummary: (Int, Int) -> Unit = { _, _ -> }  // (year, month)
 ) {
     val selectedYear by viewModel.selectedYear.collectAsState()
     val selectedMonth by viewModel.selectedMonth.collectAsState()
@@ -81,7 +82,11 @@ fun DataBrowserScreen(
                 eraYear = eraYear,
                 month = selectedMonth,
                 totalSheets = monthlyData?.totalSheets ?: 0,
-                totalAmount = monthlyData?.monthlyTotal ?: 0
+                totalAmount = monthlyData?.monthlyTotal ?: 0,
+                generalTotal = monthlyData?.generalPurchaseTotal ?: 0,
+                gasTotal = monthlyData?.gasStationTotal ?: 0,
+                agriTotal = monthlyData?.agriculturalTotal ?: 0,
+                onShowSummary = { onNavigateToSummary(selectedYear, selectedMonth) }
             )
 
             Divider()
@@ -174,24 +179,75 @@ private fun SummarySection(
     eraYear: Int,
     month: Int,
     totalSheets: Int,
-    totalAmount: Int
+    totalAmount: Int,
+    generalTotal: Int,
+    gasTotal: Int,
+    agriTotal: Int,
+    onShowSummary: () -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(16.dp)
     ) {
-        Text(
-            text = "令和${eraYear}年 ${month}月発行",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium
-        )
-        Text(
-            text = "合計${totalSheets}枚 ${ValidationUtils.formatAmount(totalAmount)}",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "令和${eraYear}年 ${month}月発行",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = "合計${totalSheets}枚 ${ValidationUtils.formatAmount(totalAmount)}",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+
+        if (totalSheets > 0) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // カテゴリ別集計
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (generalTotal > 0) {
+                        Text(
+                            text = "一般${ValidationUtils.formatAmount(generalTotal)}",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                    if (gasTotal > 0) {
+                        Text(
+                            text = "給油${ValidationUtils.formatAmount(gasTotal)}",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                    if (agriTotal > 0) {
+                        Text(
+                            text = "農機${ValidationUtils.formatAmount(agriTotal)}",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+
+                TextButton(onClick = onShowSummary) {
+                    Text("詳細サマリー")
+                }
+            }
+        }
     }
 }
 

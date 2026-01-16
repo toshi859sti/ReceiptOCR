@@ -23,9 +23,9 @@ class AppPreferences(context: Context) {
 
         // カメラ設定
         private const val KEY_CAMERA_RESOLUTION = "camera_resolution"
-        private const val DEFAULT_CAMERA_RESOLUTION = "1920x1080"  // Full HD
+        private const val DEFAULT_CAMERA_RESOLUTION = "3840x2160"  // 4K UHD (固定)
         private const val KEY_CAMERA_PREVIEW = "camera_preview"
-        private const val DEFAULT_CAMERA_PREVIEW = true
+        private const val DEFAULT_CAMERA_PREVIEW = false  // プレビューは基本OFF
         private const val KEY_CAMERA_FLASH = "camera_flash"
         private const val DEFAULT_CAMERA_FLASH = false
     }
@@ -92,7 +92,7 @@ enum class CameraResolution(val displayName: String, val value: String, val widt
 
     companion object {
         fun fromValue(value: String): CameraResolution {
-            return values().find { it.value == value } ?: FULL_HD
+            return values().find { it.value == value } ?: UHD_4K
         }
     }
 }

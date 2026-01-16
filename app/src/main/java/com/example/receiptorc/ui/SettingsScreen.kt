@@ -45,11 +45,8 @@ fun SettingsScreen(
 
     var eraYear by remember { mutableIntStateOf(appPreferences.eraYear) }
     var currentIssueMonth by remember { mutableIntStateOf(appPreferences.currentIssueMonth) }
-    var selectedResolution by remember { mutableStateOf(appPreferences.cameraResolution) }
-    var cameraPreview by remember { mutableStateOf(appPreferences.cameraPreview) }
     var cameraFlash by remember { mutableStateOf(appPreferences.cameraFlash) }
     var showCameraInfo by remember { mutableStateOf(false) }
-    var showResolutionDialog by remember { mutableStateOf(false) }
     var exportMessage by remember { mutableStateOf<String?>(null) }
     var importMessage by remember { mutableStateOf<String?>(null) }
 
@@ -189,25 +186,8 @@ fun SettingsScreen(
 
             SettingItem(
                 title = "解像度",
-                subtitle = CameraResolution.fromValue(selectedResolution).displayName
-            ) {
-                TextButton(onClick = { showResolutionDialog = true }) {
-                    Text("変更")
-                }
-            }
-
-            SettingItem(
-                title = "プレビュー表示",
-                subtitle = if (cameraPreview) "ON" else "OFF"
-            ) {
-                Switch(
-                    checked = cameraPreview,
-                    onCheckedChange = {
-                        cameraPreview = it
-                        appPreferences.cameraPreview = it
-                    }
-                )
-            }
+                subtitle = "4K UHD (3840x2160) 固定"
+            ) {}
 
             SettingItem(
                 title = "フラッシュ",
@@ -276,19 +256,6 @@ fun SettingsScreen(
         }
     }
 
-    // 解像度選択ダイアログ
-    if (showResolutionDialog) {
-        ResolutionDialog(
-            currentResolution = selectedResolution,
-            onDismiss = { showResolutionDialog = false },
-            onSelect = { resolution ->
-                selectedResolution = resolution
-                appPreferences.cameraResolution = resolution
-                showResolutionDialog = false
-            }
-        )
-    }
-
     // カメラ情報ダイアログ
     if (showCameraInfo) {
         CameraInfoDialog(
@@ -343,47 +310,6 @@ private fun SettingItem(
         }
         action()
     }
-}
-
-/**
- * 解像度選択ダイアログ
- */
-@Composable
-private fun ResolutionDialog(
-    currentResolution: String,
-    onDismiss: () -> Unit,
-    onSelect: (String) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("解像度を選択") },
-        text = {
-            Column {
-                CameraResolution.values().forEach { resolution ->
-                    TextButton(
-                        onClick = { onSelect(resolution.value) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(resolution.displayName)
-                            if (resolution.value == currentResolution) {
-                                Text("✓", color = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("閉じる")
-            }
-        }
-    )
 }
 
 /**

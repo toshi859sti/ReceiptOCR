@@ -20,7 +20,9 @@ import com.example.receiptorc.data.AppPreferences
 import com.example.receiptorc.data.ReceiptDao
 import com.example.receiptorc.ui.DataBrowserScreen
 import com.example.receiptorc.ui.MenuScreen
+import com.example.receiptorc.ui.MonthlySummaryScreen
 import com.example.receiptorc.ui.OcrCaptureScreen
+import com.example.receiptorc.ui.ReceiptInputScreen
 import com.example.receiptorc.ui.SettingsScreen
 import com.example.receiptorc.ui.SheetEditorScreen
 import com.example.receiptorc.viewmodel.DataBrowserViewModel
@@ -35,6 +37,12 @@ sealed class Screen(val route: String) {
     object DataBrowser : Screen("data_browser")
     object OcrCapture : Screen("ocr_capture")
     object Settings : Screen("settings")
+    object ReceiptInput : Screen("receipt_input")
+    object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
+        fun createRoute(year: Int, month: Int): String {
+            return "monthly_summary/$year/$month"
+        }
+    }
     object SheetEditor : Screen("sheet_editor/{year}/{month}/{sheetNumber}") {
         fun createRoute(year: Int, month: Int, sheetNumber: Int): String {
             return "sheet_editor/$year/$month/$sheetNumber"
@@ -50,6 +58,7 @@ fun ReceiptNavGraph(
     navController: NavHostController = rememberNavController(),
     appPreferences: AppPreferences,
     dao: ReceiptDao,
+    database: com.example.receiptorc.data.ReceiptDatabase,
     startDestination: String = Screen.Menu.route
 ) {
     NavHost(
@@ -63,11 +72,11 @@ fun ReceiptNavGraph(
                 onNavigateToDataBrowser = {
                     navController.navigate(Screen.DataBrowser.route)
                 },
-                onNavigateToOcrCapture = {
-                    navController.navigate(Screen.OcrCapture.route)
-                },
                 onNavigateToSettings = {
                     navController.navigate(Screen.Settings.route)
+                },
+                onNavigateToReceiptInput = {
+                    navController.navigate(Screen.ReceiptInput.route)
                 }
             )
         }
@@ -87,6 +96,11 @@ fun ReceiptNavGraph(
                 onEditItem = { year, month, sheetNumber ->
                     navController.navigate(
                         Screen.SheetEditor.createRoute(year, month, sheetNumber)
+                    )
+                },
+                onNavigateToSummary = { year, month ->
+                    navController.navigate(
+                        Screen.MonthlySummary.createRoute(year, month)
                     )
                 }
             )
@@ -166,6 +180,43 @@ fun ReceiptNavGraph(
         composable(Screen.Settings.route) {
             SettingsScreen(
                 appPreferences = appPreferences,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 伝票入力画面
+        composable(Screen.ReceiptInput.route) {
+            ReceiptInputScreen(
+                eraYear = appPreferences.eraYear,
+                database = database,
+                onBack = { navController.popBackStack() },
+                onCapture = {
+                    // TODO: カメラ画面への遷移
+                    navController.navigate(Screen.OcrCapture.route)
+                },
+                onNavigateToSummary = { year, month ->
+                    navController.navigate(
+                        Screen.MonthlySummary.createRoute(year, month)
+                    )
+                }
+            )
+        }
+
+        // 月次サマリー画面
+        composable(
+            route = Screen.MonthlySummary.route,
+            arguments = listOf(
+                navArgument("year") { type = NavType.IntType },
+                navArgument("month") { type = NavType.IntType }
+            )
+        ) { backStackEntry ->
+            val year = backStackEntry.arguments?.getInt("year") ?: appPreferences.eraYear
+            val month = backStackEntry.arguments?.getInt("month") ?: 1
+
+            MonthlySummaryScreen(
+                year = year,
+                month = month,
+                database = database,
                 onBack = { navController.popBackStack() }
             )
         }

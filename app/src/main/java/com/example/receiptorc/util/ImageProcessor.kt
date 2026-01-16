@@ -396,10 +396,7 @@ object ImageProcessor {
             val dstHeight: Int
 
             if (useFixedOutput) {
-                // UNDERLAY台紙用: 固定2400×1700出力（A4全体）
-                // mm→px比率を固定値に設定
-                lastMmToPixelRatio = WARP_SCALE_PX_PER_MM
-
+                // UNDERLAY台紙用: 可変サイズ出力（入力解像度から逆算）
                 // ソース4点: ArUcoマーカー中心座標
                 val markerCenters = getMarkerCenters(corners, ids, blockType)
                 srcMat = MatOfPoint2f(
@@ -409,20 +406,43 @@ object ImageProcessor {
                     markerCenters[3]   // ID3 左下
                 )
 
+                // マーカー0-1間の距離からpx/mmを実測
+                val p0 = markerCenters[0]
+                val p1 = markerCenters[1]
+                val pxWidth = sqrt((p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y))
+                val mmWidth = ARUCO_ID1_X_MM - ARUCO_ID0_X_MM  // 247mm
+                val measuredPxPerMm = pxWidth / mmWidth
+
+                // 目標px/mm: 文字高さ30px以上を確保
+                val targetPxPerMm = when {
+                    measuredPxPerMm < 10.0 -> 14.0  // 文字を救う
+                    measuredPxPerMm < 14.0 -> measuredPxPerMm  // そのまま
+                    else -> 14.0  // ML Kit上限
+                }
+
+                lastMmToPixelRatio = targetPxPerMm
+
+                // A4サイズ（mm）
+                val paperWidthMm = 297.0
+                val paperHeightMm = 210.0
+
+                // 出力サイズを計算
+                dstWidth = (paperWidthMm * targetPxPerMm).toInt()
+                dstHeight = (paperHeightMm * targetPxPerMm).toInt()
+
                 // デスティネーション4点: A4上の設計座標（px）
                 dstMat = MatOfPoint2f(
-                    Point(ARUCO_ID0_X_MM * WARP_SCALE_PX_PER_MM, ARUCO_ID0_Y_MM * WARP_SCALE_PX_PER_MM),  // 202.5, 202.5
-                    Point(ARUCO_ID1_X_MM * WARP_SCALE_PX_PER_MM, ARUCO_ID1_Y_MM * WARP_SCALE_PX_PER_MM),  // 2203.2, 202.5
-                    Point(ARUCO_ID2_X_MM * WARP_SCALE_PX_PER_MM, ARUCO_ID2_Y_MM * WARP_SCALE_PX_PER_MM),  // 2203.2, 1498.5
-                    Point(ARUCO_ID3_X_MM * WARP_SCALE_PX_PER_MM, ARUCO_ID3_Y_MM * WARP_SCALE_PX_PER_MM)   // 202.5, 1498.5
+                    Point(ARUCO_ID0_X_MM * targetPxPerMm, ARUCO_ID0_Y_MM * targetPxPerMm),
+                    Point(ARUCO_ID1_X_MM * targetPxPerMm, ARUCO_ID1_Y_MM * targetPxPerMm),
+                    Point(ARUCO_ID2_X_MM * targetPxPerMm, ARUCO_ID2_Y_MM * targetPxPerMm),
+                    Point(ARUCO_ID3_X_MM * targetPxPerMm, ARUCO_ID3_Y_MM * targetPxPerMm)
                 )
 
-                dstWidth = WARP_OUTPUT_WIDTH
-                dstHeight = WARP_OUTPUT_HEIGHT
-
-                Log.d(TAG, "Perspective transform - Fixed output mode (UNDERLAY)")
-                Log.d(TAG, "  Output size: ${dstWidth}px x ${dstHeight}px (A4 @ ${WARP_SCALE_PX_PER_MM}px/mm)")
-                Log.d(TAG, "  mm->px ratio set to: $lastMmToPixelRatio")
+                Log.d(TAG, "Perspective transform - Adaptive output mode (UNDERLAY)")
+                Log.d(TAG, "  Measured px/mm: ${"%.2f".format(measuredPxPerMm)}")
+                Log.d(TAG, "  Target px/mm: ${"%.2f".format(targetPxPerMm)}")
+                Log.d(TAG, "  Output size: ${dstWidth}px x ${dstHeight}px (A4)")
+                Log.d(TAG, "  Expected char height: ~${(targetPxPerMm * 2.5).toInt()}px before column upscaling")
             } else {
                 // OVERLAY台紙用: 可変出力（ブロック領域のみ）
                 val blockBounds = calculateBlockBounds(corners, ids, blockType)
