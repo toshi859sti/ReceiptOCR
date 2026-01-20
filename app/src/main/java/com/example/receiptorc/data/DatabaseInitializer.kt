@@ -69,11 +69,11 @@ object DatabaseInitializer {
                         accounts.add(
                             YayoiAccount(
                                 id = 0, // AutoGenerate
-                                accountCode = parts[1].trim(),
-                                accountName = parts[2].trim(),
-                                category = parts.getOrNull(3)?.trim(),
-                                subcategory = parts.getOrNull(4)?.trim(),
-                                description = parts.getOrNull(5)?.trim()
+                                accountName = parts[0].trim(),
+                                searchKeyAlpha = parts.getOrNull(1)?.trim() ?: "",
+                                accountCode = parts.getOrNull(2)?.trim() ?: "",
+                                debitCredit = parts.getOrNull(3)?.trim() ?: "",
+                                taxCategory = parts.getOrNull(4)?.trim() ?: ""
                             )
                         )
                     }

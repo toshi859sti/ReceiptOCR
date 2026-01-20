@@ -2,9 +2,11 @@ package com.example.receiptorc.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -22,6 +24,19 @@ import androidx.compose.ui.unit.sp
 import com.example.receiptorc.data.*
 import kotlinx.coroutines.launch
 
+/** 並び替え順 */
+enum class SortOrder(val label: String) {
+    FREQUENCY("使用回数順"),
+    NAME("五十音順")
+}
+
+/** フィルタ種別 */
+enum class AccountFilter(val label: String) {
+    ALL("全て"),
+    MISSING_RAKURAKU("らくらく未設定"),
+    MISSING_YAYOI("弥生未設定")
+}
+
 /**
  * 購買品リスト画面
  */
@@ -35,15 +50,21 @@ fun ProductListScreen(
     val focusManager = LocalFocusManager.current
 
     // State
-    var products by remember { mutableStateOf<List<ProductMaster>>(emptyList()) }
+    var allProducts by remember { mutableStateOf<List<ProductMaster>>(emptyList()) }
+    var displayProducts by remember { mutableStateOf<List<ProductMaster>>(emptyList()) }
     var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var rakurakuAccounts by remember { mutableStateOf<List<RakurakuAccount>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var sortOrder by remember { mutableStateOf(SortOrder.FREQUENCY) }
+    var accountFilter by remember { mutableStateOf(AccountFilter.ALL) }
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var showRecalculateDialog by remember { mutableStateOf(false) }
     var selectedProduct by remember { mutableStateOf<ProductMaster?>(null) }
+    var recalculateResult by remember { mutableStateOf<String?>(null) }
+    var isRecalculating by remember { mutableStateOf(false) }
 
     val categories = listOf("一般購買", "給油所", "農業機械")
 
@@ -51,28 +72,95 @@ fun ProductListScreen(
     LaunchedEffect(Unit) {
         yayoiAccounts = database.yayoiAccountDao().getAll()
         rakurakuAccounts = database.rakurakuAccountDao().getAll()
-        products = database.productMasterDao().getAll()
+        allProducts = database.productMasterDao().getAll()
     }
 
-    // 検索/フィルタ
-    fun loadProducts() {
-        scope.launch {
-            products = when {
-                selectedCategory != null && searchQuery.isNotEmpty() ->
-                    database.productMasterDao().searchByCategoryAndName(selectedCategory!!, searchQuery)
-                selectedCategory != null ->
-                    database.productMasterDao().getByCategory(selectedCategory!!)
-                searchQuery.isNotEmpty() ->
-                    database.productMasterDao().searchByName(searchQuery)
-                else ->
-                    database.productMasterDao().getAll()
+    // フィルタ・並び替え適用
+    fun applyFiltersAndSort() {
+        var filtered = allProducts
+
+        // カテゴリフィルタ
+        if (selectedCategory != null) {
+            filtered = filtered.filter { it.category == selectedCategory }
+        }
+
+        // 検索フィルタ
+        if (searchQuery.isNotEmpty()) {
+            filtered = filtered.filter {
+                it.canonicalName.contains(searchQuery, ignoreCase = true)
             }
+        }
+
+        // 勘定科目フィルタ
+        filtered = when (accountFilter) {
+            AccountFilter.ALL -> filtered
+            AccountFilter.MISSING_RAKURAKU -> filtered.filter { it.rakurakuAccountId == null }
+            AccountFilter.MISSING_YAYOI -> filtered.filter { it.yayoiAccountId == null }
+        }
+
+        // 並び替え
+        displayProducts = when (sortOrder) {
+            SortOrder.FREQUENCY -> filtered.sortedByDescending { it.frequencyCount }
+            SortOrder.NAME -> filtered.sortedBy { it.canonicalName }
         }
     }
 
-    // 検索/フィルタ変更時に再読み込み
-    LaunchedEffect(searchQuery, selectedCategory) {
-        loadProducts()
+    // データ再読み込み
+    fun loadProducts() {
+        scope.launch {
+            allProducts = database.productMasterDao().getAll()
+            applyFiltersAndSort()
+        }
+    }
+
+    // フィルタ/並び替え変更時
+    LaunchedEffect(searchQuery, selectedCategory, sortOrder, accountFilter, allProducts) {
+        applyFiltersAndSort()
+    }
+
+    // 再集計処理
+    fun recalculateProducts() {
+        scope.launch {
+            isRecalculating = true
+            try {
+                // 伝票から全商品名を取得
+                val receiptProductNames = database.receiptDao().getAllDistinctProductNames()
+
+                // 現在の購買品リストの商品名を取得
+                val existingNames = allProducts.map { it.canonicalName }.toSet()
+
+                // 新規商品を抽出
+                val newProducts = receiptProductNames.filter { name ->
+                    name.isNotBlank() && name !in existingNames
+                }
+
+                // 新規商品を購買品リストに追加
+                var addedCount = 0
+                for (name in newProducts) {
+                    val product = ProductMaster(
+                        canonicalName = name,
+                        category = "一般購買",
+                        frequencyCount = 1
+                    )
+                    database.productMasterDao().insert(product)
+                    addedCount++
+                }
+
+                recalculateResult = if (addedCount > 0) {
+                    "${addedCount}件の新規商品を追加しました"
+                } else {
+                    "新規商品はありませんでした"
+                }
+
+                // リスト再読み込み
+                loadProducts()
+            } catch (e: Exception) {
+                recalculateResult = "エラー: ${e.message}"
+            } finally {
+                isRecalculating = false
+                showRecalculateDialog = true
+            }
+        }
     }
 
     Scaffold(
@@ -85,6 +173,21 @@ fun ProductListScreen(
                     }
                 },
                 actions = {
+                    // 再集計ボタン
+                    IconButton(
+                        onClick = { recalculateProducts() },
+                        enabled = !isRecalculating
+                    ) {
+                        if (isRecalculating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Default.Refresh, "再集計")
+                        }
+                    }
+                    // 追加ボタン
                     IconButton(onClick = { showAddDialog = true }) {
                         Icon(Icons.Default.Add, "追加")
                     }
@@ -125,6 +228,7 @@ fun ProductListScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -142,9 +246,41 @@ fun ProductListScreen(
                 }
             }
 
+            // 並び替え & 勘定科目フィルタ
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 並び替え
+                Text("並替:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SortOrder.values().forEach { order ->
+                    FilterChip(
+                        selected = sortOrder == order,
+                        onClick = { sortOrder = order },
+                        label = { Text(order.label, fontSize = 12.sp) }
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // 勘定科目フィルタ
+                Text("絞込:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                AccountFilter.values().forEach { filter ->
+                    FilterChip(
+                        selected = accountFilter == filter,
+                        onClick = { accountFilter = filter },
+                        label = { Text(filter.label, fontSize = 12.sp) }
+                    )
+                }
+            }
+
             // 件数表示
             Text(
-                text = "${products.size}件",
+                text = "${displayProducts.size}件",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -157,7 +293,7 @@ fun ProductListScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                items(products, key = { it.id }) { product ->
+                items(displayProducts, key = { it.id }) { product ->
                     ProductListItem(
                         product = product,
                         yayoiAccount = yayoiAccounts.find { it.id == product.yayoiAccountId },
@@ -252,6 +388,20 @@ fun ProductListScreen(
             }
         )
     }
+
+    // 再集計結果ダイアログ
+    if (showRecalculateDialog) {
+        AlertDialog(
+            onDismissRequest = { showRecalculateDialog = false },
+            title = { Text("再集計完了") },
+            text = { Text(recalculateResult ?: "") },
+            confirmButton = {
+                TextButton(onClick = { showRecalculateDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
 }
 
 /**
@@ -309,7 +459,7 @@ private fun ProductListItem(
                     color = if (rakurakuAccount != null)
                         MaterialTheme.colorScheme.primary
                     else
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        MaterialTheme.colorScheme.error
                 )
                 Text(
                     text = "弥生: ${yayoiAccount?.accountName ?: "未設定"}",
@@ -317,7 +467,7 @@ private fun ProductListItem(
                     color = if (yayoiAccount != null)
                         MaterialTheme.colorScheme.secondary
                     else
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        MaterialTheme.colorScheme.error
                 )
             }
         }
@@ -503,7 +653,8 @@ private fun ProductEditDialog(
     // らくらく勘定科目選択ダイアログ
     if (showRakurakuPicker) {
         AccountPickerDialog(
-            title = "らくらく勘定科目",
+            productName = name,
+            accountType = "らくらく勘定科目",
             accounts = rakurakuAccounts.map { it.id to it.accountName },
             selectedId = selectedRakurakuId,
             onSelect = { id ->
@@ -517,7 +668,8 @@ private fun ProductEditDialog(
     // 弥生勘定科目選択ダイアログ
     if (showYayoiPicker) {
         AccountPickerDialog(
-            title = "弥生勘定科目",
+            productName = name,
+            accountType = "弥生勘定科目",
             accounts = yayoiAccounts.map { it.id to it.accountName },
             selectedId = selectedYayoiId,
             onSelect = { id ->
@@ -534,7 +686,8 @@ private fun ProductEditDialog(
  */
 @Composable
 private fun AccountPickerDialog(
-    title: String,
+    productName: String,
+    accountType: String,
     accounts: List<Pair<Long, String>>,
     selectedId: Long?,
     onSelect: (Long?) -> Unit,
@@ -552,7 +705,20 @@ private fun AccountPickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = {
+            Column {
+                Text(
+                    text = productName.ifEmpty { "新規商品" },
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+                Text(
+                    text = accountType,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 400.dp)

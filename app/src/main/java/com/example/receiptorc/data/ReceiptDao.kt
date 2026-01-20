@@ -76,4 +76,8 @@ interface ReceiptDao {
 
     @Update
     suspend fun updateSheetDataList(dataList: List<SheetData>)
+
+    // 全伝票のユニークな商品名を取得
+    @Query("SELECT DISTINCT productName FROM receipt_items WHERE productName != '' ORDER BY productName")
+    suspend fun getAllDistinctProductNames(): List<String>
 }

@@ -17,18 +17,18 @@ data class YayoiAccount(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
 
-    /** 勘定科目コード (例: "601") */
-    val accountCode: String,
-
     /** 勘定科目名 (例: "種苗費") */
     val accountName: String,
 
-    /** カテゴリ (例: "農業経費") */
-    val category: String? = null,
+    /** サーチキー英字 (例: "SHUBYOU") */
+    val searchKeyAlpha: String = "",
 
-    /** サブカテゴリ (例: "種苗") */
-    val subcategory: String? = null,
+    /** サーチキー数字 = 勘定科目コード (例: "602") */
+    val accountCode: String,
 
-    /** 説明 */
-    val description: String? = null
+    /** 借貸 (借/貸) */
+    val debitCredit: String = "",
+
+    /** 税区分 (例: "課税対応仕入", "対象外") */
+    val taxCategory: String = ""
 )

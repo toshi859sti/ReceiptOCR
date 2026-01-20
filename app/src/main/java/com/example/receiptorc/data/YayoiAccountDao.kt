@@ -25,8 +25,8 @@ interface YayoiAccountDao {
     @Query("SELECT * FROM yayoi_accounts WHERE accountCode = :code")
     suspend fun getByCode(code: String): YayoiAccount?
 
-    @Query("SELECT * FROM yayoi_accounts WHERE category = :category ORDER BY accountCode")
-    suspend fun getByCategory(category: String): List<YayoiAccount>
+    @Query("SELECT * FROM yayoi_accounts WHERE accountName LIKE '%' || :query || '%' ORDER BY accountCode")
+    suspend fun searchByName(query: String): List<YayoiAccount>
 
     @Query("DELETE FROM yayoi_accounts")
     suspend fun deleteAll()

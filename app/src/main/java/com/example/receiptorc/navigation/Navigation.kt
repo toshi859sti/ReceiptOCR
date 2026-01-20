@@ -18,6 +18,7 @@ import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.example.receiptorc.data.AppPreferences
 import com.example.receiptorc.data.ReceiptDao
+import com.example.receiptorc.ui.AccountSettingsScreen
 import com.example.receiptorc.ui.MenuScreen
 import com.example.receiptorc.ui.MonthlySummaryScreen
 import com.example.receiptorc.ui.OcrCaptureScreen
@@ -39,6 +40,7 @@ sealed class Screen(val route: String) {
     object ReceiptInput : Screen("receipt_input")
     object OcrLearningStatus : Screen("ocr_learning_status")
     object ProductList : Screen("product_list")
+    object AccountSettings : Screen("account_settings")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
         fun createRoute(year: Int, month: Int): String {
             return "monthly_summary/$year/$month"
@@ -78,6 +80,9 @@ fun ReceiptNavGraph(
                 },
                 onNavigateToProductList = {
                     navController.navigate(Screen.ProductList.route)
+                },
+                onNavigateToAccountSettings = {
+                    navController.navigate(Screen.AccountSettings.route)
                 }
             )
         }
@@ -174,6 +179,14 @@ fun ReceiptNavGraph(
         // 購買品リスト画面
         composable(Screen.ProductList.route) {
             ProductListScreen(
+                database = database,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 勘定科目設定画面
+        composable(Screen.AccountSettings.route) {
+            AccountSettingsScreen(
                 database = database,
                 onBack = { navController.popBackStack() }
             )

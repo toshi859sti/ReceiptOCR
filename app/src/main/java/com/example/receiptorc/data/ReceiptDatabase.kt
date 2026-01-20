@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CorrectionLog::class,
         OcrScoreLog::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -278,6 +278,28 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 6 → 7（YayoiAccount再構築: サーチキー、借貸、税区分追加）
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // YayoiAccountテーブルを再作成（カラム構成変更のため）
+                database.execSQL("DROP TABLE IF EXISTS yayoi_accounts")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS yayoi_accounts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        accountName TEXT NOT NULL,
+                        searchKeyAlpha TEXT NOT NULL DEFAULT '',
+                        accountCode TEXT NOT NULL,
+                        debitCredit TEXT NOT NULL DEFAULT '',
+                        taxCategory TEXT NOT NULL DEFAULT ''
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_yayoi_accounts_accountCode
+                    ON yayoi_accounts (accountCode)
+                """.trimIndent())
+            }
+        }
+
         // マイグレーション: version 2 → 3（辞書ベース補正システム）
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -356,7 +378,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance
