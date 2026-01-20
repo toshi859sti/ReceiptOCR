@@ -17,7 +17,6 @@ import com.example.receiptorc.data.AppPreferences
 @Composable
 fun MenuScreen(
     appPreferences: AppPreferences,
-    onNavigateToDataBrowser: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToReceiptInput: () -> Unit,
     onNavigateToProductList: () -> Unit = {}
@@ -62,13 +61,6 @@ fun MenuScreen(
             Spacer(modifier = Modifier.height(48.dp))
 
             // メニューボタン
-            MenuButton(
-                text = "データ閲覧",
-                onClick = onNavigateToDataBrowser
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
             MenuButton(
                 text = "伝票入力",
                 onClick = onNavigateToReceiptInput

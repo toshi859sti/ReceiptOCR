@@ -18,7 +18,6 @@ import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.example.receiptorc.data.AppPreferences
 import com.example.receiptorc.data.ReceiptDao
-import com.example.receiptorc.ui.DataBrowserScreen
 import com.example.receiptorc.ui.MenuScreen
 import com.example.receiptorc.ui.MonthlySummaryScreen
 import com.example.receiptorc.ui.OcrCaptureScreen
@@ -27,7 +26,6 @@ import com.example.receiptorc.ui.ProductListScreen
 import com.example.receiptorc.ui.ReceiptInputScreen
 import com.example.receiptorc.ui.SettingsScreen
 import com.example.receiptorc.ui.SheetEditorScreen
-import com.example.receiptorc.viewmodel.DataBrowserViewModel
 import com.example.receiptorc.viewmodel.OcrCaptureViewModel
 import com.example.receiptorc.viewmodel.SheetEditorViewModel
 
@@ -36,7 +34,6 @@ import com.example.receiptorc.viewmodel.SheetEditorViewModel
  */
 sealed class Screen(val route: String) {
     object Menu : Screen("menu")
-    object DataBrowser : Screen("data_browser")
     object OcrCapture : Screen("ocr_capture")
     object Settings : Screen("settings")
     object ReceiptInput : Screen("receipt_input")
@@ -73,9 +70,6 @@ fun ReceiptNavGraph(
         composable(Screen.Menu.route) {
             MenuScreen(
                 appPreferences = appPreferences,
-                onNavigateToDataBrowser = {
-                    navController.navigate(Screen.DataBrowser.route)
-                },
                 onNavigateToSettings = {
                     navController.navigate(Screen.Settings.route)
                 },
@@ -84,31 +78,6 @@ fun ReceiptNavGraph(
                 },
                 onNavigateToProductList = {
                     navController.navigate(Screen.ProductList.route)
-                }
-            )
-        }
-
-        // データ閲覧画面
-        composable(Screen.DataBrowser.route) {
-            val viewModel: DataBrowserViewModel = viewModel(
-                factory = DataBrowserViewModelFactory(dao)
-            )
-            DataBrowserScreen(
-                viewModel = viewModel,
-                eraYear = appPreferences.eraYear,
-                onBack = { navController.popBackStack() },
-                onNavigateToOcrCapture = {
-                    navController.navigate(Screen.OcrCapture.route)
-                },
-                onEditItem = { year, month, sheetNumber ->
-                    navController.navigate(
-                        Screen.SheetEditor.createRoute(year, month, sheetNumber)
-                    )
-                },
-                onNavigateToSummary = { year, month ->
-                    navController.navigate(
-                        Screen.MonthlySummary.createRoute(year, month)
-                    )
                 }
             )
         }
@@ -284,21 +253,6 @@ private fun PlaceholderScreen(
                 style = MaterialTheme.typography.headlineSmall
             )
         }
-    }
-}
-
-/**
- * DataBrowserViewModel用のFactory
- */
-class DataBrowserViewModelFactory(
-    private val dao: ReceiptDao
-) : ViewModelProvider.Factory {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(DataBrowserViewModel::class.java)) {
-            return DataBrowserViewModel(dao) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel class")
     }
 }
 
