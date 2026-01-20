@@ -38,7 +38,7 @@ object DatabaseInitializer {
                 // 2. 商品マスタのインポート
                 importProductMaster(context, database)
 
-                // 3. OCR誤認識パターンのインポート
+                // 4. OCR誤認識パターンのインポート
                 importOcrVariants(context, database)
 
                 Log.d(TAG, "Database initialization completed successfully")
@@ -174,14 +174,20 @@ object DatabaseInitializer {
                 while (reader.readLine().also { line = it } != null) {
                     val parts = line!!.split(",")
                     if (parts.size >= 3) {
+                        val text = parts[1].trim()
+                        val count = parts.getOrNull(2)?.trim()?.toIntOrNull() ?: 0
+                        val timestamp = parts.getOrNull(3)?.trim()?.toLongOrNull()
+                            ?: System.currentTimeMillis()
                         variants.add(
                             OcrVariant(
                                 id = 0, // AutoGenerate
                                 productId = parts[0].trim().toLong(),
-                                variantText = parts[1].trim(),
-                                occurrenceCount = parts.getOrNull(2)?.trim()?.toIntOrNull() ?: 0,
-                                lastSeen = parts.getOrNull(3)?.trim()?.toLongOrNull()
-                                    ?: System.currentTimeMillis()
+                                variantText = text,
+                                normalizedText = text, // 同じ値で初期化
+                                hitCount = count,
+                                firstSeenAt = timestamp,
+                                lastSeenAt = timestamp,
+                                source = VariantSource.IMPORT.name
                             )
                         )
                     }

@@ -19,7 +19,8 @@ fun MenuScreen(
     appPreferences: AppPreferences,
     onNavigateToDataBrowser: () -> Unit,
     onNavigateToSettings: () -> Unit,
-    onNavigateToReceiptInput: () -> Unit
+    onNavigateToReceiptInput: () -> Unit,
+    onNavigateToProductList: () -> Unit = {}
 ) {
     val eraYear = remember { appPreferences.eraYear }
 
@@ -71,6 +72,13 @@ fun MenuScreen(
             MenuButton(
                 text = "伝票入力",
                 onClick = onNavigateToReceiptInput
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            MenuButton(
+                text = "購買品リスト",
+                onClick = onNavigateToProductList
             )
 
             Spacer(modifier = Modifier.height(16.dp))

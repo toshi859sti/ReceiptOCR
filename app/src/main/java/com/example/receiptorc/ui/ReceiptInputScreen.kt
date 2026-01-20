@@ -85,6 +85,10 @@ fun ReceiptInputScreen(
     var showCamera by remember { mutableStateOf(false) }
     var cameraSessionId by remember { mutableStateOf(0) }
 
+    // 年月固定設定
+    val appPreferences = remember { com.example.receiptorc.data.AppPreferences(context) }
+    var fixYearMonth by remember { mutableStateOf(appPreferences.fixYearMonth) }
+
     // 初回ロード
     LaunchedEffect(selectedMonth) {
         if (viewMode == ViewMode.VIEW) {
@@ -154,7 +158,13 @@ fun ReceiptInputScreen(
         CameraView(
             sessionId = cameraSessionId,
             onOcrComplete = { ocrResults ->
-                val ocrRows = convertOcrResultsToRows(ocrResults, currentSheetNumber)
+                val ocrRows = convertOcrResultsToRows(
+                    ocrResults = ocrResults,
+                    sheetNumber = currentSheetNumber,
+                    fixYearMonth = fixYearMonth,
+                    defaultYear = eraYear,
+                    defaultMonth = selectedMonth
+                )
                 val currentRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
 
                 // 選択されたセルがあるかチェック
@@ -198,7 +208,9 @@ fun ReceiptInputScreen(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("伝票入力") },
+                    title = {
+                        Text("購買伝票")
+                    },
                     navigationIcon = {
                         if (viewMode == ViewMode.VIEW) {
                             IconButton(onClick = onBack) {
@@ -207,54 +219,16 @@ fun ReceiptInputScreen(
                         }
                     },
                     actions = {
-                        // 再計算ボタン（表示モード・編集モード両方で表示）
-                        if (totalSheets > 0) {
-                            TextButton(
-                                onClick = {
-                                    scope.launch {
-                                        // 編集モードの場合は先に保存
-                                        if (viewMode == ViewMode.EDIT) {
-                                            saveMonthData(
-                                                database = database,
-                                                year = eraYear,
-                                                month = selectedMonth,
-                                                allSheetsData = allSheetsData
-                                            )
-                                        }
-
-                                        // カテゴリ再計算
-                                        com.example.receiptorc.util.CategoryRecalculator.recalculateMonthlyCategories(
-                                            dao = database.receiptDao(),
-                                            year = eraYear,
-                                            month = selectedMonth
-                                        )
-
-                                        // データ再ロード
-                                        loadMonthData(
-                                            database = database,
-                                            year = eraYear,
-                                            month = selectedMonth,
-                                            onDataLoaded = { sheets, sheetsData ->
-                                                totalSheets = sheets
-                                                allSheetsData = sheetsData
-                                                originalAllSheetsData = sheetsData
-                                            }
-                                        )
-                                    }
-                                }
-                            ) {
-                                Text("再計算")
-                            }
-                        }
-
-                        // 月次サマリーボタン（表示モードのみ）
-                        if (viewMode == ViewMode.VIEW && totalSheets > 0) {
-                            TextButton(
-                                onClick = { onNavigateToSummary(eraYear, selectedMonth) }
-                            ) {
-                                Text("月次サマリー")
-                            }
-                        }
+                        Text(
+                            text = if (viewMode == ViewMode.EDIT) "編集" else "閲覧",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (viewMode == ViewMode.EDIT)
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(end = 16.dp)
+                        )
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
@@ -280,12 +254,28 @@ fun ReceiptInputScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // 1行目: 月選択、伝票枚数、閲覧/編集ラベル
+                // 1行目: 年月選択、伝票ナビゲーション
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // 年表示（目立つように）
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            text = "R${eraYear}年",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // 月選択
                     MonthSelector(
                         selectedMonth = selectedMonth,
                         onMonthChange = {
@@ -305,8 +295,10 @@ fun ReceiptInputScreen(
                             }
                         },
                         enabled = viewMode == ViewMode.VIEW,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.width(80.dp)
                     )
+
+                    Spacer(modifier = Modifier.weight(1f))
 
                     SheetNavigator(
                         current = if (totalSheets == 0) 0 else currentSheetNumber,
@@ -323,12 +315,7 @@ fun ReceiptInputScreen(
                                 selectedRowIndex = -1
                             }
                         },
-                        modifier = Modifier.weight(1.5f)
-                    )
-
-                    ViewModeLabel(
-                        viewMode = viewMode,
-                        modifier = Modifier.weight(0.8f)
+                        modifier = Modifier.width(140.dp)
                     )
                 }
 
@@ -416,7 +403,7 @@ fun ReceiptInputScreen(
                     }
                 }
 
-                // 3行目: OCR/直接、撮影、文字サイズ
+                // 3行目: OCR/直接、撮影
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -435,7 +422,7 @@ fun ReceiptInputScreen(
                             inputMode = newMode
                         },
                         enabled = viewMode == ViewMode.EDIT && totalSheets > 0,
-                        modifier = Modifier.weight(1.5f)
+                        modifier = Modifier.weight(1f)
                     )
 
                     Button(
@@ -450,36 +437,77 @@ fun ReceiptInputScreen(
                         Spacer(Modifier.width(4.dp))
                         Text("撮影")
                     }
+                }
 
-                    // 文字サイズコントロール（コンパクト版）
+                // 4行目: 年月固定、フォントサイズ、再計算
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 年月固定チェックボックス
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable {
+                            fixYearMonth = !fixYearMonth
+                            appPreferences.fixYearMonth = fixYearMonth
+                        }
+                    ) {
+                        Checkbox(
+                            checked = fixYearMonth,
+                            onCheckedChange = {
+                                fixYearMonth = it
+                                appPreferences.fixYearMonth = it
+                            },
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("年月固定", fontSize = 13.sp)
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // フォントサイズコントロール
                     Row(
                         modifier = Modifier
-                            .weight(1f)
                             .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
-                            .padding(4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text("文字", fontSize = 12.sp)
                         IconButton(
                             onClick = { fontSize = (fontSize - 1f).coerceAtLeast(10f) },
                             enabled = fontSize > 10f,
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(28.dp)
                         ) {
                             Text("-", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         }
                         Text(
                             text = "${fontSize.toInt()}",
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
+                            modifier = Modifier.width(20.dp),
                             textAlign = TextAlign.Center
                         )
                         IconButton(
                             onClick = { fontSize = (fontSize + 1f).coerceAtMost(20f) },
                             enabled = fontSize < 20f,
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(28.dp)
                         ) {
                             Text("+", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         }
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // 再計算ボタン
+                    OutlinedButton(
+                        onClick = {
+                            allSheetsData = recalculateCategoriesInMemory(allSheetsData)
+                        },
+                        enabled = viewMode == ViewMode.EDIT && totalSheets > 0
+                    ) {
+                        Text("再計算", fontSize = 13.sp)
                     }
                 }
 
@@ -517,7 +545,8 @@ fun ReceiptInputScreen(
                     defaultYear = eraYear,
                     defaultMonth = selectedMonth,
                     productMasterDao = database.productMasterDao(),
-                    subtotalFlags = calculateSubtotalFlags(allSheetsData)
+                    subtotalFlags = calculateSubtotalFlags(allSheetsData),
+                    fixYearMonth = fixYearMonth
                 )
 
                 // 検証結果表示（全伝票対応版）
@@ -942,42 +971,6 @@ private fun SheetNavigator(
 }
 
 /**
- * 閲覧/編集モードラベル
- */
-@Composable
-private fun ViewModeLabel(
-    viewMode: ViewMode,
-    modifier: Modifier = Modifier
-) {
-    OutlinedCard(
-        modifier = modifier,
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = if (viewMode == ViewMode.EDIT)
-                MaterialTheme.colorScheme.errorContainer
-            else
-                MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = viewMode.label,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (viewMode == ViewMode.EDIT)
-                    MaterialTheme.colorScheme.onErrorContainer
-                else
-                    MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-/**
  * 入力モードトグル
  */
 @Composable
@@ -1037,7 +1030,8 @@ private fun DataGrid(
     defaultYear: Int,
     defaultMonth: Int,
     productMasterDao: com.example.receiptorc.data.ProductMasterDao,
-    subtotalFlags: MonthlySubtotalFlags
+    subtotalFlags: MonthlySubtotalFlags,
+    fixYearMonth: Boolean = false
 ) {
     var editingCell by remember { mutableStateOf<EditingCell?>(null) }
     val scrollState = rememberScrollState()
@@ -1123,6 +1117,7 @@ private fun DataGrid(
             defaultMonth = defaultMonth,
             productMasterDao = productMasterDao,
             subtotalFlags = subtotalFlags,
+            fixYearMonth = fixYearMonth,
             onDismiss = { editingCell = null },
             onConfirm = { updatedRow ->
                 onRowUpdate(editing.rowIndex, updatedRow)
@@ -1287,7 +1282,10 @@ private fun GridDataCell(
                 maxLines = 1,
                 color = if (isClickable) MaterialTheme.colorScheme.primary
                        else MaterialTheme.colorScheme.onSurface,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                style = androidx.compose.ui.text.TextStyle(
+                    fontFeatureSettings = "tnum"  // 等幅数字を強制
+                )
             )
         }
         Box(
@@ -1385,7 +1383,10 @@ data class ReceiptRowData(
     val isTotalRow: Boolean = false,
     val subtotalCategory: SubtotalCategory? = null,
     val selectedCells: Set<CellType> = emptySet(),
-    val category: String = "未分類"  // データベースから読み込まれたカテゴリ
+    val category: String = "未分類",  // データベースから読み込まれたカテゴリ
+    // V3: 学習登録用
+    val originalOcrName: String? = null,  // OCR取得時の原本（編集不可）
+    val productMasterId: Long? = null     // 商品マスタID（確定時）
 )
 
 enum class CellType {
@@ -1871,7 +1872,13 @@ private fun recalculateCategoriesInMemory(
     return updatedSheetsData
 }
 
-private fun convertOcrResultsToRows(ocrResults: List<Any>, sheetNumber: Int = 1): List<ReceiptRowData> {
+private fun convertOcrResultsToRows(
+    ocrResults: List<Any>,
+    sheetNumber: Int = 1,
+    fixYearMonth: Boolean = false,
+    defaultYear: Int = 7,
+    defaultMonth: Int = 1
+): List<ReceiptRowData> {
     val ocrRows = ocrResults.filterIsInstance<com.example.receiptorc.util.UnderlyingBaseProcessor.ReceiptRow>()
 
     // 月合計行を探す
@@ -1891,7 +1898,18 @@ private fun convertOcrResultsToRows(ocrResults: List<Any>, sheetNumber: Int = 1)
     for (row in normalAndSubtotalRows) {
         // 現在の行を追加
         val formattedDate = row.date?.let { dateStr ->
-            if (dateStr.length == 6) {
+            if (fixYearMonth && dateStr.length >= 2) {
+                // 年月固定モード: OCRの日データのみを採用し、年月は選択中のものを使用
+                val day = when {
+                    dateStr.length == 6 -> dateStr.substring(4, 6).toIntOrNull() ?: 1
+                    dateStr.length == 4 -> dateStr.substring(2, 4).toIntOrNull() ?: 1
+                    dateStr.length == 2 -> dateStr.toIntOrNull() ?: 1
+                    dateStr.length == 1 -> dateStr.toIntOrNull() ?: 1
+                    else -> 1
+                }.coerceIn(1, 31)
+                "%02d/%02d/%02d".format(defaultYear % 100, defaultMonth, day)
+            } else if (dateStr.length == 6) {
+                // 通常モード: OCRの日付をそのまま使用
                 "${dateStr.substring(0, 2)}/${dateStr.substring(2, 4)}/${dateStr.substring(4, 6)}"
             } else {
                 dateStr
@@ -1931,7 +1949,9 @@ private fun convertOcrResultsToRows(ocrResults: List<Any>, sheetNumber: Int = 1)
                 isTotalRow = false,
                 selectedCells = emptySet(),
                 category = category,
-                subtotalCategory = subtotalCategory
+                subtotalCategory = subtotalCategory,
+                // V3: OCR原本を保持（学習登録用）
+                originalOcrName = if (!isSubtotal && productName.isNotBlank()) productName else null
             )
         )
 
@@ -2105,6 +2125,8 @@ private fun convertReceiptItemsToRows(items: List<com.example.receiptorc.data.Re
 
 /**
  * 月全体のデータを保存
+ *
+ * V3: コミット時に手動修正を学習登録
  */
 private suspend fun saveMonthData(
     database: com.example.receiptorc.data.ReceiptDatabase,
@@ -2112,10 +2134,16 @@ private suspend fun saveMonthData(
     month: Int,
     allSheetsData: Map<Int, List<ReceiptRowData>>
 ) {
+    android.util.Log.d("ReceiptInputScreen", "saveMonthData called: year=$year, month=$month, sheets=${allSheetsData.keys}")
+
+    // V3: コミットバッチID生成
+    val commitBatchId = "${year}_${month}_${System.currentTimeMillis()}"
     withContext(Dispatchers.IO) {
         allSheetsData.forEach { (sheetNumber, rows) ->
+            android.util.Log.d("ReceiptInputScreen", "Processing sheet $sheetNumber with ${rows.size} rows")
             // 既存データを削除
             database.receiptDao().deleteReceiptItemsBySheet(year, month, sheetNumber)
+            android.util.Log.d("ReceiptInputScreen", "Deleted existing data for sheet $sheetNumber")
 
             // 新しいデータを挿入（合計行も含む）
             val items = rows
@@ -2147,11 +2175,111 @@ private suspend fun saveMonthData(
                     )
                 }
 
+            android.util.Log.d("ReceiptInputScreen", "Filtered items count: ${items.size}")
             if (items.isNotEmpty()) {
                 database.receiptDao().insertReceiptItems(items)
+                android.util.Log.d("ReceiptInputScreen", "Inserted ${items.size} items for sheet $sheetNumber")
+            } else {
+                android.util.Log.d("ReceiptInputScreen", "No items to insert for sheet $sheetNumber")
+            }
+        }
+
+        // MonthlyDataの更新（totalSheetsを保存）
+        val totalSheets = allSheetsData.keys.maxOrNull() ?: 0
+        if (totalSheets > 0) {
+            val monthlyDataId = "${year}_${month}"
+            val existingMonthlyData = database.receiptDao().getMonthlyData(monthlyDataId)
+
+            if (existingMonthlyData == null) {
+                // 新規作成
+                database.receiptDao().insertMonthlyData(
+                    com.example.receiptorc.data.MonthlyData(
+                        id = monthlyDataId,
+                        issueYear = year,
+                        issueMonth = month,
+                        totalSheets = totalSheets,
+                        generalPurchaseTotal = 0,
+                        agriculturalTotal = 0,
+                        gasStationTotal = 0,
+                        monthlyTotal = 0
+                    )
+                )
+                android.util.Log.d("ReceiptInputScreen", "Created MonthlyData: totalSheets=$totalSheets")
+            } else if (existingMonthlyData.totalSheets != totalSheets) {
+                // 更新
+                database.receiptDao().updateMonthlyData(
+                    existingMonthlyData.copy(totalSheets = totalSheets)
+                )
+                android.util.Log.d("ReceiptInputScreen", "Updated MonthlyData: totalSheets=$totalSheets")
+            }
+        }
+
+        // V3: 手動修正の学習登録
+        registerManualCorrectionsOnCommit(database, allSheetsData, commitBatchId)
+    }
+    android.util.Log.d("ReceiptInputScreen", "saveMonthData completed")
+}
+
+/**
+ * V3: コミット時に手動修正を学習登録
+ *
+ * 条件:
+ * - originalOcrNameがある
+ * - productMasterIdがある
+ * - originalOcrNameとproductNameが異なる（手動修正された）
+ * - originalOcrNameが3文字以上
+ */
+private suspend fun registerManualCorrectionsOnCommit(
+    database: com.example.receiptorc.data.ReceiptDatabase,
+    allSheetsData: Map<Int, List<ReceiptRowData>>,
+    commitBatchId: String
+) {
+    val variantDao = database.ocrVariantDao()
+    var registeredCount = 0
+
+    for ((_, rows) in allSheetsData) {
+        for (row in rows) {
+            // 条件チェック
+            if (row.originalOcrName == null) continue
+            if (row.productMasterId == null) continue
+            if (row.originalOcrName == row.productName) continue  // 変更なし
+            if (row.isTotalRow || row.isSubtotal) continue
+
+            // 正規化テキスト
+            val normalizedText = normalizeForLearning(row.originalOcrName)
+            if (normalizedText.length < 3) continue  // 3文字未満は学習対象外
+
+            try {
+                variantDao.registerManualCorrection(
+                    ocrText = row.originalOcrName,
+                    normalizedText = normalizedText,
+                    correctProductId = row.productMasterId,
+                    commitBatchId = commitBatchId
+                )
+                registeredCount++
+                android.util.Log.d(
+                    "ReceiptInputScreen",
+                    "[V3-LEARN] Manual correction: '${row.originalOcrName}' -> productId=${row.productMasterId}"
+                )
+            } catch (e: Exception) {
+                android.util.Log.e(
+                    "ReceiptInputScreen",
+                    "[V3-LEARN] Failed: ${e.message}"
+                )
             }
         }
     }
+
+    android.util.Log.d("ReceiptInputScreen", "[V3-LEARN] Registered $registeredCount manual corrections")
+}
+
+/**
+ * V3: 学習用正規化
+ */
+private fun normalizeForLearning(text: String): String {
+    return text
+        .replace(Regex("[\\s　]"), "")  // 空白除去
+        .replace(Regex("[^一-龯ぁ-んァ-ンa-zA-Z0-9]"), "")  // 記号除去
 }
 
 private suspend fun addNewSheet(
@@ -2226,13 +2354,25 @@ private fun CellEditDialog(
     defaultMonth: Int,
     productMasterDao: com.example.receiptorc.data.ProductMasterDao,
     subtotalFlags: MonthlySubtotalFlags,
+    fixYearMonth: Boolean = false,
     onDismiss: () -> Unit,
     onConfirm: (ReceiptRowData) -> Unit
 ) {
+    // 年月固定時は日のみを抽出して初期値にする
+    val initialDateValue = when {
+        cellType == CellType.DATE && fixYearMonth && currentRow.date.isNotBlank() -> {
+            // "YY/MM/DD" から日だけを抽出
+            val parts = currentRow.date.split("/")
+            if (parts.size == 3) parts[2] else currentRow.date.replace("/", "")
+        }
+        cellType == CellType.DATE -> currentRow.date.replace("/", "")
+        else -> ""
+    }
+
     var inputValue by remember {
         mutableStateOf(
             when (cellType) {
-                CellType.DATE -> currentRow.date.replace("/", "")
+                CellType.DATE -> initialDateValue
                 CellType.PRODUCT_NAME -> currentRow.productName
                 CellType.AMOUNT -> if (currentRow.amount != 0) Math.abs(currentRow.amount).toString() else ""
             }
@@ -2244,6 +2384,8 @@ private fun CellEditDialog(
     var selectedSubtotalCategory by remember { mutableStateOf(currentRow.subtotalCategory ?: SubtotalCategory.GENERAL_PURCHASE) }
     var productList by remember { mutableStateOf<List<com.example.receiptorc.data.ProductMaster>>(emptyList()) }
     var showDropdown by remember { mutableStateOf(false) }
+    var selectedProductId by remember { mutableStateOf<Long?>(currentRow.productMasterId) }
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(cellType) {
         if (cellType == CellType.PRODUCT_NAME) {
@@ -2251,14 +2393,27 @@ private fun CellEditDialog(
         }
     }
 
+    // 年月固定時の最大日数を計算
+    val maxDayInMonth = remember(defaultYear, defaultMonth) {
+        val fullYear = if (defaultYear < 50) 2000 + defaultYear else 1900 + defaultYear
+        when (defaultMonth) {
+            1, 3, 5, 7, 8, 10, 12 -> 31
+            4, 6, 9, 11 -> 30
+            2 -> if (fullYear % 4 == 0 && (fullYear % 100 != 0 || fullYear % 400 == 0)) 29 else 28
+            else -> 31
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                when (cellType) {
-                    CellType.DATE -> "取引日を編集"
-                    CellType.PRODUCT_NAME -> "商品名を編集"
-                    CellType.AMOUNT -> "税込金額を編集"
+                when {
+                    cellType == CellType.DATE && fixYearMonth -> "日を入力（R${defaultYear}年${defaultMonth}月）"
+                    cellType == CellType.DATE -> "取引日を編集"
+                    cellType == CellType.PRODUCT_NAME -> "商品名を編集"
+                    cellType == CellType.AMOUNT -> "税込金額を編集"
+                    else -> ""
                 }
             )
         },
@@ -2307,19 +2462,23 @@ private fun CellEditDialog(
                         },
                         label = {
                             Text(
-                                when (cellType) {
-                                    CellType.DATE -> "数字のみ（1〜6桁）"
-                                    CellType.PRODUCT_NAME -> "商品名"
-                                    CellType.AMOUNT -> "金額（半角数字）"
+                                when {
+                                    cellType == CellType.DATE && fixYearMonth -> "日を入力（1〜${maxDayInMonth}）"
+                                    cellType == CellType.DATE -> "数字のみ（1〜6桁）"
+                                    cellType == CellType.PRODUCT_NAME -> "商品名"
+                                    cellType == CellType.AMOUNT -> "金額（半角数字）"
+                                    else -> ""
                                 }
                             )
                         },
                         placeholder = {
                             Text(
-                                when (cellType) {
-                                    CellType.DATE -> "例: 070105 / 70105 / 0105 / 105 / 05 / 5"
-                                    CellType.PRODUCT_NAME -> "商品名を入力"
-                                    CellType.AMOUNT -> "例: 1000"
+                                when {
+                                    cellType == CellType.DATE && fixYearMonth -> "例: 1, 15, 31"
+                                    cellType == CellType.DATE -> "例: 070105 / 70105 / 0105 / 105 / 05 / 5"
+                                    cellType == CellType.PRODUCT_NAME -> "商品名を入力"
+                                    cellType == CellType.AMOUNT -> "例: 1000"
+                                    else -> ""
                                 }
                             )
                         },
@@ -2352,6 +2511,7 @@ private fun CellEditDialog(
                                         text = { Text(product.canonicalName) },
                                         onClick = {
                                             inputValue = product.canonicalName
+                                            selectedProductId = product.id
                                             showDropdown = false
                                         }
                                     )
@@ -2515,27 +2675,61 @@ private fun CellEditDialog(
                 onClick = {
                     when (cellType) {
                         CellType.DATE -> {
-                            val formattedDate = formatDateInput(
-                                input = inputValue,
-                                defaultYear = defaultYear,
-                                defaultMonth = defaultMonth
-                            )
-                            if (formattedDate == null) {
-                                errorMessage = "正しい日付を入力してください（6桁/4桁/2桁）"
-                                return@TextButton
+                            if (fixYearMonth) {
+                                // 年月固定モード: 日のみを入力
+                                val day = inputValue.toIntOrNull()
+                                if (day == null || day < 1 || day > maxDayInMonth) {
+                                    errorMessage = "1〜${maxDayInMonth}の日を入力してください"
+                                    return@TextButton
+                                }
+                                val formattedDate = "%02d/%02d/%02d".format(
+                                    defaultYear % 100,
+                                    defaultMonth,
+                                    day
+                                )
+                                onConfirm(currentRow.copy(date = formattedDate))
+                            } else {
+                                // 通常モード: 従来通りの日付入力
+                                val formattedDate = formatDateInput(
+                                    input = inputValue,
+                                    defaultYear = defaultYear,
+                                    defaultMonth = defaultMonth
+                                )
+                                if (formattedDate == null) {
+                                    errorMessage = "正しい日付を入力してください（6桁/4桁/2桁）"
+                                    return@TextButton
+                                }
+                                onConfirm(currentRow.copy(date = formattedDate))
                             }
-                            onConfirm(currentRow.copy(date = formattedDate))
                         }
                         CellType.PRODUCT_NAME -> {
-                            onConfirm(
-                                currentRow.copy(
-                                    productName = inputValue,
-                                    isSubtotal = isSubtotal,
-                                    subtotalCategory = if (isSubtotal) selectedSubtotalCategory else null,
-                                    date = if (isSubtotal) "" else currentRow.date,  // 小計の場合は日付をクリア
-                                    category = if (isSubtotal) selectedSubtotalCategory.displayName else currentRow.category  // 小計の場合はカテゴリを設定
+                            // 商品マスタIDを解決（ドロップダウン選択時は既にセット済み、手動入力時は検索）
+                            coroutineScope.launch {
+                                val resolvedProductId = if (selectedProductId != null) {
+                                    // ドロップダウンで選択した商品名と一致する場合のみ使用
+                                    val selectedProduct = productList.find { it.id == selectedProductId }
+                                    if (selectedProduct?.canonicalName == inputValue) {
+                                        selectedProductId
+                                    } else {
+                                        // 手動で書き換えた場合は再検索
+                                        productMasterDao.getByName(inputValue)?.id
+                                    }
+                                } else {
+                                    // 手動入力の場合は商品マスタを検索
+                                    productMasterDao.getByName(inputValue)?.id
+                                }
+
+                                onConfirm(
+                                    currentRow.copy(
+                                        productName = inputValue,
+                                        isSubtotal = isSubtotal,
+                                        subtotalCategory = if (isSubtotal) selectedSubtotalCategory else null,
+                                        date = if (isSubtotal) "" else currentRow.date,
+                                        category = if (isSubtotal) selectedSubtotalCategory.displayName else currentRow.category,
+                                        productMasterId = if (!isSubtotal) resolvedProductId else null
+                                    )
                                 )
-                            )
+                            }
                         }
                         CellType.AMOUNT -> {
                             val amount = inputValue.toIntOrNull()

@@ -15,9 +15,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ProductMaster::class,
         OcrVariant::class,
         YayoiAccount::class,
-        RakurakuAccount::class
+        RakurakuAccount::class,
+        CorrectionLog::class,
+        OcrScoreLog::class
     ],
-    version = 3,
+    version = 6,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -26,6 +28,8 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun ocrVariantDao(): OcrVariantDao
     abstract fun yayoiAccountDao(): YayoiAccountDao
     abstract fun rakurakuAccountDao(): RakurakuAccountDao
+    abstract fun correctionLogDao(): CorrectionLogDao
+    abstract fun ocrScoreLogDao(): OcrScoreLogDao
 
     companion object {
         @Volatile
@@ -93,6 +97,184 @@ abstract class ReceiptDatabase : RoomDatabase() {
                         isOcrOverwriteTarget INTEGER NOT NULL DEFAULT 0
                     )
                 """.trimIndent())
+            }
+        }
+
+        // マイグレーション: version 3 → 4（OcrVariant V2 - 段階的学習システム）
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // OcrVariantテーブルの再作成（新カラム追加）
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ocr_variants_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        productId INTEGER NOT NULL,
+                        variantText TEXT NOT NULL,
+                        normalizedText TEXT NOT NULL DEFAULT '',
+                        confidenceLevel TEXT NOT NULL DEFAULT 'AUTO',
+                        hitCount INTEGER NOT NULL DEFAULT 0,
+                        highScoreHits INTEGER NOT NULL DEFAULT 0,
+                        avgFinalScore REAL NOT NULL DEFAULT 0.0,
+                        totalScore REAL NOT NULL DEFAULT 0.0,
+                        firstSeenAt INTEGER NOT NULL,
+                        lastSeenAt INTEGER NOT NULL,
+                        uniqueDays INTEGER NOT NULL DEFAULT 1,
+                        lastSeenDate INTEGER NOT NULL DEFAULT 0,
+                        source TEXT NOT NULL DEFAULT 'AUTO',
+                        isDisabled INTEGER NOT NULL DEFAULT 0,
+                        disabledReason TEXT,
+                        FOREIGN KEY (productId) REFERENCES product_master(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+
+                // 旧データを移行（既存のoccurrenceCountをhitCountに）
+                database.execSQL("""
+                    INSERT INTO ocr_variants_new (
+                        id, productId, variantText, normalizedText, confidenceLevel,
+                        hitCount, highScoreHits, avgFinalScore, totalScore,
+                        firstSeenAt, lastSeenAt, uniqueDays, lastSeenDate,
+                        source, isDisabled, disabledReason
+                    )
+                    SELECT
+                        id, productId, variantText, variantText, 'AUTO',
+                        occurrenceCount, 0, 0.75, occurrenceCount * 0.75,
+                        lastSeen, lastSeen, 1, 0,
+                        'IMPORT', 0, NULL
+                    FROM ocr_variants
+                """.trimIndent())
+
+                // 旧テーブル削除
+                database.execSQL("DROP TABLE ocr_variants")
+
+                // 新テーブルをリネーム
+                database.execSQL("ALTER TABLE ocr_variants_new RENAME TO ocr_variants")
+
+                // インデックス作成
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_variants_productId
+                    ON ocr_variants (productId)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_variants_variantText
+                    ON ocr_variants (variantText)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_variants_normalizedText
+                    ON ocr_variants (normalizedText)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_variants_confidenceLevel
+                    ON ocr_variants (confidenceLevel)
+                """.trimIndent())
+
+                // CorrectionLogテーブル作成
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS correction_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        sessionId TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        rawText TEXT NOT NULL,
+                        normalizedRaw TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        hardConstraintsPassed INTEGER NOT NULL,
+                        topProduct TEXT,
+                        topBaseScore REAL NOT NULL,
+                        topBonusTotal REAL NOT NULL,
+                        topFinalScore REAL NOT NULL,
+                        secondProduct TEXT,
+                        secondFinalScore REAL NOT NULL,
+                        decision TEXT NOT NULL,
+                        correctedName TEXT,
+                        matched INTEGER NOT NULL,
+                        bonusBreakdown TEXT
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_correction_logs_timestamp
+                    ON correction_logs (timestamp)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_correction_logs_decision
+                    ON correction_logs (decision)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_correction_logs_sessionId
+                    ON correction_logs (sessionId)
+                """.trimIndent())
+            }
+        }
+
+        // マイグレーション: version 4 → 5（V3: 低頻度利用向けOCR学習システム再設計）
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // 1. OcrVariantに新カラム追加
+                database.execSQL("""
+                    ALTER TABLE ocr_variants
+                    ADD COLUMN manualCorrectCount INTEGER NOT NULL DEFAULT 0
+                """.trimIndent())
+                database.execSQL("""
+                    ALTER TABLE ocr_variants
+                    ADD COLUMN autoFailCount INTEGER NOT NULL DEFAULT 0
+                """.trimIndent())
+                database.execSQL("""
+                    ALTER TABLE ocr_variants
+                    ADD COLUMN lastManualCommitBatchId TEXT
+                """.trimIndent())
+
+                // 2. OcrScoreLogテーブル作成
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ocr_score_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        rawOcrText TEXT NOT NULL,
+                        candidateProductId INTEGER,
+                        decision TEXT NOT NULL,
+                        totalScore REAL,
+                        textSimilarity REAL,
+                        prefixBonus REAL,
+                        dakutenBonus REAL,
+                        variantBonus REAL,
+                        historyBonus REAL,
+                        riskPenalty REAL,
+                        gapToSecond REAL,
+                        manualOverride INTEGER NOT NULL DEFAULT 0,
+                        manualCorrectedProductId INTEGER,
+                        commitBatchId TEXT,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                // 3. OcrScoreLogのインデックス作成
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_score_logs_createdAt
+                    ON ocr_score_logs (createdAt)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_score_logs_decision
+                    ON ocr_score_logs (decision)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_score_logs_commitBatchId
+                    ON ocr_score_logs (commitBatchId)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_score_logs_rawOcrText
+                    ON ocr_score_logs (rawOcrText)
+                """.trimIndent())
+
+                // 4. 既存のUSERソースデータのmanualCorrectCountを1に設定
+                database.execSQL("""
+                    UPDATE ocr_variants
+                    SET manualCorrectCount = 1
+                    WHERE source = 'USER'
+                """.trimIndent())
+            }
+        }
+
+        // マイグレーション: version 5 → 6（AccountCode削除のため空マイグレーション）
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // AccountCodeテーブルは削除されたためno-op
+                // 既存のaccount_codesテーブルがあれば削除
+                database.execSQL("DROP TABLE IF EXISTS account_codes")
             }
         }
 
@@ -174,7 +356,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance

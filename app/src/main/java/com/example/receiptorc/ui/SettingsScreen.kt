@@ -37,7 +37,8 @@ import java.util.Locale
 @Composable
 fun SettingsScreen(
     appPreferences: AppPreferences,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToOcrLearningStatus: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -207,6 +208,20 @@ fun SettingsScreen(
                 subtitle = "デバイス情報を表示"
             ) {
                 TextButton(onClick = { showCameraInfo = true }) {
+                    Text("表示")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // OCR学習
+            SettingSection(title = "🧠 OCR学習")
+
+            SettingItem(
+                title = "学習状況を確認",
+                subtitle = "誤認識パターンの学習データベースを表示"
+            ) {
+                TextButton(onClick = onNavigateToOcrLearningStatus) {
                     Text("表示")
                 }
             }

@@ -22,6 +22,8 @@ import com.example.receiptorc.ui.DataBrowserScreen
 import com.example.receiptorc.ui.MenuScreen
 import com.example.receiptorc.ui.MonthlySummaryScreen
 import com.example.receiptorc.ui.OcrCaptureScreen
+import com.example.receiptorc.ui.OcrLearningStatusScreen
+import com.example.receiptorc.ui.ProductListScreen
 import com.example.receiptorc.ui.ReceiptInputScreen
 import com.example.receiptorc.ui.SettingsScreen
 import com.example.receiptorc.ui.SheetEditorScreen
@@ -38,6 +40,8 @@ sealed class Screen(val route: String) {
     object OcrCapture : Screen("ocr_capture")
     object Settings : Screen("settings")
     object ReceiptInput : Screen("receipt_input")
+    object OcrLearningStatus : Screen("ocr_learning_status")
+    object ProductList : Screen("product_list")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
         fun createRoute(year: Int, month: Int): String {
             return "monthly_summary/$year/$month"
@@ -77,6 +81,9 @@ fun ReceiptNavGraph(
                 },
                 onNavigateToReceiptInput = {
                     navController.navigate(Screen.ReceiptInput.route)
+                },
+                onNavigateToProductList = {
+                    navController.navigate(Screen.ProductList.route)
                 }
             )
         }
@@ -180,6 +187,25 @@ fun ReceiptNavGraph(
         composable(Screen.Settings.route) {
             SettingsScreen(
                 appPreferences = appPreferences,
+                onBack = { navController.popBackStack() },
+                onNavigateToOcrLearningStatus = {
+                    navController.navigate(Screen.OcrLearningStatus.route)
+                }
+            )
+        }
+
+        // OCR学習状況画面
+        composable(Screen.OcrLearningStatus.route) {
+            OcrLearningStatusScreen(
+                database = database,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 購買品リスト画面
+        composable(Screen.ProductList.route) {
+            ProductListScreen(
+                database = database,
                 onBack = { navController.popBackStack() }
             )
         }

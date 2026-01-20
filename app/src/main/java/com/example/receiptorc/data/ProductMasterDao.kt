@@ -51,4 +51,22 @@ interface ProductMasterDao {
      */
     @Query("DELETE FROM product_master")
     suspend fun deleteAll()
+
+    /**
+     * 商品名で検索（部分一致）
+     */
+    @Query("SELECT * FROM product_master WHERE canonicalName LIKE '%' || :query || '%' ORDER BY frequencyCount DESC, canonicalName")
+    suspend fun searchByName(query: String): List<ProductMaster>
+
+    /**
+     * カテゴリと商品名で検索
+     */
+    @Query("SELECT * FROM product_master WHERE category = :category AND canonicalName LIKE '%' || :query || '%' ORDER BY frequencyCount DESC, canonicalName")
+    suspend fun searchByCategoryAndName(category: String, query: String): List<ProductMaster>
+
+    /**
+     * IDで削除
+     */
+    @Query("DELETE FROM product_master WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
