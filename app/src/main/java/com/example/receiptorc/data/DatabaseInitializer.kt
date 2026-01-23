@@ -22,6 +22,20 @@ object DatabaseInitializer {
     suspend fun initializeIfNeeded(context: Context, database: ReceiptDatabase) {
         withContext(Dispatchers.IO) {
             try {
+                // 勘定科目データが空なら初期化
+                val yayoiCount = database.yayoiAccountDao().count()
+                val rakurakuCount = database.rakurakuAccountDao().count()
+
+                if (yayoiCount == 0) {
+                    Log.d(TAG, "Initializing Yayoi accounts...")
+                    importYayoiAccounts(context, database)
+                }
+
+                if (rakurakuCount == 0) {
+                    Log.d(TAG, "Initializing Rakuraku accounts...")
+                    importRakurakuAccounts(context, database)
+                }
+
                 // すでにデータがある場合はスキップ
                 val productCount = database.productMasterDao().getCount()
                 if (productCount > 0) {
@@ -30,10 +44,6 @@ object DatabaseInitializer {
                 }
 
                 Log.d(TAG, "Starting database initialization...")
-
-                // 1. 勘定科目マスタのインポート（外部キー参照されるため先にインポート）
-                importYayoiAccounts(context, database)
-                importRakurakuAccounts(context, database)
 
                 // 2. 商品マスタのインポート
                 importProductMaster(context, database)
@@ -51,21 +61,24 @@ object DatabaseInitializer {
 
     /**
      * 弥生会計 勘定科目マスタをインポート
-     * CSV形式: id,account_code,account_name,category,subcategory,description
+     * CSV形式: 勘定科目,サーチキー英字,サーチキー数字,借貸,区分C,区分B,区分A,購買取引使用,預金取引使用,親科目
      */
     private suspend fun importYayoiAccounts(context: Context, database: ReceiptDatabase) {
         val dao = database.yayoiAccountDao()
         val accounts = mutableListOf<YayoiAccount>()
+        val parentMap = mutableMapOf<Int, Long>() // CSV行番号 -> DB ID
 
         context.assets.open("yayoi_accounts.csv").use { inputStream ->
             BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).use { reader ->
                 // ヘッダー行をスキップ
                 reader.readLine()
 
+                var lineNumber = 1
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
+                    lineNumber++
                     val parts = line!!.split(",")
-                    if (parts.size >= 3) {
+                    if (parts.isNotEmpty() && parts[0].isNotBlank()) {
                         accounts.add(
                             YayoiAccount(
                                 id = 0, // AutoGenerate
@@ -73,7 +86,12 @@ object DatabaseInitializer {
                                 searchKeyAlpha = parts.getOrNull(1)?.trim() ?: "",
                                 accountCode = parts.getOrNull(2)?.trim() ?: "",
                                 debitCredit = parts.getOrNull(3)?.trim() ?: "",
-                                taxCategory = parts.getOrNull(4)?.trim() ?: ""
+                                categoryC = parts.getOrNull(4)?.trim() ?: "",
+                                categoryB = parts.getOrNull(5)?.trim() ?: "",
+                                categoryA = parts.getOrNull(6)?.trim() ?: "",
+                                usedForPurchase = parts.getOrNull(7)?.trim()?.uppercase() == "TRUE",
+                                usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() != "FALSE",
+                                parentId = null // 後で設定
                             )
                         )
                     }
@@ -81,17 +99,19 @@ object DatabaseInitializer {
             }
         }
 
+        dao.deleteAll()
         dao.insertAll(accounts)
         Log.d(TAG, "Imported ${accounts.size} Yayoi accounts")
     }
 
     /**
      * らくらく青色申告 勘定科目マスタをインポート
-     * CSV形式: id,account_code,account_name,category,subcategory,description
+     * CSV形式: 勘定科目,サーチキー英字,サーチキー数字,借貸,区分C,区分B,区分A,購買取引使用,預金取引使用,親科目
      */
     private suspend fun importRakurakuAccounts(context: Context, database: ReceiptDatabase) {
         val dao = database.rakurakuAccountDao()
         val accounts = mutableListOf<RakurakuAccount>()
+        val parentRefs = mutableListOf<Int?>() // CSV行番号の親参照
 
         context.assets.open("rakuraku_accounts.csv").use { inputStream ->
             BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).use { reader ->
@@ -101,15 +121,22 @@ object DatabaseInitializer {
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     val parts = line!!.split(",")
-                    if (parts.size >= 3) {
+                    if (parts.isNotEmpty() && parts[0].isNotBlank()) {
+                        val parentRef = parts.getOrNull(9)?.trim()?.toIntOrNull()
+                        parentRefs.add(parentRef)
                         accounts.add(
                             RakurakuAccount(
                                 id = 0, // AutoGenerate
-                                accountCode = parts[1].trim(),
-                                accountName = parts[2].trim(),
-                                category = parts.getOrNull(3)?.trim(),
-                                subcategory = parts.getOrNull(4)?.trim(),
-                                description = parts.getOrNull(5)?.trim()
+                                accountName = parts[0].trim(),
+                                searchKeyAlpha = parts.getOrNull(1)?.trim() ?: "",
+                                accountCode = parts.getOrNull(2)?.trim() ?: "",
+                                debitCredit = parts.getOrNull(3)?.trim() ?: "",
+                                categoryC = parts.getOrNull(4)?.trim() ?: "",
+                                categoryB = parts.getOrNull(5)?.trim() ?: "",
+                                categoryA = parts.getOrNull(6)?.trim() ?: "",
+                                usedForPurchase = parts.getOrNull(7)?.trim()?.uppercase() == "TRUE",
+                                usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() != "FALSE",
+                                parentId = null // 後で設定
                             )
                         )
                     }
@@ -117,7 +144,21 @@ object DatabaseInitializer {
             }
         }
 
+        dao.deleteAll()
         dao.insertAll(accounts)
+
+        // 親科目の参照を設定（CSVの行番号ベース）
+        // ID順で取得（getAll()はカテゴリ順なので順番がずれる）
+        val allAccounts = dao.getAllById()
+        for (i in accounts.indices) {
+            val parentRef = parentRefs.getOrNull(i)
+            if (parentRef != null && parentRef > 0 && parentRef <= allAccounts.size) {
+                val account = allAccounts[i]
+                val parentAccount = allAccounts[parentRef - 1] // 1-indexed
+                dao.update(account.copy(parentId = parentAccount.id))
+            }
+        }
+
         Log.d(TAG, "Imported ${accounts.size} Rakuraku accounts")
     }
 

@@ -16,7 +16,7 @@ interface RakurakuAccountDao {
     @Delete
     suspend fun delete(account: RakurakuAccount)
 
-    @Query("SELECT * FROM rakuraku_accounts ORDER BY accountCode")
+    @Query("SELECT * FROM rakuraku_accounts ORDER BY categoryA, categoryB, categoryC, accountCode")
     suspend fun getAll(): List<RakurakuAccount>
 
     @Query("SELECT * FROM rakuraku_accounts WHERE id = :id")
@@ -25,9 +25,36 @@ interface RakurakuAccountDao {
     @Query("SELECT * FROM rakuraku_accounts WHERE accountCode = :code")
     suspend fun getByCode(code: String): RakurakuAccount?
 
-    @Query("SELECT * FROM rakuraku_accounts WHERE category = :category ORDER BY accountCode")
-    suspend fun getByCategory(category: String): List<RakurakuAccount>
+    @Query("SELECT * FROM rakuraku_accounts WHERE categoryA = :categoryA ORDER BY categoryB, categoryC, accountCode")
+    suspend fun getByCategoryA(categoryA: String): List<RakurakuAccount>
+
+    @Query("SELECT * FROM rakuraku_accounts WHERE categoryB = :categoryB ORDER BY categoryC, accountCode")
+    suspend fun getByCategoryB(categoryB: String): List<RakurakuAccount>
+
+    @Query("SELECT * FROM rakuraku_accounts WHERE categoryC = :categoryC ORDER BY accountCode")
+    suspend fun getByCategoryC(categoryC: String): List<RakurakuAccount>
+
+    @Query("SELECT * FROM rakuraku_accounts WHERE usedForPurchase = 1 ORDER BY categoryA, categoryB, categoryC, accountCode")
+    suspend fun getForPurchase(): List<RakurakuAccount>
+
+    @Query("SELECT DISTINCT categoryA FROM rakuraku_accounts ORDER BY categoryA")
+    suspend fun getDistinctCategoryA(): List<String>
+
+    @Query("SELECT DISTINCT categoryB FROM rakuraku_accounts ORDER BY categoryB")
+    suspend fun getDistinctCategoryB(): List<String>
+
+    @Query("SELECT DISTINCT categoryC FROM rakuraku_accounts ORDER BY categoryC")
+    suspend fun getDistinctCategoryC(): List<String>
+
+    @Query("SELECT * FROM rakuraku_accounts WHERE parentId = :parentId ORDER BY accountCode")
+    suspend fun getByParentId(parentId: Long): List<RakurakuAccount>
+
+    @Query("SELECT * FROM rakuraku_accounts ORDER BY id")
+    suspend fun getAllById(): List<RakurakuAccount>
 
     @Query("DELETE FROM rakuraku_accounts")
     suspend fun deleteAll()
+
+    @Query("SELECT COUNT(*) FROM rakuraku_accounts")
+    suspend fun count(): Int
 }
