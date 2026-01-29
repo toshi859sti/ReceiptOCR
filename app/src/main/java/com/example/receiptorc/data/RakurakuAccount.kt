@@ -17,18 +17,33 @@ data class RakurakuAccount(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
 
-    /** 勘定科目コード (例: "7001") */
+    /** 勘定科目コード (例: "501") */
     val accountCode: String,
 
     /** 勘定科目名 (例: "種苗費") */
     val accountName: String,
 
-    /** カテゴリ (例: "農業経費") */
-    val category: String? = null,
+    /** サーチキー英字 (例: "syubyou") */
+    val searchKeyAlpha: String = "",
 
-    /** サブカテゴリ (例: "種苗") */
-    val subcategory: String? = null,
+    /** 借貸 (借/貸) */
+    val debitCredit: String = "",
 
-    /** 説明 */
-    val description: String? = null
+    /** 区分C - 小分類 (例: "【経費】") */
+    val categoryC: String = "",
+
+    /** 区分B - 中分類 (例: "【経費】") */
+    val categoryB: String = "",
+
+    /** 区分A - 大分類 (例: "【経常損益】") */
+    val categoryA: String = "",
+
+    /** 購買取引で使用するか */
+    val usedForPurchase: Boolean = false,
+
+    /** 預金取引で使用するか */
+    val usedForDeposit: Boolean = true,
+
+    /** 親科目ID (階層構造用) */
+    val parentId: Long? = null
 )

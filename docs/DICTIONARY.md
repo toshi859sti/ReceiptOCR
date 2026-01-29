@@ -30,30 +30,44 @@ data class ProductMaster(
 )
 ```
 
-### OcrVariant (OCR誤認識パターン)
+### OcrVariant (OCR誤認識パターン) - V2スキーマ (2026-01-16~)
+
 ```kotlin
-@Entity(
-    tableName = "ocr_variants",
-    foreignKeys = [ForeignKey(
-        entity = ProductMaster::class,
-        parentColumns = ["id"],
-        childColumns = ["product_id"],
-        onDelete = ForeignKey.CASCADE
-    )]
-)
+@Entity(tableName = "ocr_variants")
 data class OcrVariant(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    @ColumnInfo(name = "product_id")
-    val productId: Long,           // 対応する商品ID
-    @ColumnInfo(name = "variant_text")
-    val variantText: String,       // OCR誤認識パターン (例: "フェニックス類粒水和剤")
-    @ColumnInfo(name = "occurrence_count")
-    val occurrenceCount: Int = 1,  // 出現回数
-    @ColumnInfo(name = "last_seen")
-    val lastSeen: Long = System.currentTimeMillis()
+    val productId: Long,              // 対応する商品ID
+    val variantText: String,          // OCR誤認識パターン (例: "フェニックス類粒水和剤")
+    val normalizedText: String = "",  // 正規化テキスト
+    val confidenceLevel: String = ConfidenceLevel.AUTO.name,  // AUTO, CONFIRMED, LOCKED
+    val hitCount: Int = 0,            // ヒット回数
+    val highScoreHits: Int = 0,       // 高スコア(0.90+)ヒット回数
+    val avgFinalScore: Double = 0.0,  // 平均最終スコア
+    val totalScore: Double = 0.0,     // 累計スコア
+    val firstSeenAt: Long = System.currentTimeMillis(),
+    val lastSeenAt: Long = System.currentTimeMillis(),
+    val uniqueDays: Int = 1,          // 使用日数
+    val lastSeenDate: Int = 0,        // 最終使用日（yyyyMMdd）
+    val source: String = VariantSource.AUTO.name,  // AUTO, USER, IMPORT
+    val isDisabled: Boolean = false,
+    val disabledReason: String? = null
 )
+
+enum class ConfidenceLevel { AUTO, CONFIRMED, LOCKED }
+enum class VariantSource { AUTO, USER, IMPORT }
 ```
+
+**昇格条件 (AUTO → CONFIRMED):**
+- hitCount >= 5
+- uniqueDays >= 3
+- avgFinalScore >= 0.88
+- highScoreHits >= 3
+
+**減衰計算:**
+- `exp(-days/30)` で30日で約37%に減衰
+
+詳細は [CORRECTION_SYSTEM.md](./CORRECTION_SYSTEM.md) を参照。
 
 ### YayoiAccount (弥生勘定科目)
 ```kotlin
@@ -453,9 +467,9 @@ if (bestSimilarity >= SIMILARITY_THRESHOLD && bestMatch != null) {
 
 ---
 
-## 実装予定機能
+## 実装状況
 
-### 短期
+### 完了
 - [x] ProductMaster.kt, ProductMasterDao.kt 作成 ✅
 - [x] ReceiptDatabase.kt に product_master テーブル追加 ✅
 - [x] ProductNameCorrector.kt 作成 ✅
@@ -463,17 +477,15 @@ if (bestSimilarity >= SIMILARITY_THRESHOLD && bestMatch != null) {
 - [x] UnderlyingBaseProcessor.kt に統合 ✅
 - [x] カテゴリ判定ロジック（小計行から逆算) ✅
 - [x] ProductNameCorrectorV2.kt (全角容量対応) ✅ 2026-01-01
+- [x] ProductNameCorrectorV3.kt (三層構造設計) ✅ 2026-01-16
+- [x] OcrVariant V2スキーマ (学習・昇格・減衰) ✅ 2026-01-16
+- [x] CorrectionLogテーブル ✅ 2026-01-16
 
-### 中期
-- [ ] OcrVariantからのパターンマッチング優先 (学習データ活用)
-- [ ] 頻度ベースのランキング補正
+### 未実装
 - [ ] ユーザーによる手動補正 → 自動学習
 - [ ] 商品マスタのUI編集機能
-
-### 長期
 - [ ] 複数農協対応（地域別商品マスタ）
 - [ ] クラウド同期（共通商品マスタ）
-- [ ] カテゴリ自動学習（教師なし学習）
 
 ---
 
@@ -490,6 +502,7 @@ if (bestSimilarity >= SIMILARITY_THRESHOLD && bestMatch != null) {
 
 ## 更新履歴
 
+- **2026-01-16**: ProductNameCorrectorV3実装 (三層構造設計、OcrVariant V2スキーマ)
 - **2026-01-01**: ProductNameCorrectorV2実装 (全角容量対応、容量重複バグ修正)
 - **2025-12-30**: 統合テスト、自動学習機能動作確認
 - **2025-12-29**: 初期実装完了、CSV初期データインポート

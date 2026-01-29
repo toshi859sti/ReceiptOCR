@@ -4,6 +4,458 @@
 
 ---
 
+## 2026-01-24
+
+### らくらく青色申告 摘要辞書・マッチング機能
+
+**背景:**
+- らくらく青色申告農業版の摘要辞書をアプリで管理したい
+- 預金明細CSVの摘要と摘要辞書を紐付けて自動仕訳を実現したい
+
+**新規画面:**
+
+#### 1. 摘要辞書画面 (`RakurakuTekiyouScreen.kt`)
+
+**機能:**
+- らくらく青色申告農業版の摘要辞書を表示・編集
+- カテゴリ切り替え: 現金 / 預金 / 売掛 / 買掛
+- サブカテゴリ切り替え:
+  - 現金・預金: 入金 / 出金
+  - 売掛: 販売 / 入金
+  - 買掛: 購入 / 出金
+- グリッド表示（カテゴリにより列数が異なる）:
+  - 現金・預金: 摘要名, 検索文字, 科目, 税率, 事業割合, 共有 (6列)
+  - 売掛・買掛: 摘要名, 検索文字, 科目, 税率, 事業割合 (5列)
+- 追加・編集・削除機能
+
+**データ:**
+- 初期データ: `assets/rakurakutekiyou.csv` から自動インポート
+- 保存先: Room DB (`rakuraku_tekiyou` テーブル)
+
+#### 2. 預金摘要マッチング画面 (`TekiyouMatchingScreen.kt`)
+
+**機能:**
+- 預金明細CSVの摘要パターンを自動抽出
+- 摘要辞書（預金カテゴリのみ）とのマッチング設定
+- 入金/出金を金額の符号から自動判定
+
+**パターン正規化（オフラインAIなし）:**
+```
+例: "いんげん インゲン   1029" → "いんげん インゲン"
+例: "電気料 デンリヨク 07-09" → "電気料 デンリヨク"
+```
+末尾の日付・数字を正規表現で除去するルールベース処理。
+
+**UI構成:**
+- 統計カード: 合計 / マッチ済 / 未マッチ 件数
+- フィルタチップ: 全て / 入金(緑) / 出金(赤)
+- マッチングルールリスト:
+  - 入金/出金ラベル（色分け）
+  - マッチング状態アイコン（✓ or ⚠）
+  - 正規化された摘要パターン
+  - マッチング先の摘要名・科目
+- 編集ダイアログ:
+  - 預金カテゴリのみ表示（入金/出金は自動選択）
+  - 検索機能付き摘要リスト
+
+**データ:**
+- 預金明細: `assets/meisai.csv` から自動インポート（デモ用）
+- 保存先: Room DB (`deposit_meisai`, `tekiyou_matching_rules` テーブル)
+
+**新規ファイル:**
+- `RakurakuTekiyou.kt` - 摘要辞書エンティティ
+- `RakurakuTekiyouDao.kt` - 摘要辞書DAO
+- `RakurakuTekiyouScreen.kt` - 摘要辞書画面
+- `DepositMeisai.kt` - 預金明細エンティティ
+- `DepositMeisaiDao.kt` - 預金明細DAO
+- `TekiyouMatchingRule.kt` - マッチングルールエンティティ
+- `TekiyouMatchingRuleDao.kt` - マッチングルールDAO
+- `TekiyouMatchingScreen.kt` - マッチング画面
+
+**データベース更新:**
+- v9: `rakuraku_tekiyou` テーブル追加
+- v10: `deposit_meisai`, `tekiyou_matching_rules` テーブル追加
+
+**メニュー追加:**
+- 「摘要辞書」ボタン
+- 「摘要マッチング」ボタン
+
+---
+
+## 2026-01-23
+
+### 勘定科目設定画面のUI改善
+
+**背景:**
+- 区分Aがツリー展開形式で一覧性が悪い
+- 区分A/B/Cの並び順がCSV読み込み順で固定されていない
+- 勘定科目の表示項目が不足・2行表示で見づらい
+
+**変更内容:**
+
+1. **区分Aセレクター導入**
+   - ツリー展開形式から、横スクロール可能なFilterChipセレクターに変更
+   - 「資産」「負債」「資本」「経常損益」「引当金等」をタップで切り替え
+   - 選択した区分A内の項目のみを表示
+
+2. **区分A/B/Cの並び順を固定**
+   - 区分A: 資産 → 負債 → 資本 → 経常損益 → 引当金等
+   - 区分B（資産）: 流動資産 → 固定資産 → 繰延資産 → 事業主貸
+   - 区分B（負債）: 流動負債 → 事業主借
+   - 区分B（経常損益）: 収入金額 → 経費
+   - 区分B（引当金等）: 繰戻額等 → 繰入額等
+   - 区分C（流動資産）: 現金・預金 → 売上債権 → 有価証券 → 棚卸資産 → 他流動資産
+   - 区分C（固定資産）: 有形固定資産 → 無形固定資産 → 投資等
+   - 区分C（流動負債）: 仕入債務 → 他流動負債
+   - 区分C（収入金額）: 収入金額 → 農産物棚卸高
+   - 区分C（経費）: 経費 → 農産外棚卸高
+
+3. **勘定科目の表示を横1行・文字拡大**
+   - 変更前: 2行表示（科目名 + コード/貸借）
+   - 変更後: 横1行表示（科目名 | コード | 英字 | 貸借 | 購買 | 預金 | 削除）
+   - 科目名: 16sp太字、その他: 13sp
+   - 「預金」バッジを追加（将来の預金口座CSV連携機能用）
+
+**UIイメージ:**
+```
+┌─────────────────────────────────────────────────┐
+│ [資産] [負債] [資本] [経常損益] [引当金等]        │
+├─────────────────────────────────────────────────┤
+│ ▼ 流動資産                              (12件)  │
+│   ├ 現金・預金                                  │
+│   │  現金        100  genkin   借  [預金]  🗑   │
+│   │  普通預金    101  hutuu    借  [預金]  🗑   │
+│   ├ 売上債権                                    │
+│   │  売掛金      104  urikake  借  [預金]  🗑   │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+## 2026-01-21
+
+### 勘定科目設定画面の階層化 & データ構造改善
+
+**背景:**
+- 勘定科目の表示がフラットリストで見づらい
+- 区分A/B/Cによる分類がデータに反映されていない
+- 購買取引で使用する科目のフィルタリングが必要
+
+**データモデル変更:**
+
+```kotlin
+// RakurakuAccount / YayoiAccount 共通拡張
+data class Account(
+    val id: Long,
+    val accountCode: String,
+    val accountName: String,
+    val searchKeyAlpha: String,      // サーチキー英字
+    val debitCredit: String,         // 借/貸
+    val categoryC: String,           // 小分類 (例: 【経費】)
+    val categoryB: String,           // 中分類 (例: 【経費】)
+    val categoryA: String,           // 大分類 (例: 【経常損益】)
+    val usedForPurchase: Boolean,    // 購買取引で使用
+    val usedForDeposit: Boolean,     // 預金取引で使用
+    val parentId: Long?              // 親科目への参照
+)
+```
+
+**区分構造:**
+| 区分A (大分類) | 区分B (中分類) | 区分C (小分類) |
+|---------------|---------------|---------------|
+| 【資産】 | 【流動資産】【固定資産】【繰延資産】【事業主貸】 | 【現金・預金】【売上債権】【棚卸資産】等 |
+| 【負債】 | 【流動負債】【事業主借】 | 【仕入債務】【他流動負債】等 |
+| 【資本】 | 【資本】 | 【資本】 |
+| 【経常損益】 | 【収入金額】【経費】 | 【収入金額】【経費】【農産物棚卸高】等 |
+| 【引当金等】 | 【繰戻額等】【繰入額等】 | 【繰戻額等】【繰入額等】 |
+
+**初期データ:**
+- 弥生会計: 99件 (kamoku.csv)
+- らくらく青色申告農業版: 61件 (kamoku2.csv)
+
+**UI改善:**
+1. **階層表示**: 区分A → 区分B → 区分C → 勘定科目の折りたたみ可能なツリー
+2. **全展開/折りたたみボタン**: 右上アクションボタン
+3. **購買バッジ**: 購買取引で使用する科目に「購買」タグを表示
+4. **親子関係表示**: 親科目の下に子科目をインデント表示
+5. **科目追加ダイアログ**: 区分A/B/Cをドロップダウンから選択
+
+**DAOクエリ追加:**
+```kotlin
+// 区分別取得
+suspend fun getByCategoryA(categoryA: String): List<Account>
+suspend fun getByCategoryB(categoryB: String): List<Account>
+suspend fun getByCategoryC(categoryC: String): List<Account>
+
+// 購買取引用フィルタ
+suspend fun getForPurchase(): List<Account>
+
+// 区分一覧取得
+suspend fun getDistinctCategoryA(): List<String>
+suspend fun getDistinctCategoryB(): List<String>
+suspend fun getDistinctCategoryC(): List<String>
+```
+
+**実装ファイル:**
+- `RakurakuAccount.kt` (エンティティ拡張)
+- `YayoiAccount.kt` (エンティティ拡張)
+- `RakurakuAccountDao.kt` (クエリ追加)
+- `YayoiAccountDao.kt` (クエリ追加)
+- `DatabaseInitializer.kt` (CSV読み込み更新)
+- `AccountSettingsScreen.kt` (階層表示UI)
+- `ReceiptDatabase.kt` (v7→v8マイグレーション)
+- `assets/yayoi_accounts.csv` (新データ)
+- `assets/rakuraku_accounts.csv` (新データ)
+
+---
+
+## 2026-01-20
+
+### 購買伝票画面 UI改善
+
+**変更内容:**
+
+1. **TopAppBar変更**
+   - タイトル: 「伝票入力」→「購買伝票」
+   - 右側に「閲覧」/「編集」を18sp太字で表示
+
+2. **年表示強化**
+   - R7年をSurfaceで囲み、18sp太字・プライマリカラーで目立つように
+
+3. **レイアウト再構成**
+   - 1行目: R7年（目立つ）、月選択、伝票ナビゲーション
+   - 2行目: 編集/伝票追加・クリア・削除ボタン
+   - 3行目: OCR/直接、撮影
+   - 4行目: 年月固定チェック、フォントサイズ、再計算ボタン
+
+**実装ファイル:**
+- `ReceiptInputScreen.kt`
+
+---
+
+### 勘定科目マスタ機能実装
+
+**背景:**
+- らくらく青色申告農業版との連携
+- 弥生会計とのマッチング対応
+- サーチキー方式による高速入力
+
+**データベース設計:**
+
+```kotlin
+@Entity(tableName = "account_codes")
+data class AccountCode(
+    val id: Int,
+    val code: String,           // 弥生会計等との連携用
+    val name: String,           // 勘定科目名
+    val searchKey: String,      // サーチキー（ローマ字）
+    val accountType: AccountType,  // 資産/負債/資本/収入/経費
+    val taxType: TaxType,       // 課税/非課税/不課税/軽減税率
+    val sortOrder: Int,
+    val isActive: Boolean,
+    val note: String
+)
+```
+
+**初期データ（36科目）:**
+
+| 分類 | 科目数 | 主な科目 |
+|------|--------|----------|
+| 資産 | 6 | 現金, 営農口座, 直売口座, 売掛金, 未収金, 事業主貸 |
+| 負債 | 4 | 買掛金, 借入金, 未払金, 事業主借 |
+| 資本 | 2 | 元入金, 青申特別控除前の所得金額 |
+| 収入 | 4 | 水稲, インゲン, キュウリ類, 雑収入 |
+| 経費 | 20 | 租税公課, 種苗費, 肥料費, 動力光熱費, ... |
+
+**サーチキー入力UI:**
+
+| コンポーネント | 用途 |
+|---------------|------|
+| `AccountCodeSearchField` | インライン検索フィールド（リアルタイム候補表示） |
+| `AccountCodeSearchFieldCompact` | グリッド内用コンパクト版 |
+| `AccountCodeSelectDialog` | 全画面選択ダイアログ |
+
+**検索動作:**
+```
+入力: "hi"  → 肥料費
+入力: "dou" → 動力光熱費
+入力: "nou" → 農具費, 農薬衛生費, 農業共済掛金
+入力: "zi"  → 事業主貸, 事業主借
+```
+
+**実装ファイル:**
+- `AccountCode.kt` (エンティティ + AccountType, TaxType enum)
+- `AccountCodeDao.kt` (検索・CRUD)
+- `ReceiptDatabase.kt` (v5 → v6マイグレーション)
+- `DatabaseInitializer.kt` (初期データ登録)
+- `AccountCodeScreen.kt` (勘定科目設定画面)
+- `AccountCodeSearchField.kt` (サーチキー入力コンポーネント)
+- `AccountCodeSelectDialog.kt` (選択ダイアログ)
+- `Navigation.kt` (画面追加)
+- `SettingsScreen.kt` (勘定科目設定へのリンク追加)
+
+**アクセス方法:**
+設定 → 勘定科目設定 → 設定
+
+---
+
+## 2026-01-19
+
+### OCR学習システム V3 完全実装
+
+**背景:**
+- V2は日数・ヒット数重視で昇格に時間がかかりすぎる
+- 時間減衰により使用頻度の低いパターンが消える
+- 自動判定だけでは誤学習リスクがある
+
+**設計思想: 「人間の確認が唯一の真実」**
+- 手動修正を最も信頼性の高い情報源として扱う
+- 失敗したパターンは即座に信頼度を下げる
+- 時間減衰を廃止し、実績ベースの昇格に変更
+
+**主な変更点:**
+
+| 項目 | V2 | V3 |
+|------|-----|-----|
+| 昇格基準 | 日数・ヒット数重視 | 手動確認重視 |
+| 時間減衰 | あり（30日で0.37） | なし |
+| 日数条件 | 必須（3日以上） | なし |
+| 失敗時の処理 | なし | 即座に降格/無効化 |
+| スコア記録 | なし | 全判定を記録 |
+
+**昇格条件:**
+
+| 遷移 | 条件 |
+|------|------|
+| AUTO → CONFIRMED（手動） | 異なるバッチで手動修正2回 |
+| AUTO → CONFIRMED（自動） | hitCount≥3, avgScore≥90, highScoreHits≥2, autoFailCount=0 |
+| CONFIRMED → LOCKED | 手動修正5回 |
+
+**降格・無効化:**
+
+| 現在レベル | 失敗時の動作 |
+|------------|--------------|
+| AUTO | 即座に無効化（isDisabled=true） |
+| CONFIRMED | AUTOに降格 + autoFailCount++ |
+| LOCKED | 変更なし |
+
+**データベース更新 (v4 → v5):**
+- OcrVariantテーブル拡張（manualCorrectCount, autoFailCount, lastManualCommitBatchId）
+- OcrScoreLogテーブル新規作成（スコア計算詳細を記録）
+
+**実装ファイル:**
+- `OcrVariant.kt` (V3昇格・降格ロジック追加)
+- `OcrVariantDao.kt` (registerManualCorrection, onAutoFailure等)
+- `OcrScoreLog.kt` (新規)
+- `OcrScoreLogDao.kt` (新規)
+- `ProductNameCorrectorV3.kt` (100点満点スコアシステム)
+- `ReceiptDatabase.kt` (v5マイグレーション)
+- `ReceiptInputScreen.kt` (手動修正記録、originalOcrName/productMasterId設定)
+
+---
+
+### 伝票入力画面 UI改善
+
+**変更内容:**
+
+1. **閲覧時ボタン削除**
+   - 「再計算」ボタンを削除
+   - 「月別サマリー」ボタンを削除
+
+2. **編集状態表示**
+   - TopAppBarのタイトル横に「閲覧中」/「編集中」を表示
+   - 編集中は赤色で強調
+
+3. **年月表示改善**
+   - 月の左に年を表示（例: R7年 1月）
+   - ViewModeLabelコンポーネントを削除
+
+4. **年月固定機能**
+   - 月の右側に「年月固定」チェックボックスを追加
+   - 永続保存（AppPreferences）
+   - チェック時:
+     - OCR: 日データのみ採用し、選択中の年月と組み合わせ
+     - 直接入力: 日のみ入力可能（1〜31/30/29/28、月により制限）
+
+5. **税込金額の等幅表示**
+   - fontFeatureSettings = "tnum" で等幅数字を強制
+   - 桁の把握を容易に
+
+**実装ファイル:**
+- `ReceiptInputScreen.kt` (UI構造変更、年月固定ロジック)
+- `AppPreferences.kt` (fixYearMonth設定追加)
+
+---
+
+### ドキュメント更新
+
+- `OCR_LEARNING_SYSTEM.md` をV3仕様に全面書き換え
+
+---
+
+## 2026-01-16
+
+### OCR補正システム V3 - 三層構造設計
+
+**背景:**
+- 従来の編集距離ベース補正は誤変換リスクが高い
+- 容量違い商品（250g vs 500g）への誤変換防止が不十分
+- 類似商品の競合判定がなかった
+
+**設計思想:**
+- 誤変換ゼロ原則: 「当たったときだけ強く補正」
+- Precisionに全振り: Recallを捨てて精度を最優先
+- Conservative Approach: 確信がないときは補正しない
+
+**三層構造:**
+
+| Layer | 名称 | 役割 |
+|-------|------|------|
+| Layer 0 | 制約バリア | 容量・カテゴリ不一致 → 即除外 |
+| Layer 1 | 全文マッチング | Levenshtein距離でスコア計算 |
+| Layer 2 | ボーナス計算 | 先頭欠落、濁点、N-gram |
+
+**スコア定数:**
+```kotlin
+MIN_ACCEPT_SCORE = 0.78       // 最低受理スコア
+MIN_SCORE_GAP = 0.12          // 1位-2位の最小スコア差
+HEAD_MISSING_BONUS = 0.08     // 先頭欠落ボーナス
+TAIL_MISSING_BONUS = 0.06     // 末尾欠落ボーナス
+DAKUTEN_BONUS_SINGLE = 0.02   // 濁点ボーナス（1文字）
+MAX_TOTAL_BONUS = 0.10        // ボーナス合計最大値
+CONFLICT_THRESHOLD = 0.85     // 競合判定閾値
+```
+
+**補正理由 (CorrectionReason):**
+- `NO_INPUT`: 入力なし
+- `NO_CANDIDATES`: 候補なし
+- `OCR_VARIANT_CONFIRMED`: 確認済みパターンヒット
+- `SIMILARITY_MATCH`: 類似度マッチ（補正成功）
+- `REJECT_SCORE_LOW`: スコア不足（< 0.78）
+- `REJECT_GAP_INSUFFICIENT`: 2位との差不足（< 0.12）
+- `REJECT_SIMILAR_PRODUCTS_CONFLICT`: 類似商品競合
+
+**OcrVariant学習システム:**
+- 信頼度レベル: AUTO → CONFIRMED → LOCKED
+- 昇格条件: hitCount>=5, uniqueDays>=3, avgFinalScore>=0.88, highScoreHits>=3
+- 減衰計算: exp(-days/30)
+
+**データベース更新 (v3 → v4):**
+- OcrVariantテーブル拡張（confidenceLevel, hitCount, highScoreHits等）
+- CorrectionLogテーブル新規作成
+
+**実装ファイル:**
+- `ProductNameCorrectorV3.kt` (新規 ~850行)
+- `OcrVariant.kt` (拡張)
+- `OcrVariantDao.kt` (拡張)
+- `CorrectionLog.kt` (新規)
+- `CorrectionLogDao.kt` (新規)
+- `ReceiptDatabase.kt` (v4マイグレーション)
+
+詳細は [CORRECTION_SYSTEM.md](./CORRECTION_SYSTEM.md) を参照。
+
+---
+
 ## 2026-01-12
 
 ### 15:00: 二段階Binary OCR評価システム実装

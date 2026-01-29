@@ -38,7 +38,7 @@ Receipt OCRアプリケーションのシステムアーキテクチャドキュ
          ↓
 [OCR Processing]
     ├─ [Full Page OCR] (Japanese + Latin)
-    ├─ [Quantity Column OCR] (4x upscale, Latin)
+    ├─ [Quantity Column OCR] (Adaptive scale 1-3x, Latin)
     └─ [Product Name Column OCR] (Adaptive scale, Gray + Binary)
          ↓
 [Row Clustering]
@@ -340,31 +340,31 @@ fun processImage(bitmap: Bitmap, arucoResult: ArUcoResult) {
    }
    ```
 
-2. **数量列特化OCR (4倍拡大, Latin)**
+2. **数量列特化OCR (適応的スケーリング1.0-3.0倍, Latin)**
    ```kotlin
-   // 1. 数量列切り出し (X: 1133-1295px)
+   // 1. 数量列切り出し (行単位でROI)
    val quantityColumnBitmap = Bitmap.createBitmap(
-       warpedBitmap, quantityX, 0, quantityWidth, height
+       warpedBitmap, quantityX, rowY, quantityWidth, rowHeight
    )
 
-   // 2. 4倍アップスケール
-   val upscaledBitmap = Bitmap.createScaledBitmap(
-       quantityColumnBitmap, width * 4, height * 4, true
-   )
+   // 2. グレースケール化 + 罫線除去
+   val grayMat = toGray(quantityColumnBitmap)
+   val cleanedMat = removeVerticalLines(grayMat)
 
-   // 3. Latin OCR
+   // 3. 文字高さ推定 → 適応的スケーリング
+   val charPx = ImagePreprocessor.estimateCharHeightSimple(cleanedMat)
+   val targetHeight = 30.0
+   val scale = (targetHeight / charPx).coerceIn(1.0, 3.0)
+
+   val scaledMat = resize(cleanedMat, scale)
+
+   // 4. Latin OCR
    val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-   val visionImage = InputImage.fromBitmap(upscaledBitmap, 0)
+   val visionImage = InputImage.fromBitmap(scaledMat.toBitmap(), 0)
    val result = recognizer.process(visionImage).await()
 
-   // 4. Y座標マッピング → 上書き
-   for (block in result.textBlocks) {
-       for (line in block.lines) {
-           val y = line.boundingBox.centerY() / 4  // スケール補正
-           val row = findRowByY(y)
-           row?.quantity = normalizeQuantity(line.text)
-       }
-   }
+   // 5. bbox形状フィルタ + 正規表現チェック
+   val quantity = extractQuantityFromResult(result)
    ```
 
 3. **商品名列OCR (適応的スケーリング, 2025-12-31~)**

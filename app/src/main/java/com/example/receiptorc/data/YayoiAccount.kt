@@ -29,6 +29,21 @@ data class YayoiAccount(
     /** 借貸 (借/貸) */
     val debitCredit: String = "",
 
-    /** 税区分 (例: "課税対応仕入", "対象外") */
-    val taxCategory: String = ""
+    /** 区分C - 小分類 (例: "【経費】") */
+    val categoryC: String = "",
+
+    /** 区分B - 中分類 (例: "【経費】") */
+    val categoryB: String = "",
+
+    /** 区分A - 大分類 (例: "【経常損益】") */
+    val categoryA: String = "",
+
+    /** 購買取引で使用するか */
+    val usedForPurchase: Boolean = false,
+
+    /** 預金取引で使用するか */
+    val usedForDeposit: Boolean = true,
+
+    /** 親科目ID (階層構造用) */
+    val parentId: Long? = null
 )

@@ -20,6 +20,8 @@ import com.example.receiptorc.data.AppPreferences
 import com.example.receiptorc.data.ReceiptDao
 import com.example.receiptorc.ui.AccountSettingsScreen
 import com.example.receiptorc.ui.MenuScreen
+import com.example.receiptorc.ui.RakurakuTekiyouScreen
+import com.example.receiptorc.ui.TekiyouMatchingScreen
 import com.example.receiptorc.ui.MonthlySummaryScreen
 import com.example.receiptorc.ui.OcrCaptureScreen
 import com.example.receiptorc.ui.OcrLearningStatusScreen
@@ -41,6 +43,8 @@ sealed class Screen(val route: String) {
     object OcrLearningStatus : Screen("ocr_learning_status")
     object ProductList : Screen("product_list")
     object AccountSettings : Screen("account_settings")
+    object RakurakuTekiyou : Screen("rakuraku_tekiyou")
+    object TekiyouMatching : Screen("tekiyou_matching")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
         fun createRoute(year: Int, month: Int): String {
             return "monthly_summary/$year/$month"
@@ -83,6 +87,12 @@ fun ReceiptNavGraph(
                 },
                 onNavigateToAccountSettings = {
                     navController.navigate(Screen.AccountSettings.route)
+                },
+                onNavigateToRakurakuTekiyou = {
+                    navController.navigate(Screen.RakurakuTekiyou.route)
+                },
+                onNavigateToTekiyouMatching = {
+                    navController.navigate(Screen.TekiyouMatching.route)
                 }
             )
         }
@@ -187,6 +197,22 @@ fun ReceiptNavGraph(
         // 勘定科目設定画面
         composable(Screen.AccountSettings.route) {
             AccountSettingsScreen(
+                database = database,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 摘要辞書画面
+        composable(Screen.RakurakuTekiyou.route) {
+            RakurakuTekiyouScreen(
+                database = database,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 摘要マッチング画面
+        composable(Screen.TekiyouMatching.route) {
+            TekiyouMatchingScreen(
                 database = database,
                 onBack = { navController.popBackStack() }
             )

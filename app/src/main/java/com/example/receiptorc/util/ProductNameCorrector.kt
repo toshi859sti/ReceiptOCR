@@ -141,7 +141,9 @@ object ProductNameCorrector {
                         com.example.receiptorc.data.OcrVariant(
                             productId = bestMatch.id,
                             variantText = ocrName,
-                            occurrenceCount = 1
+                            normalizedText = ocrName,
+                            hitCount = 1,
+                            source = com.example.receiptorc.data.VariantSource.AUTO.name
                         )
                     )
                     Log.d(TAG, "Registered new OCR variant: $ocrName")

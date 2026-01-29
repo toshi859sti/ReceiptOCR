@@ -156,8 +156,9 @@ object ProductNameCorrectorV2 {
                         com.example.receiptorc.data.OcrVariant(
                             productId = bestProduct.id,
                             variantText = ocrParts.baseName,
-                            occurrenceCount = 1,
-                            lastSeen = System.currentTimeMillis()
+                            normalizedText = ocrParts.baseName,
+                            hitCount = 1,
+                            source = com.example.receiptorc.data.VariantSource.AUTO.name
                         )
                     )
                 }

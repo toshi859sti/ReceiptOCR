@@ -11,6 +11,7 @@ Android向けの伝票OCRアプリケーション。ArUcoマーカーを使用�
 - **[CHANGELOG.md](docs/CHANGELOG.md)** - 過去の改善履歴 (2025-12-23以降)
 - **[OCR_SPEC.md](docs/OCR_SPEC.md)** - 技術仕様 (座標、閾値、定数)
 - **[DICTIONARY.md](docs/DICTIONARY.md)** - 辞書補正システム設計
+- **[CORRECTION_SYSTEM.md](docs/CORRECTION_SYSTEM.md)** - V3三層補正システム (**NEW**)
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - システムアーキテクチャ
 
 ---
@@ -22,9 +23,30 @@ Android向けの伝票OCRアプリケーション。ArUcoマーカーを使用�
 
 ---
 
-## 現在の状況 (2026-01-15)
+## 現在の状況 (2026-01-16)
 
-### ✅ 最新完了 (2026-01-15)
+### ✅ 最新完了 (2026-01-16)
+**OCR補正システム V3 - 三層構造設計**
+
+誤変換ゼロを目指した新しい補正システムを実装:
+
+- **三層構造**: Layer 0(制約バリア) → Layer 1(全文マッチング) → Layer 2(ボーナス計算)
+- **スコア定数**: MIN_ACCEPT_SCORE=0.78, MIN_SCORE_GAP=0.12, MAX_TOTAL_BONUS=0.10
+- **競合検出**: 類似商品(CONFLICT_THRESHOLD=0.85以上)は補正しない
+- **学習システム**: AUTO → CONFIRMED → LOCKED の昇格、exp(-days/30)の減衰
+- **データベース**: v3 → v4 マイグレーション、CorrectionLogテーブル追加
+
+**実装ファイル**:
+- `ProductNameCorrectorV3.kt` (新規 ~850行)
+- `OcrVariant.kt` (拡張: confidenceLevel, hitCount, highScoreHits等)
+- `CorrectionLog.kt`, `CorrectionLogDao.kt` (新規)
+- `ReceiptDatabase.kt` (v4)
+
+詳細は [CORRECTION_SYSTEM.md](docs/CORRECTION_SYSTEM.md) を参照。
+
+---
+
+### ✅ 前回完了 (2026-01-15)
 **小計カテゴリ排他制御機能の実装**
 
 #### 1. 小計フラグ管理システム
@@ -484,20 +506,23 @@ app/src/main/java/com/example/receiptorc/
 │   ├── ImagePreprocessor.kt       # 文字高さ測定、スケール計算
 │   ├── OCRProcessor.kt            # ML Kit OCR実行
 │   ├── UnderlyingBaseProcessor.kt # 行クラスタリング、列抽出、不要文字列除去
-│   ├── CategoryRecalculator.kt    # カテゴリ再計算（複数枚対応）（NEW）
+│   ├── CategoryRecalculator.kt    # カテゴリ再計算（複数枚対応）
 │   ├── OcrQualityEvaluator.kt     # 品質評価
 │   ├── ProductNameCorrector.kt    # 辞書補正 V1
 │   ├── ProductNameCorrectorV2.kt  # 辞書補正 V2 (全角対応)
+│   ├── ProductNameCorrectorV3.kt  # 辞書補正 V3 (三層構造) (**NEW**)
 │   ├── OcrResultEvaluator.kt      # OCR結果評価・選択
 │   └── OcrResultMerger.kt         # Gray/Binary結果統合
 ├── data/
-│   ├── ReceiptDatabase.kt         # Room Database
+│   ├── ReceiptDatabase.kt         # Room Database (v4)
 │   ├── ReceiptDao.kt              # Data Access Object
 │   ├── MonthlyData.kt             # 月次データ（カテゴリ別合計）
 │   ├── SheetData.kt               # 伝票別データ（小計）
 │   ├── ReceiptItem.kt             # 伝票明細データ
 │   ├── ProductMaster.kt           # 商品マスタ
-│   ├── OcrVariant.kt              # OCR誤認識パターン
+│   ├── OcrVariant.kt              # OCR誤認識パターン (V2スキーマ)
+│   ├── CorrectionLog.kt           # 補正ログ (**NEW**)
+│   ├── CorrectionLogDao.kt        # 補正ログDAO (**NEW**)
 │   ├── YayoiAccount.kt            # 弥生勘定科目
 │   └── RakurakuAccount.kt         # らくらく勘定科目
 └── assets/
@@ -571,9 +596,9 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 
 ## 最終更新
 
-- **日時**: 2026-01-15
+- **日時**: 2026-01-16
 - **ブランチ**: feature/underlay-base
-- **最新セッション**: 小計カテゴリ排他制御機能の実装（一文字検出、遡り更新、グレーアウト制御）
-- **次回予定**: 実戦テスト、小計機能の動作確認
+- **最新セッション**: OCR補正システム V3 実装（三層構造設計、学習システム）
+- **次回予定**: 実戦テスト、V3補正システムの動作確認
 
 詳細な履歴は [CHANGELOG.md](docs/CHANGELOG.md) を参照してください。

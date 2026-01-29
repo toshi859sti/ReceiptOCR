@@ -21,6 +21,10 @@ class AppPreferences(context: Context) {
         private const val KEY_CURRENT_ISSUE_MONTH = "current_issue_month"
         private const val DEFAULT_CURRENT_ISSUE_MONTH = 1  // 1月（デフォルト）
 
+        // 年月固定設定
+        private const val KEY_FIX_YEAR_MONTH = "fix_year_month"
+        private const val DEFAULT_FIX_YEAR_MONTH = false
+
         // カメラ設定
         private const val KEY_CAMERA_RESOLUTION = "camera_resolution"
         private const val DEFAULT_CAMERA_RESOLUTION = "3840x2160"  // 4K UHD (固定)
@@ -43,6 +47,11 @@ class AppPreferences(context: Context) {
             val validValue = value.coerceIn(1, 12)
             prefs.edit().putInt(KEY_CURRENT_ISSUE_MONTH, validValue).apply()
         }
+
+    // 年月固定設定
+    var fixYearMonth: Boolean
+        get() = prefs.getBoolean(KEY_FIX_YEAR_MONTH, DEFAULT_FIX_YEAR_MONTH)
+        set(value) = prefs.edit().putBoolean(KEY_FIX_YEAR_MONTH, value).apply()
 
     // カメラ解像度
     var cameraResolution: String

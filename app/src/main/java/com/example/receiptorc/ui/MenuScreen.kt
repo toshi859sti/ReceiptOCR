@@ -20,7 +20,9 @@ fun MenuScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToReceiptInput: () -> Unit,
     onNavigateToProductList: () -> Unit = {},
-    onNavigateToAccountSettings: () -> Unit = {}
+    onNavigateToAccountSettings: () -> Unit = {},
+    onNavigateToRakurakuTekiyou: () -> Unit = {},
+    onNavigateToTekiyouMatching: () -> Unit = {}
 ) {
     val eraYear = remember { appPreferences.eraYear }
 
@@ -79,6 +81,20 @@ fun MenuScreen(
             MenuButton(
                 text = "勘定科目設定",
                 onClick = onNavigateToAccountSettings
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            MenuButton(
+                text = "摘要辞書",
+                onClick = onNavigateToRakurakuTekiyou
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            MenuButton(
+                text = "摘要マッチング",
+                onClick = onNavigateToTekiyouMatching
             )
 
             Spacer(modifier = Modifier.height(16.dp))

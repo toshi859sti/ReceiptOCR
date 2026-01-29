@@ -17,9 +17,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         YayoiAccount::class,
         RakurakuAccount::class,
         CorrectionLog::class,
-        OcrScoreLog::class
+        OcrScoreLog::class,
+        RakurakuTekiyou::class,
+        DepositMeisai::class,
+        TekiyouMatchingRule::class
     ],
-    version = 7,
+    version = 10,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -30,6 +33,9 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun rakurakuAccountDao(): RakurakuAccountDao
     abstract fun correctionLogDao(): CorrectionLogDao
     abstract fun ocrScoreLogDao(): OcrScoreLogDao
+    abstract fun rakurakuTekiyouDao(): RakurakuTekiyouDao
+    abstract fun depositMeisaiDao(): DepositMeisaiDao
+    abstract fun tekiyouMatchingRuleDao(): TekiyouMatchingRuleDao
 
     companion object {
         @Volatile
@@ -300,6 +306,127 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 7 → 8（勘定科目の区分A/B/C追加）
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // YayoiAccountテーブルを再作成（区分A/B/C、購買取引使用、親科目追加）
+                database.execSQL("DROP TABLE IF EXISTS yayoi_accounts")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS yayoi_accounts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        accountName TEXT NOT NULL,
+                        searchKeyAlpha TEXT NOT NULL DEFAULT '',
+                        accountCode TEXT NOT NULL,
+                        debitCredit TEXT NOT NULL DEFAULT '',
+                        categoryC TEXT NOT NULL DEFAULT '',
+                        categoryB TEXT NOT NULL DEFAULT '',
+                        categoryA TEXT NOT NULL DEFAULT '',
+                        usedForPurchase INTEGER NOT NULL DEFAULT 0,
+                        usedForDeposit INTEGER NOT NULL DEFAULT 1,
+                        parentId INTEGER
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_yayoi_accounts_accountCode
+                    ON yayoi_accounts (accountCode)
+                """.trimIndent())
+
+                // RakurakuAccountテーブルを再作成（区分A/B/C、購買取引使用、親科目追加）
+                database.execSQL("DROP TABLE IF EXISTS rakuraku_accounts")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS rakuraku_accounts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        accountCode TEXT NOT NULL,
+                        accountName TEXT NOT NULL,
+                        searchKeyAlpha TEXT NOT NULL DEFAULT '',
+                        debitCredit TEXT NOT NULL DEFAULT '',
+                        categoryC TEXT NOT NULL DEFAULT '',
+                        categoryB TEXT NOT NULL DEFAULT '',
+                        categoryA TEXT NOT NULL DEFAULT '',
+                        usedForPurchase INTEGER NOT NULL DEFAULT 0,
+                        usedForDeposit INTEGER NOT NULL DEFAULT 1,
+                        parentId INTEGER
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_rakuraku_accounts_accountCode
+                    ON rakuraku_accounts (accountCode)
+                """.trimIndent())
+            }
+        }
+
+        // マイグレーション: version 9 → 10（預金明細・マッチングルール追加）
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // 預金明細テーブル
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS deposit_meisai (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        transactionDate TEXT NOT NULL,
+                        transactionNumber TEXT NOT NULL,
+                        tekiyou TEXT NOT NULL,
+                        amount INTEGER NOT NULL,
+                        memo TEXT NOT NULL DEFAULT '',
+                        matchingRuleId INTEGER
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_deposit_meisai_transactionDate
+                    ON deposit_meisai (transactionDate)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_deposit_meisai_tekiyou
+                    ON deposit_meisai (tekiyou)
+                """.trimIndent())
+
+                // マッチングルールテーブル
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS tekiyou_matching_rules (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        pattern TEXT NOT NULL,
+                        normalizedTekiyou TEXT NOT NULL,
+                        isRegex INTEGER NOT NULL DEFAULT 0,
+                        rakurakuTekiyouId INTEGER,
+                        sampleText TEXT NOT NULL DEFAULT '',
+                        matchCount INTEGER NOT NULL DEFAULT 0,
+                        isDeposit INTEGER NOT NULL DEFAULT 1,
+                        FOREIGN KEY (rakurakuTekiyouId) REFERENCES rakuraku_tekiyou(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_tekiyou_matching_rules_pattern
+                    ON tekiyou_matching_rules (pattern)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_tekiyou_matching_rules_rakurakuTekiyouId
+                    ON tekiyou_matching_rules (rakurakuTekiyouId)
+                """.trimIndent())
+            }
+        }
+
+        // マイグレーション: version 8 → 9（RakurakuTekiyou追加）
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS rakuraku_tekiyou (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        mainCategory TEXT NOT NULL,
+                        subCategory TEXT NOT NULL,
+                        tekiyouName TEXT NOT NULL,
+                        searchKey TEXT NOT NULL,
+                        kamoku TEXT NOT NULL,
+                        taxRate TEXT NOT NULL DEFAULT '',
+                        businessRatio INTEGER,
+                        isShared INTEGER
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_rakuraku_tekiyou_mainCategory_subCategory
+                    ON rakuraku_tekiyou (mainCategory, subCategory)
+                """.trimIndent())
+            }
+        }
+
         // マイグレーション: version 2 → 3（辞書ベース補正システム）
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -378,7 +505,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance
