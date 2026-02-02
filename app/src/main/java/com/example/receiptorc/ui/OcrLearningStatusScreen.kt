@@ -41,6 +41,7 @@ fun OcrLearningStatusScreen(
     val scope = rememberCoroutineScope()
     val ocrVariantDao = database.ocrVariantDao()
     val productMasterDao = database.productMasterDao()
+    val fallbackLogDao = database.ocrFallbackLogDao()
 
     // 統計データ
     var totalCount by remember { mutableIntStateOf(0) }
@@ -49,6 +50,12 @@ fun OcrLearningStatusScreen(
     var recentPatterns by remember { mutableStateOf<List<OcrVariant>>(emptyList()) }
     var mostUsedPatterns by remember { mutableStateOf<List<OcrVariant>>(emptyList()) }
     var nearPromotionPatterns by remember { mutableStateOf<List<OcrVariant>>(emptyList()) }
+
+    // フォールバック統計データ
+    var fallbackTotalCount by remember { mutableIntStateOf(0) }
+    var fallbackAvgHeight by remember { mutableStateOf<Float?>(null) }
+    var fallbackHeightBuckets by remember { mutableStateOf<List<TextHeightBucketCount>>(emptyList()) }
+    var recentFallbackLogs by remember { mutableStateOf<List<OcrFallbackLog>>(emptyList()) }
 
     // 商品名キャッシュ（productId → canonicalName）
     var productNameCache by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
@@ -69,6 +76,12 @@ fun OcrLearningStatusScreen(
             recentPatterns = ocrVariantDao.getRecentPatterns(20)
             mostUsedPatterns = ocrVariantDao.getMostUsedPatterns(20)
             nearPromotionPatterns = ocrVariantDao.getNearPromotionPatterns(10)
+
+            // フォールバック統計
+            fallbackTotalCount = fallbackLogDao.getTotalCount()
+            fallbackAvgHeight = fallbackLogDao.getAverageTextHeight()
+            fallbackHeightBuckets = fallbackLogDao.getCountByTextHeightBucket()
+            recentFallbackLogs = fallbackLogDao.getRecent(20)
 
             // 商品名キャッシュを構築
             val productIds = (recentPatterns + mostUsedPatterns + nearPromotionPatterns)
@@ -93,6 +106,12 @@ fun OcrLearningStatusScreen(
             recentPatterns = ocrVariantDao.getRecentPatterns(20)
             mostUsedPatterns = ocrVariantDao.getMostUsedPatterns(20)
             nearPromotionPatterns = ocrVariantDao.getNearPromotionPatterns(10)
+
+            // フォールバック統計
+            fallbackTotalCount = fallbackLogDao.getTotalCount()
+            fallbackAvgHeight = fallbackLogDao.getAverageTextHeight()
+            fallbackHeightBuckets = fallbackLogDao.getCountByTextHeightBucket()
+            recentFallbackLogs = fallbackLogDao.getRecent(20)
 
             // 商品名キャッシュを構築
             val productIds = (recentPatterns + mostUsedPatterns + nearPromotionPatterns)
@@ -140,7 +159,7 @@ fun OcrLearningStatusScreen(
             )
 
             // タブ
-            TabRow(selectedTabIndex = selectedTab) {
+            ScrollableTabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
@@ -155,6 +174,11 @@ fun OcrLearningStatusScreen(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
                     text = { Text("昇格間近") }
+                )
+                Tab(
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 },
+                    text = { Text("フォールバック") }
                 )
             }
 
@@ -186,6 +210,12 @@ fun OcrLearningStatusScreen(
                         patternToDelete = pattern
                         showDeleteDialog = true
                     }
+                )
+                3 -> FallbackStatisticsTab(
+                    totalCount = fallbackTotalCount,
+                    avgHeight = fallbackAvgHeight,
+                    heightBuckets = fallbackHeightBuckets,
+                    recentLogs = recentFallbackLogs
                 )
             }
         }
@@ -647,5 +677,255 @@ private fun calculatePromotionProgressV3(pattern: OcrVariant): Pair<Float, Strin
         val totalProgress = (hitProgress + scoreProgress + highScoreProgress) / 3f
         val statusText = "確定に昇格まで"
         Pair(totalProgress, statusText)
+    }
+}
+
+/**
+ * フォールバック統計タブ
+ */
+@Composable
+private fun FallbackStatisticsTab(
+    totalCount: Int,
+    avgHeight: Float?,
+    heightBuckets: List<TextHeightBucketCount>,
+    recentLogs: List<OcrFallbackLog>
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // サマリーカード
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = "フォールバック統計",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("総発動回数", fontSize = 14.sp)
+                        Text(
+                            "$totalCount 回",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("平均文字高さ", fontSize = 14.sp)
+                        Text(
+                            if (avgHeight != null) "${"%.1f".format(avgHeight)} px" else "N/A",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // 文字高さ分布ヒストグラム
+        if (heightBuckets.isNotEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "文字高さ別発生分布（5px刻み）",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        val maxCount = heightBuckets.maxOfOrNull { it.count } ?: 1
+
+                        heightBuckets.forEach { bucket ->
+                            val progress = bucket.count.toFloat() / maxCount
+                            val heightRange = "${bucket.heightBucket}-${bucket.heightBucket + 4}"
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${heightRange}px",
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.width(50.dp)
+                                )
+
+                                LinearProgressIndicator(
+                                    progress = progress,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(16.dp)
+                                        .padding(horizontal = 8.dp),
+                                    color = if (bucket.heightBucket < 20) {
+                                        Color(0xFFF44336)  // 小さい文字は赤（問題あり）
+                                    } else if (bucket.heightBucket < 25) {
+                                        Color(0xFFFF9800)  // 中程度はオレンジ（注意）
+                                    } else {
+                                        Color(0xFF4CAF50)  // 大きい文字は緑（正常）
+                                    },
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
+
+                                Text(
+                                    text = "${bucket.count}",
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.width(30.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "※ 20px未満: 小さい文字（OCR精度低下）、20-24px: 注意、25px以上: 正常",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        // 最近のフォールバックログ
+        if (recentLogs.isNotEmpty()) {
+            item {
+                Text(
+                    text = "最近のフォールバック",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            items(recentLogs) { log ->
+                FallbackLogCard(log)
+            }
+        } else {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "フォールバックのログがありません",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * フォールバックログカード
+ */
+@Composable
+private fun FallbackLogCard(log: OcrFallbackLog) {
+    val dateFormat = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
+
+    Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = log.cleanedText.ifEmpty { log.rawText },
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                // 文字高さバッジ
+                val heightColor = when {
+                    log.textHeight < 20 -> Color(0xFFF44336)
+                    log.textHeight < 25 -> Color(0xFFFF9800)
+                    else -> Color(0xFF4CAF50)
+                }
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = heightColor.copy(alpha = 0.2f)
+                ) {
+                    Text(
+                        text = "${"%.0f".format(log.textHeight)}px",
+                        fontSize = 10.sp,
+                        color = heightColor,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "行${log.rowIndex} (Y=${log.rowY})",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Text(
+                    text = "Box数: ${log.boxCount}",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Text(
+                    text = dateFormat.format(Date(log.createdAt)),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // 分離テキスト（ある場合）
+            if (log.separatedTexts.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "分離: ${log.separatedTexts}",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }

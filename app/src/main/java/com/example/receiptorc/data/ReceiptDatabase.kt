@@ -20,9 +20,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OcrScoreLog::class,
         RakurakuTekiyou::class,
         DepositMeisai::class,
-        TekiyouMatchingRule::class
+        TekiyouMatchingRule::class,
+        OcrFallbackLog::class,
+        OcrExplicitJoin::class
     ],
-    version = 11,
+    version = 13,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -36,6 +38,8 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun rakurakuTekiyouDao(): RakurakuTekiyouDao
     abstract fun depositMeisaiDao(): DepositMeisaiDao
     abstract fun tekiyouMatchingRuleDao(): TekiyouMatchingRuleDao
+    abstract fun ocrFallbackLogDao(): OcrFallbackLogDao
+    abstract fun ocrExplicitJoinDao(): OcrExplicitJoinDao
 
     companion object {
         @Volatile
@@ -404,6 +408,80 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 12 → 13（OCR明示的結合パターン追加）
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // OcrExplicitJoinテーブル作成
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ocr_explicit_joins (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        productId INTEGER NOT NULL,
+                        normalizedPattern TEXT NOT NULL,
+                        joinedText TEXT NOT NULL,
+                        originalTexts TEXT NOT NULL,
+                        confidenceLevel TEXT NOT NULL DEFAULT 'AUTO',
+                        hitCount INTEGER NOT NULL DEFAULT 0,
+                        manualConfirmCount INTEGER NOT NULL DEFAULT 0,
+                        source TEXT NOT NULL DEFAULT 'AUTO',
+                        isDisabled INTEGER NOT NULL DEFAULT 0,
+                        firstSeenAt INTEGER NOT NULL,
+                        lastSeenAt INTEGER NOT NULL,
+                        FOREIGN KEY (productId) REFERENCES product_master(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+
+                // インデックス作成
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_explicit_joins_productId
+                    ON ocr_explicit_joins (productId)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_explicit_joins_normalizedPattern
+                    ON ocr_explicit_joins (normalizedPattern)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_explicit_joins_confidenceLevel
+                    ON ocr_explicit_joins (confidenceLevel)
+                """.trimIndent())
+            }
+        }
+
+        // マイグレーション: version 11 → 12（OCRフォールバックログ追加）
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // OcrFallbackLogテーブル作成
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ocr_fallback_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        sessionId TEXT NOT NULL,
+                        rowIndex INTEGER NOT NULL,
+                        rowY INTEGER NOT NULL,
+                        rawText TEXT NOT NULL,
+                        cleanedText TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        textHeight REAL NOT NULL,
+                        boxCount INTEGER NOT NULL,
+                        separatedTexts TEXT NOT NULL DEFAULT '',
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                // インデックス作成
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_fallback_logs_createdAt
+                    ON ocr_fallback_logs (createdAt)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_fallback_logs_textHeight
+                    ON ocr_fallback_logs (textHeight)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ocr_fallback_logs_sessionId
+                    ON ocr_fallback_logs (sessionId)
+                """.trimIndent())
+            }
+        }
+
         // マイグレーション: version 10 → 11（摘要辞書isEnabled追加、ProductMaster変更）
         private val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -547,7 +625,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance

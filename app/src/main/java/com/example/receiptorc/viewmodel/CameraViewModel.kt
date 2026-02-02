@@ -5,7 +5,10 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.receiptorc.data.OcrFallbackLog
 import com.example.receiptorc.data.ReceiptDatabase
+import java.util.UUID
+import com.example.receiptorc.util.ExplicitJoinMatcher
 import com.example.receiptorc.util.ImageProcessor
 import com.example.receiptorc.util.OCRProcessor
 import com.example.receiptorc.util.OcrResultEvaluator
@@ -93,12 +96,59 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         Log.d(TAG, "[UNDERLAY] OCR completed: ${result.rows.size} rows, ${result.subtotals.size} subtotals")
 
+        // フォールバックイベントをデータベースに保存 & explicitJoinパターン適用
+        val database = ReceiptDatabase.getDatabase(getApplication())
+        val updatedDoubleOcrMap = result.productNameDoubleOcrMap.toMutableMap()
+
+        if (result.fallbackEvents.isNotEmpty()) {
+            val fallbackLogDao = database.ocrFallbackLogDao()
+            val explicitJoinDao = database.ocrExplicitJoinDao()
+            val sessionId = UUID.randomUUID().toString()
+
+            val logs = result.fallbackEvents.map { event ->
+                val cleanedText = result.productNameDoubleOcrMap[event.rowIndex]?.grayText ?: ""
+
+                // explicitJoinパターンを適用（分離されたテキストが2つ以上の場合）
+                if (event.separatedTexts.size >= 2) {
+                    val joinResult = ExplicitJoinMatcher.applyJoinPatterns(
+                        event.separatedTexts,
+                        explicitJoinDao
+                    )
+                    if (joinResult.wasPatternApplied) {
+                        // パターンが適用された場合、DoubleOcrResultを更新
+                        val originalResult = result.productNameDoubleOcrMap[event.rowIndex]
+                        if (originalResult != null) {
+                            updatedDoubleOcrMap[event.rowIndex] = originalResult.copy(
+                                grayText = joinResult.joinedText
+                            )
+                            Log.d(TAG, "[EXPLICIT-JOIN] Applied pattern to row ${event.rowIndex}: " +
+                                "${event.separatedTexts} -> '${joinResult.joinedText}'")
+                        }
+                    }
+                }
+
+                OcrFallbackLog(
+                    sessionId = sessionId,
+                    rowIndex = event.rowIndex,
+                    rowY = event.rowY,
+                    rawText = event.rawText,
+                    cleanedText = cleanedText,
+                    reason = event.reason.name,
+                    textHeight = event.textHeight,
+                    boxCount = event.boxCount,
+                    separatedTexts = event.separatedTexts.joinToString(",")
+                )
+            }
+
+            fallbackLogDao.insertAll(logs)
+            Log.d(TAG, "[UNDERLAY] Saved ${logs.size} fallback events to database (session: $sessionId)")
+        }
+
         // カテゴリ判定（小計行から逆算）
         val rowsWithCategories = UnderlyingBaseProcessor.assignCategories(result.rows)
         Log.d(TAG, "[UNDERLAY] Categories assigned to ${rowsWithCategories.size} rows")
 
         // 辞書ベース商品名補正 + ダブルOCR選択
-        val database = ReceiptDatabase.getDatabase(getApplication())
         val productDao = database.productMasterDao()
         val variantDao = database.ocrVariantDao()
 
@@ -114,7 +164,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
                 if (correctionResult.matched) {
                     // 辞書マッチング成功 → ダブルOCR結果があれば段階B評価で最良選択
-                    val doubleOcrResult = result.productNameDoubleOcrMap[index]
+                    val doubleOcrResult = updatedDoubleOcrMap[index]
                     if (doubleOcrResult != null) {
                         val grayText = doubleOcrResult.grayText
                         val binaryText = doubleOcrResult.binaryText

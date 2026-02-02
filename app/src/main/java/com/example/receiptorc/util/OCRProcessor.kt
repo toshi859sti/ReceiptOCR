@@ -709,7 +709,29 @@ object OCRProcessor {
     data class DoubleOcrResult(
         val grayText: String?,
         val binaryText: String?,
-        val binaryCandidateScore: Double = 0.0  // 段階Aスコア
+        val binaryCandidateScore: Double = 0.0,  // 段階Aスコア
+        val fallbackUsed: Boolean = false,       // フォールバック発動フラグ
+        val fallbackSource: String? = null       // フォールバック元テキスト（ログ用）
+    )
+
+    /**
+     * フォールバック発動理由
+     */
+    enum class FallbackReason {
+        ITEM_OCR_EMPTY  // 商品名列OCRが空
+    }
+
+    /**
+     * フォールバックイベント（ログ用）
+     */
+    data class FallbackEvent(
+        val rowIndex: Int,
+        val rowY: Int,
+        val rawText: String,
+        val reason: FallbackReason,
+        val textHeight: Float = 0f,
+        val boxCount: Int = 1,
+        val separatedTexts: List<String> = emptyList()  // 個別TextBoxのテキスト（explicitJoin学習用）
     )
 
     /**
@@ -1042,14 +1064,22 @@ object OCRProcessor {
         val mmToPixelRatio = ImageProcessor.getMmToPixelRatio()
         if (mmToPixelRatio <= 0.0) {
             Log.e(TAG, "[UNDERLAY] Invalid mmToPixelRatio: $mmToPixelRatio")
-            return ProcessUnderlayingBaseResult(emptyList(), emptyList(), emptyMap())
+            return ProcessUnderlayingBaseResult(
+                rows = emptyList(),
+                subtotals = emptyList(),
+                productNameDoubleOcrMap = emptyMap()
+            )
         }
         UnderlyingBaseProcessor.initializeColumnRanges(mmToPixelRatio)
 
         // 1. ML Kit OCR（日本語モデル）
         val text = recognizeText(warpedBitmap) ?: run {
             Log.w(TAG, "[UNDERLAY] OCR failed")
-            return ProcessUnderlayingBaseResult(emptyList(), emptyList(), emptyMap())
+            return ProcessUnderlayingBaseResult(
+                rows = emptyList(),
+                subtotals = emptyList(),
+                productNameDoubleOcrMap = emptyMap()
+            )
         }
 
         Log.d(TAG, "[UNDERLAY] Step 2: OCR completed (${text.textBlocks.size} blocks)")
@@ -1061,6 +1091,14 @@ object OCRProcessor {
         // 4. ノイズ除去（空、記号、極小bbox）
         val filteredBoxes = UnderlyingBaseProcessor.filterNoise(textBoxes)
         Log.d(TAG, "[UNDERLAY] Step 4: Noise filtering (${textBoxes.size} → ${filteredBoxes.size})")
+
+        // 4.5. フォールバック用: 商品名列範囲内のTextBoxを抽出
+        val itemRange = UnderlyingBaseProcessor.getItemRange()
+        val fallbackCandidateBoxes = filteredBoxes.filter { box ->
+            // TextBoxのcenterXが商品名列範囲内にあるものを抽出
+            box.centerX in itemRange.first..itemRange.last
+        }
+        Log.d(TAG, "[UNDERLAY] Step 4.5: Fallback candidates extracted (${fallbackCandidateBoxes.size} boxes in ITEM column)")
 
         // 5. 行クラスタリング（Y座標、閾値15px）
         val rows = UnderlyingBaseProcessor.clusterRows(filteredBoxes)
@@ -1143,8 +1181,75 @@ object OCRProcessor {
         Log.d(TAG, "[UNDERLAY] Step 8: Quantity re-OCR completed (${quantityMap.size} quantities)")
 
         // 8.5. 商品名列特化OCR処理（Japanese OCR + ダブルOCR）
-        val productNameDoubleOcrMap = extractProductNamesFromColumn(warpedBitmap, filteredRows, filteredYCoordinates)
-        Log.d(TAG, "[UNDERLAY] Step 8.5: Product name re-OCR completed (${productNameDoubleOcrMap.size} product names)")
+        val productNameDoubleOcrMapRaw = extractProductNamesFromColumn(warpedBitmap, filteredRows, filteredYCoordinates)
+        Log.d(TAG, "[UNDERLAY] Step 8.5: Product name re-OCR completed (${productNameDoubleOcrMapRaw.size} product names)")
+
+        // 8.6. フォールバック処理: 商品名列OCRが空の行に対して、フルOCRのTextBoxからテキストを補完
+        val yThreshold = 15
+        val productNameDoubleOcrMap = productNameDoubleOcrMapRaw.toMutableMap()
+        val fallbackEvents = mutableListOf<FallbackEvent>()
+
+        filteredRows.forEachIndexed { rowIndex, row ->
+            if (row.rowType != UnderlyingBaseProcessor.RowType.NORMAL) return@forEachIndexed
+
+            val existingResult = productNameDoubleOcrMapRaw[rowIndex]
+            val hasValidResult = existingResult != null &&
+                (!existingResult.grayText.isNullOrBlank() || !existingResult.binaryText.isNullOrBlank())
+
+            if (!hasValidResult) {
+                // 商品名列OCRが空の場合、フルOCRのTextBoxからフォールバック
+                val rowY = filteredYCoordinates.getOrNull(rowIndex) ?: return@forEachIndexed
+
+                // 同じY座標にあるフォールバック候補TextBoxを取得
+                val matchingFallbackBoxes = fallbackCandidateBoxes.filter { box ->
+                    kotlin.math.abs(box.centerY - rowY) <= yThreshold
+                }
+
+                if (matchingFallbackBoxes.isNotEmpty()) {
+                    // X座標でソートして個別テキストを取得
+                    val sortedBoxes = matchingFallbackBoxes.sortedBy { it.centerX }
+                    val separatedTexts = sortedBoxes.map { it.text }
+                    val fallbackText = separatedTexts.joinToString("")
+                    val cleanedFallbackText = UnderlyingBaseProcessor.cleanItemName(fallbackText)
+
+                    if (cleanedFallbackText.isNotBlank()) {
+                        // フォールバック結果を追加
+                        productNameDoubleOcrMap[rowIndex] = DoubleOcrResult(
+                            grayText = cleanedFallbackText,
+                            binaryText = null,
+                            binaryCandidateScore = 0.0,
+                            fallbackUsed = true,
+                            fallbackSource = fallbackText  // クリーン前のテキストをログ用に保存
+                        )
+
+                        // フォールバックイベントを記録
+                        val avgTextHeight = sortedBoxes
+                            .map { it.bounds.height().toFloat() }
+                            .average()
+                            .toFloat()
+
+                        fallbackEvents.add(
+                            FallbackEvent(
+                                rowIndex = rowIndex,
+                                rowY = rowY,
+                                rawText = fallbackText,
+                                reason = FallbackReason.ITEM_OCR_EMPTY,
+                                textHeight = avgTextHeight,
+                                boxCount = sortedBoxes.size,
+                                separatedTexts = separatedTexts  // 個別テキストを保存（explicitJoin学習用）
+                            )
+                        )
+
+                        Log.d(TAG, "[UNDERLAY] 🔄 Fallback applied: Row $rowIndex (Y=$rowY): '$cleanedFallbackText' " +
+                            "(from ${sortedBoxes.size} full-OCR boxes: $separatedTexts, avgHeight=${avgTextHeight}px)")
+                    }
+                }
+            }
+        }
+
+        if (fallbackEvents.isNotEmpty()) {
+            Log.d(TAG, "[UNDERLAY] Step 8.6: Fallback applied to ${fallbackEvents.size} rows")
+        }
 
         // 9. 数量・商品名を上書き & 返品処理
         val updatedRows = filteredRows.mapIndexed { index, row ->
@@ -1206,7 +1311,12 @@ object OCRProcessor {
 
         Log.d(TAG, "[UNDERLAY] ========== Processing Complete ==========")
 
-        return ProcessUnderlayingBaseResult(updatedRows, subtotals, productNameDoubleOcrMap)
+        return ProcessUnderlayingBaseResult(
+            rows = updatedRows,
+            subtotals = subtotals,
+            productNameDoubleOcrMap = productNameDoubleOcrMap,
+            fallbackEvents = fallbackEvents
+        )
     }
 
     /**
@@ -1215,7 +1325,8 @@ object OCRProcessor {
     data class ProcessUnderlayingBaseResult(
         val rows: List<UnderlyingBaseProcessor.ReceiptRow>,
         val subtotals: List<UnderlyingBaseProcessor.SubtotalData>,
-        val productNameDoubleOcrMap: Map<Int, DoubleOcrResult>  // 行インデックス → ダブルOCR結果
+        val productNameDoubleOcrMap: Map<Int, DoubleOcrResult>,  // 行インデックス → ダブルOCR結果
+        val fallbackEvents: List<FallbackEvent> = emptyList()    // フォールバック発動イベント
     )
 
     /**
