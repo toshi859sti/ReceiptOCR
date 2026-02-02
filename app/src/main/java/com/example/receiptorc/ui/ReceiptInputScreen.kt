@@ -209,7 +209,7 @@ fun ReceiptInputScreen(
             topBar = {
                 TopAppBar(
                     title = {
-                        Text("購買伝票")
+                        Text("伝票データ")
                     },
                     navigationIcon = {
                         if (viewMode == ViewMode.VIEW) {
@@ -265,7 +265,7 @@ fun ReceiptInputScreen(
                         shape = MaterialTheme.shapes.small
                     ) {
                         Text(
-                            text = "R${eraYear}年",
+                            text = "令和${eraYear}年",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,

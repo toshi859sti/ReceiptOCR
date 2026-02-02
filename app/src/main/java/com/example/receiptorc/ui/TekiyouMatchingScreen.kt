@@ -45,16 +45,22 @@ fun TekiyouMatchingScreen(
     var showEditDialog by remember { mutableStateOf(false) }
     var selectedRule by remember { mutableStateOf<MatchingRuleWithTekiyou?>(null) }
     var rakurakuTekiyouList by remember { mutableStateOf<List<RakurakuTekiyou>>(emptyList()) }
+    var activePatterns by remember { mutableStateOf<Set<String>>(emptySet()) }  // 通帳データに存在するパターン
 
     // フィルタ
     var filterType by remember { mutableStateOf<Boolean?>(null) } // null=全て, true=入金, false=出金
+    var showOnlyWithData by remember { mutableStateOf(false) }    // 通帳データありのみ表示
 
     // 統計情報
-    val filteredRules = remember(matchingRules, filterType) {
-        when (filterType) {
-            true -> matchingRules.filter { it.isDeposit }
-            false -> matchingRules.filter { !it.isDeposit }
-            null -> matchingRules
+    val filteredRules = remember(matchingRules, filterType, showOnlyWithData, activePatterns) {
+        matchingRules.filter { rule ->
+            val typeMatch = when (filterType) {
+                true -> rule.isDeposit
+                false -> !rule.isDeposit
+                null -> true
+            }
+            val dataMatch = if (showOnlyWithData) rule.pattern in activePatterns else true
+            typeMatch && dataMatch
         }
     }
     val matchedCount = filteredRules.count { it.rakurakuTekiyouId != null }
@@ -66,23 +72,30 @@ fun TekiyouMatchingScreen(
         scope.launch {
             isLoading = true
             matchingRules = database.tekiyouMatchingRuleDao().getAllWithTekiyou()
-            // 預金カテゴリのみ取得
-            rakurakuTekiyouList = database.rakurakuTekiyouDao().getByCategory("預金", "入金") +
-                                  database.rakurakuTekiyouDao().getByCategory("預金", "出金")
+            // 預金カテゴリの有効な摘要のみ取得
+            rakurakuTekiyouList = database.rakurakuTekiyouDao().getEnabledByCategory("預金", "入金") +
+                                  database.rakurakuTekiyouDao().getEnabledByCategory("預金", "出金")
+            // 通帳データに存在するパターンを取得
+            val allMeisai = database.depositMeisaiDao().getAll()
+            activePatterns = allMeisai.map { meisai ->
+                val normalized = normalizeTekiyou(meisai.tekiyou)
+                val suffix = if (meisai.amount >= 0) "_D" else "_W"
+                normalized + suffix
+            }.toSet()
             isLoading = false
         }
     }
 
     // 初期化：CSVインポート＆パターン抽出
     LaunchedEffect(Unit) {
-        // CSVをインポート
+        // CSVをインポート（初回のみ）
         val meisaiCount = database.depositMeisaiDao().getCount()
         if (meisaiCount == 0) {
             importMeisaiFromCsv(context, database)
         }
 
-        // ユニークな摘要からパターンを抽出してルール作成
-        extractAndCreateRules(database)
+        // ルールを更新（既存のマッチング情報は保持）
+        updateRulesFromMeisai(database)
 
         loadData()
     }
@@ -90,24 +103,24 @@ fun TekiyouMatchingScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("預金摘要マッチング") },
+                title = { Text("通帳摘要別リスト") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "戻る")
                     }
                 },
                 actions = {
-                    // 再読み込み
+                    // 通帳データ再読み込み（マッチングルールは保持）
                     IconButton(onClick = {
                         scope.launch {
                             database.depositMeisaiDao().deleteAll()
-                            database.tekiyouMatchingRuleDao().deleteAll()
+                            // マッチングルールは削除しない（らくらく摘要との紐付けを保持）
                             importMeisaiFromCsv(context, database)
-                            extractAndCreateRules(database)
+                            updateRulesFromMeisai(database)  // 新パターン追加 & 件数更新
                             loadData()
                         }
                     }) {
-                        Icon(Icons.Default.Refresh, "再読み込み")
+                        Icon(Icons.Default.Refresh, "通帳再読込")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -191,7 +204,31 @@ fun TekiyouMatchingScreen(
                 )
             }
 
-            Divider(modifier = Modifier.padding(top = 8.dp))
+            // 通帳データありフィルタ
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = showOnlyWithData,
+                    onCheckedChange = { showOnlyWithData = it }
+                )
+                Text(
+                    text = "通帳データありのみ (${activePatterns.size}件)",
+                    fontSize = 14.sp,
+                    modifier = Modifier.clickable { showOnlyWithData = !showOnlyWithData }
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = "表示: ${filteredRules.size}件",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Divider()
 
             // リスト表示
             if (isLoading) {
@@ -419,7 +456,13 @@ private fun MatchingRuleEditDialog(
         title = {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("マッチング設定")
+                    Text(
+                        text = rule.normalizedTekiyou,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Surface(
                         color = typeColor.copy(alpha = 0.15f),
@@ -434,11 +477,6 @@ private fun MatchingRuleEditDialog(
                         )
                     }
                 }
-                Text(
-                    text = rule.normalizedTekiyou,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
             }
         },
         text = {
@@ -519,11 +557,21 @@ private fun MatchingRuleEditDialog(
                                     text = tekiyou.tekiyouName,
                                     fontWeight = FontWeight.Medium
                                 )
-                                Text(
-                                    text = tekiyou.kamoku,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                                Row {
+                                    Text(
+                                        text = tekiyou.kamoku,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    tekiyou.businessRatio?.let { ratio ->
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "(${ratio}%)",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             }
                             if (tekiyou.searchKey.isNotEmpty()) {
                                 Text(
@@ -600,6 +648,63 @@ private suspend fun importMeisaiFromCsv(context: Context, database: ReceiptDatab
             Unit
         } catch (e: Exception) {
             android.util.Log.e("TekiyouMatchingScreen", "Failed to import meisai CSV", e)
+            Unit
+        }
+    }
+}
+
+/**
+ * 通帳データからルールを更新（既存のマッチング情報は保持）
+ * - 新しいパターンは追加
+ * - 既存パターンはmatchCountのみ更新
+ * - らくらく摘要との紐付けは保持
+ */
+private suspend fun updateRulesFromMeisai(database: ReceiptDatabase) {
+    withContext(Dispatchers.IO) {
+        try {
+            val allMeisai = database.depositMeisaiDao().getAll()
+
+            // パターンをグルーピング
+            data class PatternKey(val normalized: String, val isDeposit: Boolean)
+            val patternGroups = mutableMapOf<PatternKey, MutableList<DepositMeisai>>()
+
+            for (meisai in allMeisai) {
+                val normalized = normalizeTekiyou(meisai.tekiyou)
+                val isDeposit = meisai.amount >= 0
+                val key = PatternKey(normalized, isDeposit)
+                patternGroups.getOrPut(key) { mutableListOf() }.add(meisai)
+            }
+
+            // ルールを更新または作成
+            for ((key, samples) in patternGroups) {
+                val patternStr = key.normalized + "_" + if (key.isDeposit) "D" else "W"
+                val existingRule = database.tekiyouMatchingRuleDao().getByPattern(patternStr)
+
+                if (existingRule != null) {
+                    // 既存ルール: matchCountとsampleTextのみ更新（マッチング情報は保持）
+                    database.tekiyouMatchingRuleDao().update(
+                        existingRule.copy(
+                            matchCount = samples.size,
+                            sampleText = samples.firstOrNull()?.tekiyou ?: existingRule.sampleText
+                        )
+                    )
+                } else {
+                    // 新規ルール: 追加
+                    database.tekiyouMatchingRuleDao().insert(
+                        TekiyouMatchingRule(
+                            pattern = patternStr,
+                            normalizedTekiyou = key.normalized,
+                            isRegex = samples.size > 1,
+                            sampleText = samples.firstOrNull()?.tekiyou ?: "",
+                            matchCount = samples.size,
+                            isDeposit = key.isDeposit
+                        )
+                    )
+                }
+            }
+            Unit
+        } catch (e: Exception) {
+            android.util.Log.e("TekiyouMatchingScreen", "Failed to update rules", e)
             Unit
         }
     }

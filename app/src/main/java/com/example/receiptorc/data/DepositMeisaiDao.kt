@@ -5,7 +5,7 @@ import androidx.room.*
 @Dao
 interface DepositMeisaiDao {
 
-    @Query("SELECT * FROM deposit_meisai ORDER BY transactionDate DESC, transactionNumber")
+    @Query("SELECT * FROM deposit_meisai ORDER BY transactionDate ASC, transactionNumber")
     suspend fun getAll(): List<DepositMeisai>
 
     @Query("SELECT DISTINCT tekiyou FROM deposit_meisai ORDER BY tekiyou")
@@ -43,4 +43,7 @@ interface DepositMeisaiDao {
 
     @Query("SELECT COUNT(*) FROM deposit_meisai")
     suspend fun getCount(): Int
+
+    @Query("SELECT * FROM deposit_meisai WHERE transactionDate = :date AND transactionNumber = :number LIMIT 1")
+    suspend fun findByDateAndNumber(date: String, number: String): DepositMeisai?
 }

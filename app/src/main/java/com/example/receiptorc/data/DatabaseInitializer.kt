@@ -185,8 +185,7 @@ object DatabaseInitializer {
                                 canonicalName = parts[1].trim(),
                                 category = parts[2].trim(),
                                 frequencyCount = parts.getOrNull(3)?.trim()?.toIntOrNull() ?: 0,
-                                yayoiAccountId = parts.getOrNull(4)?.trim()?.toLongOrNull(),
-                                rakurakuAccountId = parts.getOrNull(5)?.trim()?.toLongOrNull()
+                                kaikakeTekiyouId = parts.getOrNull(4)?.trim()?.toIntOrNull()
                             )
                         )
                     }

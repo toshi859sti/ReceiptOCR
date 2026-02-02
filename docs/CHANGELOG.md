@@ -4,6 +4,379 @@
 
 ---
 
+## 2026-02-01
+
+### Remoniへのリブランディング & UI改善
+
+**変更内容:**
+
+#### 1. アプリ名変更
+- **ReceiptOCR → Remoni**（receipt + money の造語）
+- strings.xml の app_name を変更
+- MenuScreen.kt のタイトルを変更
+- 起動画面から年号表示を削除
+
+#### 2. アプリアイコン作成
+- レモンをモチーフにしたアダプティブアイコン
+- 前景: レモン形状（黄色）+ 葉（緑）のVector Drawable
+- 背景: 黄色グラデーション
+- ファイル: `ic_launcher_foreground.xml`, `ic_launcher_background.xml`, `ic_launcher.xml`, `ic_launcher_round.xml`
+
+#### 3. 伝票データ画面の年表示変更
+- 「R７年」→「令和７年」の漢字表記に変更
+
+#### 4. 購買出力確認画面の改善
+- **小計・合計行を除外**: productNameに「小計」「合計」を含む行をフィルタリング
+- **日付を西暦変換**: 令和年 → 西暦（2018 + 令和年）
+
+#### 5. 通帳データのソート順変更
+- 取引日降順 → 取引日昇順に変更（DepositMeisaiDao.kt）
+
+#### 6. 設定画面のデータ管理UI変更
+- エクスポート/インポート/データクリアの各操作に対象選択ラジオボタンを追加
+- 選択肢: 全データ、購買伝票、通帳データ、マスタデータ
+- DataType enum を追加
+- 2行レイアウト（1行目: 全データ, マスタデータ / 2行目: 購買伝票, 通帳データ）
+
+#### 7. フラッシュ消灯問題の修正
+- OCR処理開始時に確実にフラッシュ消灯するよう強化（CameraScreen.kt）
+
+#### 8. 出力確認画面のグリッドレイアウト改善
+- 固定幅 + 横スクロール → weight-basedフレキシブルレイアウトに変更
+- 画面幅に合わせて自動調整、横スクロール不要に
+- 列比率: 出力チェック(40dp固定) / 日付(weight 1.2) / 摘要メモ(weight 2) / 金額(weight 1)
+- 長いテキストは省略記号(...)で表示
+
+**変更ファイル:**
+- `app/src/main/res/values/strings.xml` - app_name変更
+- `app/src/main/java/com/example/receiptorc/ui/MenuScreen.kt` - タイトル変更、年号削除
+- `app/src/main/java/com/example/receiptorc/ui/ReceiptInputScreen.kt` - 年表示変更
+- `app/src/main/java/com/example/receiptorc/data/DepositMeisaiDao.kt` - ソート順変更
+- `app/src/main/java/com/example/receiptorc/ui/OutputConfirmScreen.kt` - 小計除外、西暦変換、グリッドレイアウト変更
+- `app/src/main/java/com/example/receiptorc/ui/SettingsScreen.kt` - データ管理UI変更
+- `app/src/main/java/com/example/receiptorc/ui/CameraScreen.kt` - フラッシュ消灯強化
+- `app/src/main/java/com/example/receiptorc/data/ReceiptDao.kt` - deleteAll系メソッド追加
+- `app/src/main/res/drawable/ic_launcher_foreground.xml` - 新規（レモンアイコン）
+- `app/src/main/res/drawable/ic_launcher_background.xml` - 新規（背景グラデーション）
+- `app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml` - アダプティブアイコン定義
+- `app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml` - 丸形アイコン定義
+
+**注意事項:**
+- applicationIdは`com.example.receiptorc`のまま維持（既存データ保護のため）
+- パッケージ名も変更なし
+
+---
+
+## 2026-01-31 (2)
+
+### 設定画面の大幅改修とデータ管理機能の整理
+
+**変更内容:**
+
+#### 1. 設定画面の構成変更
+- **購買部門**セクションに統合:
+  - 入力年設定
+  - カメラ設定（フラッシュ、カメラ情報）
+  - OCR学習状況
+- **預金部門**セクション:
+  - 金額を非表示（マスク機能）
+
+#### 2. データ管理のインポート/エクスポート整理
+- **全データ**: 購買伝票 + 通帳 + マスタデータを一括管理
+- **購買伝票**: ReceiptItem, SheetData, MonthlyData
+- **通帳データ**: DepositMeisai
+- **マスタデータ**:
+  - 商品マスタ (product_master)
+  - OCR学習データ (ocr_variants)
+  - 摘要辞書 (rakuraku_tekiyou)
+  - 摘要マッチングルール (tekiyou_matching_rules)
+
+#### 3. 預金部門の金額非表示機能
+- 設定で有効化すると金額が `***` で表示される
+- 対象画面: 通帳データ画面、出力確認画面（預金）
+
+#### 4. 通帳摘要別リストの改善
+- 「通帳データありのみ」フィルタチェックボックス追加
+- 通帳データ再読込時にマッチングルールを保持（らくらく摘要との紐付けを維持）
+
+#### 5. メイン画面の修正
+- 「令和○年度」→「令和○年」に変更
+
+**変更ファイル:**
+- `MenuScreen.kt` - 年度表示修正
+- `SettingsScreen.kt` - 大幅改修、データ管理機能整理
+- `AppPreferences.kt` - depositHideAmount設定追加
+- `PassbookDataScreen.kt` - 金額マスク機能追加
+- `OutputConfirmScreen.kt` - 金額マスク機能追加
+- `TekiyouMatchingScreen.kt` - フィルタ機能追加、ルール保持機能
+- `Navigation.kt` - AppPreferences引数追加
+- `ProductMasterDao.kt` - insertIgnore追加
+- `RakurakuTekiyouDao.kt` - insertIgnore追加
+- `OcrVariantDao.kt` - insertIgnore追加
+
+**新規作成ファイル:**
+- `docs/DATABASE_SCHEMA.md` - データベース構造ドキュメント
+
+---
+
+## 2026-01-31
+
+### 出力確認画面の大幅改善
+
+**変更内容:**
+
+#### 1. 期間選択機能の追加
+- 画面上部に開始日・終了日を選択するDatePickerを配置
+- 「解除」ボタンで期間フィルタをクリア可能
+- 選択した期間内のデータのみ表示
+
+#### 2. ソート順の変更
+- **預金部門**: 日付 → 取引通番（昇順）に変更
+- **購買部門**: 日付 → 伝票番号 → 行番号（昇順）に変更
+
+#### 3. ID列の非表示化
+- 両部門のグリッドからID列を削除
+
+#### 4. 摘要未設定行のハイライト
+- 摘要が空白の行は薄い赤（`#FFEBEE`）で背景色表示
+
+#### 5. スクロール連動
+- ヘッダーとデータ行で共通のScrollStateを使用
+- 横スクロールが連動するように修正
+
+#### 6. 列構成の変更
+- **預金部門**: 入金・出金列を「金額」1列に統合（出金はマイナス表示）
+- **購買部門**: 「購入」列のキャプションを「金額」に変更
+- **両部門**: 摘要・メモ列を1列に統合（上段:摘要、下段:メモの2行表示）
+
+### 設定画面 - 購買品使用回数の再カウント機能
+
+**変更内容:**
+
+- マスタデータ管理セクションに「購買品の使用回数を再カウント」機能を追加
+- 登録済み購買伝票データ（ReceiptItem）から各商品名の出現回数を集計
+- ProductMasterの`frequencyCount`を更新
+- 処理結果（更新件数、伝票件数）を表示
+
+**変更ファイル:**
+- `OutputConfirmScreen.kt` - 期間選択、ソート順、列構成変更
+- `SettingsScreen.kt` - 購買品使用回数再カウント機能追加
+
+---
+
+## 2026-01-30
+
+### 出力確認画面の実装 & 外部アプリ共有対応
+
+**変更内容:**
+
+#### 1. キャプション変更
+- 「預金摘要マッチング」→「通帳摘要別リスト」(`TekiyouMatchingScreen.kt`)
+- 「購買伝票」→「伝票データ」(`ReceiptInputScreen.kt`)
+
+#### 2. 購買部門の出力確認画面 (`OutputConfirmScreen.kt`)
+- グリッド表示: 出力チェック、ID、日付、摘要、メモ、購入
+- ソート: 取引日降順 → 伝票番号降順 → 行番号降順
+- 摘要取得: 商品名 → ProductMaster → 買掛摘要 (kaikakeTekiyouId → RakurakuTekiyou.tekiyouName)
+- メモ: 商品名 (productName)
+- CSV出力: ヘッダー付き「購買_日時.csv」(ID,日付,摘要,メモ,購入)
+
+#### 3. 預金部門の出力確認画面 (`OutputConfirmScreen.kt`)
+- グリッド表示: 出力チェック、ID、日付、摘要、メモ、入金、出金
+- ソート: 取引日降順 → 連番降順
+- 摘要取得: 正規化摘要 → TekiyouMatchingRule → RakurakuTekiyou.tekiyouName
+- メモ: 通帳摘要原文 (DepositMeisai.tekiyou)
+- 金額表示: 正→入金列、負→出金列
+- CSV出力: ヘッダー付き「預金_日時.csv」(ID,日付,摘要,メモ,入金,出金)
+
+#### 4. 共通UI機能
+- 全選択/全解除ボタン
+- 行タップまたはチェックボックスで個別切り替え
+- 下部に出力数とCSV出力ボタン
+
+#### 5. 外部アプリからの共有対応 (`AndroidManifest.xml`, `MainActivity.kt`)
+- ACTION_SEND: text/csv, text/comma-separated-values, text/plain, application/octet-stream
+- ACTION_VIEW: CSVファイルを直接開く
+- 共有されたCSVは通帳データ画面で自動取り込み
+
+**変更ファイル:**
+- `TekiyouMatchingScreen.kt` - キャプション変更
+- `ReceiptInputScreen.kt` - キャプション変更
+- `OutputConfirmScreen.kt` - 完全書き換え
+- `Navigation.kt` - databaseパラメータ追加
+- `AndroidManifest.xml` - intent-filter追加
+- `MainActivity.kt` - 共有インテント処理追加
+
+---
+
+### メニュー構造の大幅リファクタリング
+
+**背景:**
+- メインメニューが多すぎて分かりにくい
+- 購買部門と預金部門の機能を明確に分離したい
+
+**変更内容:**
+
+#### 1. メインメニューを3項目に集約
+- 購買部門
+- 預金部門
+- 設定
+
+#### 2. 購買部門サブメニュー (`PurchaseMenuScreen.kt`)
+- 伝票データ (ReceiptInputScreen)
+- 購買品目別リスト (ProductListScreen)
+- 買掛摘要辞書 (KaikakeTekiyouScreen)
+- 出力確認画面 (OutputConfirmScreen)
+
+#### 3. 預金部門サブメニュー (`DepositMenuScreen.kt`)
+- 通帳データ (PassbookDataScreen)
+- 通帳摘要別リスト (TekiyouMatchingScreen)
+- 預金摘要辞書 (YokinTekiyouScreen)
+- 出力確認画面 (OutputConfirmScreen)
+
+#### 4. 新規画面作成
+- `KaikakeTekiyouScreen.kt` - 買掛摘要辞書（使用/摘要名/Key/科目/事業 グリッド）
+- `YokinTekiyouScreen.kt` - 預金摘要辞書（入金/出金トグル付き）
+- `PassbookDataScreen.kt` - 通帳データ（CSV取込、重複マージ対応）
+
+---
+
+### 摘要辞書のチェックボックス機能
+
+**変更内容:**
+
+1. **RakurakuTekiyouエンティティ拡張**
+   - `isEnabled: Boolean` フィールド追加（使用する/しない）
+
+2. **ProductMasterの紐付け変更**
+   - `yayoiAccountId` / `rakurakuAccountId` → `kaikakeTekiyouId` に統合
+   - 買掛摘要と直接紐付け
+
+3. **UI更新**
+   - 買掛摘要辞書・預金摘要辞書にチェックボックス列追加
+   - 選択ダイアログで有効な摘要のみ表示
+
+4. **データベースマイグレーション (v10 → v11)**
+
+---
+
+### 設定画面の改善
+
+**変更内容:**
+
+1. **年号設定の変更**
+   - 「令和何年」→「入力年」
+   - サブタイトル: 「令和X年 / 西暦YYYY年」両方表示
+   - 月設定を削除
+
+2. **OCR学習状況画面の日本語化**
+   - AUTO → 自動
+   - CONFIRMED → 確定
+   - LOCKED → 固定
+
+---
+
+### 通帳データの機能強化
+
+**変更内容:**
+
+1. **日付表示の完全化**
+   - MM-DD → YYYY-MM-DD 形式
+
+2. **降順ソート**
+   - DAOで `ORDER BY transactionDate DESC` 実装済み
+
+3. **CSV取込の重複マージ**
+   - 取引日 + 取引通番 で既存チェック
+   - 重複はスキップ、新規のみ追加
+   - 結果表示: 「X件追加（Y件は既存のためスキップ）」
+
+---
+
+### ProductMaster削除時のOCR学習データ保護
+
+**背景:**
+- ProductMaster削除時、関連OcrVariantが孤立データになる問題
+
+**変更内容:**
+
+1. **削除前警告ダイアログ**
+   - 関連OCR学習データ数を表示
+   - 「⚠️ この商品には X件 のOCR学習データがあります」
+
+2. **CASCADE削除**
+   - ProductMaster削除時、関連OcrVariantも一緒に削除
+
+**実装:**
+- `OcrVariantDao.countByProductId()` 追加
+- `ProductListScreen` の削除ダイアログ改修
+
+---
+
+### OCR学習データの手動削除機能
+
+**変更内容:**
+
+1. **OcrLearningStatusScreen改修**
+   - 各パターンカードに削除ボタン（ゴミ箱アイコン）追加
+   - 削除確認ダイアログ表示
+
+2. **削除フロー**
+   - パターン一覧 → 削除アイコン → 確認ダイアログ → 削除 → リスト更新
+
+---
+
+### マスタデータのエクスポート/インポート機能
+
+**背景:**
+- 購買品リストとOCR学習データを別端末に移行したい
+- バックアップ機能が必要
+
+**変更内容:**
+
+1. **設定画面に新セクション追加**
+   - 「📦 マスタデータ管理」
+
+2. **エクスポート機能**
+   - ProductMaster + OcrVariant を JSON形式で出力
+   - ファイル名: `master_backup_日時.json`
+
+3. **インポート機能（マージ方式）**
+   - 購買品: 商品名で重複判定
+   - 学習データ: normalizedText + productId で重複判定
+   - 旧ID → 新ID のマッピングを自動処理
+   - 結果表示: 「購買品 +X件 (既存Y件) / 学習 +X件 (既存Y件)」
+
+**エクスポートファイル形式:**
+```json
+{
+  "exportDate": "2026-01-30 01:23:45",
+  "version": 1,
+  "productMasters": [...],
+  "ocrVariants": [...]
+}
+```
+
+**新規ファイル/変更ファイル:**
+- `MenuScreen.kt` - 3項目に変更
+- `PurchaseMenuScreen.kt` - 新規
+- `DepositMenuScreen.kt` - 新規
+- `KaikakeTekiyouScreen.kt` - 新規
+- `YokinTekiyouScreen.kt` - 新規
+- `PassbookDataScreen.kt` - 新規/改修
+- `ProductListScreen.kt` - 削除警告追加
+- `OcrLearningStatusScreen.kt` - 日本語化、削除機能追加
+- `SettingsScreen.kt` - 年設定変更、マスタデータ管理追加
+- `RakurakuTekiyou.kt` - isEnabled追加
+- `RakurakuTekiyouDao.kt` - getEnabledByCategory追加
+- `ProductMaster.kt` - kaikakeTekiyouId変更
+- `OcrVariantDao.kt` - getAll, countByProductId追加
+- `DepositMeisaiDao.kt` - findByDateAndNumber追加
+- `ReceiptDatabase.kt` - Migration 10→11
+- `Navigation.kt` - 新規ルート追加
+
+---
+
 ## 2026-01-24
 
 ### らくらく青色申告 摘要辞書・マッチング機能

@@ -32,6 +32,10 @@ class AppPreferences(context: Context) {
         private const val DEFAULT_CAMERA_PREVIEW = false  // プレビューは基本OFF
         private const val KEY_CAMERA_FLASH = "camera_flash"
         private const val DEFAULT_CAMERA_FLASH = false
+
+        // 預金部門設定
+        private const val KEY_DEPOSIT_HIDE_AMOUNT = "deposit_hide_amount"
+        private const val DEFAULT_DEPOSIT_HIDE_AMOUNT = false
     }
 
     // 年号設定
@@ -68,6 +72,11 @@ class AppPreferences(context: Context) {
     var cameraFlash: Boolean
         get() = prefs.getBoolean(KEY_CAMERA_FLASH, DEFAULT_CAMERA_FLASH)
         set(value) = prefs.edit().putBoolean(KEY_CAMERA_FLASH, value).apply()
+
+    // 預金部門：金額を非表示
+    var depositHideAmount: Boolean
+        get() = prefs.getBoolean(KEY_DEPOSIT_HIDE_AMOUNT, DEFAULT_DEPOSIT_HIDE_AMOUNT)
+        set(value) = prefs.edit().putBoolean(KEY_DEPOSIT_HIDE_AMOUNT, value).apply()
 
     /**
      * カメラ解像度を幅と高さのペアに変換

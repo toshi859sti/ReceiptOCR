@@ -86,8 +86,11 @@ fun CameraScreen(
             detectedMarkerIds = ""
             consecutiveGoodFrames = 0  // 安定性カウンターもリセット
             // 撮影完了後は自動でトーチを再点灯しない（手動操作またはカメラ起動時のみ）
+            // Preview状態に戻ったときも念のためトーチを消灯
+            isTorchOn = false
+            camera?.cameraControl?.enableTorch(false)
         } else if (uiState is CameraViewModel.CameraUiState.Processing) {
-            // OCR処理開始時にトーチを消灯
+            // OCR処理開始時にトーチを即座に消灯
             isTorchOn = false
             camera?.cameraControl?.enableTorch(false)
             Log.d("CameraScreen", "OCR processing started, torch disabled")
@@ -96,6 +99,11 @@ fun CameraScreen(
             isTorchOn = false
             camera?.cameraControl?.enableTorch(false)
             Log.d("CameraScreen", "OCR completed, torch disabled")
+        } else if (uiState is CameraViewModel.CameraUiState.Error) {
+            // エラー時もトーチを消灯
+            isTorchOn = false
+            camera?.cameraControl?.enableTorch(false)
+            Log.d("CameraScreen", "OCR error, torch disabled")
         }
     }
 
@@ -450,19 +458,24 @@ private fun processImage(
                 Log.d("CameraScreen", "Auto-capture triggered: Stable for $newCount frames (quality=${quality.score}, marker=${arucoResult.blockType})")
                 Log.d("CameraScreen", "Processing with ImageAnalysis: ${bitmap.width}x${bitmap.height}")
 
-                // トーチを強制的に消灯（撮影開始直前）
-                try {
-                    camera?.cameraControl?.enableTorch(false)
-                    Log.d("CameraScreen", "Torch disabled before OCR processing")
-                } catch (e: Exception) {
-                    Log.e("CameraScreen", "Failed to disable torch", e)
-                }
+                // トーチを強制的に消灯（撮影開始直前）- 非同期で実行されるため、確実に消灯を試みる
+                camera?.let { cam ->
+                    try {
+                        cam.cameraControl.enableTorch(false)
+                        Log.d("CameraScreen", "Torch disable command sent before OCR processing")
+                    } catch (e: Exception) {
+                        Log.e("CameraScreen", "Failed to disable torch", e)
+                    }
+                } ?: Log.w("CameraScreen", "Camera is null, cannot disable torch")
 
                 onProcessingChange(true)
                 onMarkerDetected(true)  // 処理完了フラグを設定
 
                 // ImageAnalysisのフレームを直接OCR処理
                 viewModel.processImage(bitmap, arucoResult)
+
+                // OCR処理開始後に再度トーチ消灯を試みる（フォールバック）
+                camera?.cameraControl?.enableTorch(false)
 
                 onConsecutiveGoodFramesChange(0)  // カウンターリセット
             } else {

@@ -31,10 +31,9 @@ enum class SortOrder(val label: String) {
 }
 
 /** フィルタ種別 */
-enum class AccountFilter(val label: String) {
+enum class TekiyouFilter(val label: String) {
     ALL("全て"),
-    MISSING_RAKURAKU("らくらく未設定"),
-    MISSING_YAYOI("弥生未設定")
+    MISSING("摘要未設定")
 }
 
 /**
@@ -52,12 +51,11 @@ fun ProductListScreen(
     // State
     var allProducts by remember { mutableStateOf<List<ProductMaster>>(emptyList()) }
     var displayProducts by remember { mutableStateOf<List<ProductMaster>>(emptyList()) }
-    var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
-    var rakurakuAccounts by remember { mutableStateOf<List<RakurakuAccount>>(emptyList()) }
+    var kaikakeTekiyouList by remember { mutableStateOf<List<RakurakuTekiyou>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var sortOrder by remember { mutableStateOf(SortOrder.FREQUENCY) }
-    var accountFilter by remember { mutableStateOf(AccountFilter.ALL) }
+    var tekiyouFilter by remember { mutableStateOf(TekiyouFilter.ALL) }
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -70,8 +68,8 @@ fun ProductListScreen(
 
     // 初期データ読み込み
     LaunchedEffect(Unit) {
-        yayoiAccounts = database.yayoiAccountDao().getAll()
-        rakurakuAccounts = database.rakurakuAccountDao().getAll()
+        // 有効な買掛摘要のみ取得
+        kaikakeTekiyouList = database.rakurakuTekiyouDao().getEnabledByCategory("買掛", "購入")
         allProducts = database.productMasterDao().getAll()
     }
 
@@ -91,11 +89,10 @@ fun ProductListScreen(
             }
         }
 
-        // 勘定科目フィルタ
-        filtered = when (accountFilter) {
-            AccountFilter.ALL -> filtered
-            AccountFilter.MISSING_RAKURAKU -> filtered.filter { it.rakurakuAccountId == null }
-            AccountFilter.MISSING_YAYOI -> filtered.filter { it.yayoiAccountId == null }
+        // 摘要フィルタ
+        filtered = when (tekiyouFilter) {
+            TekiyouFilter.ALL -> filtered
+            TekiyouFilter.MISSING -> filtered.filter { it.kaikakeTekiyouId == null }
         }
 
         // 並び替え
@@ -108,13 +105,14 @@ fun ProductListScreen(
     // データ再読み込み
     fun loadProducts() {
         scope.launch {
+            kaikakeTekiyouList = database.rakurakuTekiyouDao().getEnabledByCategory("買掛", "購入")
             allProducts = database.productMasterDao().getAll()
             applyFiltersAndSort()
         }
     }
 
     // フィルタ/並び替え変更時
-    LaunchedEffect(searchQuery, selectedCategory, sortOrder, accountFilter, allProducts) {
+    LaunchedEffect(searchQuery, selectedCategory, sortOrder, tekiyouFilter, allProducts) {
         applyFiltersAndSort()
     }
 
@@ -246,7 +244,7 @@ fun ProductListScreen(
                 }
             }
 
-            // 並び替え & 勘定科目フィルタ
+            // 並び替え & 摘要フィルタ
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -267,12 +265,12 @@ fun ProductListScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // 勘定科目フィルタ
+                // 摘要フィルタ
                 Text("絞込:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                AccountFilter.values().forEach { filter ->
+                TekiyouFilter.values().forEach { filter ->
                     FilterChip(
-                        selected = accountFilter == filter,
-                        onClick = { accountFilter = filter },
+                        selected = tekiyouFilter == filter,
+                        onClick = { tekiyouFilter = filter },
                         label = { Text(filter.label, fontSize = 12.sp) }
                     )
                 }
@@ -296,8 +294,7 @@ fun ProductListScreen(
                 items(displayProducts, key = { it.id }) { product ->
                     ProductListItem(
                         product = product,
-                        yayoiAccount = yayoiAccounts.find { it.id == product.yayoiAccountId },
-                        rakurakuAccount = rakurakuAccounts.find { it.id == product.rakurakuAccountId },
+                        kaikakeTekiyou = kaikakeTekiyouList.find { it.id == product.kaikakeTekiyouId },
                         onClick = {
                             selectedProduct = product
                             showEditDialog = true
@@ -316,8 +313,7 @@ fun ProductListScreen(
     if (showEditDialog && selectedProduct != null) {
         ProductEditDialog(
             product = selectedProduct!!,
-            yayoiAccounts = yayoiAccounts,
-            rakurakuAccounts = rakurakuAccounts,
+            kaikakeTekiyouList = kaikakeTekiyouList,
             categories = categories,
             onDismiss = {
                 showEditDialog = false
@@ -338,8 +334,7 @@ fun ProductListScreen(
     if (showAddDialog) {
         ProductEditDialog(
             product = null,
-            yayoiAccounts = yayoiAccounts,
-            rakurakuAccounts = rakurakuAccounts,
+            kaikakeTekiyouList = kaikakeTekiyouList,
             categories = categories,
             onDismiss = { showAddDialog = false },
             onSave = { newProduct ->
@@ -352,19 +347,41 @@ fun ProductListScreen(
         )
     }
 
-    // 削除確認ダイアログ
+    // 削除確認ダイアログ（OCR学習データ数チェック付き）
     if (showDeleteDialog && selectedProduct != null) {
+        var ocrVariantCount by remember { mutableStateOf(0) }
+        var isCheckingVariants by remember { mutableStateOf(true) }
+
+        LaunchedEffect(selectedProduct) {
+            ocrVariantCount = database.ocrVariantDao().countByProductId(selectedProduct!!.id)
+            isCheckingVariants = false
+        }
+
         AlertDialog(
             onDismissRequest = {
                 showDeleteDialog = false
                 selectedProduct = null
             },
             title = { Text("削除確認") },
-            text = { Text("「${selectedProduct!!.canonicalName}」を削除しますか？") },
+            text = {
+                Column {
+                    Text("「${selectedProduct!!.canonicalName}」を削除しますか？")
+                    if (!isCheckingVariants && ocrVariantCount > 0) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "⚠️ この商品には ${ocrVariantCount}件 のOCR学習データがあります。\n削除すると学習データも一緒に削除されます。",
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
                         scope.launch {
+                            // OCR学習データも一緒に削除（CASCADE）
+                            database.ocrVariantDao().deleteByProductId(selectedProduct!!.id)
                             database.productMasterDao().deleteById(selectedProduct!!.id)
                             loadProducts()
                         }
@@ -373,9 +390,10 @@ fun ProductListScreen(
                     },
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
-                    )
+                    ),
+                    enabled = !isCheckingVariants
                 ) {
-                    Text("削除")
+                    Text(if (ocrVariantCount > 0) "全て削除" else "削除")
                 }
             },
             dismissButton = {
@@ -410,8 +428,7 @@ fun ProductListScreen(
 @Composable
 private fun ProductListItem(
     product: ProductMaster,
-    yayoiAccount: YayoiAccount?,
-    rakurakuAccount: RakurakuAccount?,
+    kaikakeTekiyou: RakurakuTekiyou?,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -449,27 +466,15 @@ private fun ProductListItem(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // 勘定科目
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "らくらく: ${rakurakuAccount?.accountName ?: "未設定"}",
-                    fontSize = 12.sp,
-                    color = if (rakurakuAccount != null)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.error
-                )
-                Text(
-                    text = "弥生: ${yayoiAccount?.accountName ?: "未設定"}",
-                    fontSize = 12.sp,
-                    color = if (yayoiAccount != null)
-                        MaterialTheme.colorScheme.secondary
-                    else
-                        MaterialTheme.colorScheme.error
-                )
-            }
+            // 買掛摘要
+            Text(
+                text = "摘要: ${kaikakeTekiyou?.tekiyouName ?: "未設定"}",
+                fontSize = 12.sp,
+                color = if (kaikakeTekiyou != null)
+                    MaterialTheme.colorScheme.primary
+                else
+                    MaterialTheme.colorScheme.error
+            )
         }
 
         IconButton(onClick = onDelete) {
@@ -512,18 +517,15 @@ private fun CategoryChip(category: String) {
 @Composable
 private fun ProductEditDialog(
     product: ProductMaster?,
-    yayoiAccounts: List<YayoiAccount>,
-    rakurakuAccounts: List<RakurakuAccount>,
+    kaikakeTekiyouList: List<RakurakuTekiyou>,
     categories: List<String>,
     onDismiss: () -> Unit,
     onSave: (ProductMaster) -> Unit
 ) {
     var name by remember { mutableStateOf(product?.canonicalName ?: "") }
     var category by remember { mutableStateOf(product?.category ?: categories.first()) }
-    var selectedYayoiId by remember { mutableStateOf(product?.yayoiAccountId) }
-    var selectedRakurakuId by remember { mutableStateOf(product?.rakurakuAccountId) }
-    var showYayoiPicker by remember { mutableStateOf(false) }
-    var showRakurakuPicker by remember { mutableStateOf(false) }
+    var selectedTekiyouId by remember { mutableStateOf(product?.kaikakeTekiyouId) }
+    var showTekiyouPicker by remember { mutableStateOf(false) }
     var categoryExpanded by remember { mutableStateOf(false) }
 
     val isNew = product == null
@@ -576,50 +578,27 @@ private fun ProductEditDialog(
                     }
                 }
 
-                // らくらく勘定科目
+                // 買掛摘要
                 OutlinedTextField(
-                    value = rakurakuAccounts.find { it.id == selectedRakurakuId }?.accountName ?: "未設定",
+                    value = kaikakeTekiyouList.find { it.id == selectedTekiyouId }?.tekiyouName ?: "未設定",
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("らくらく勘定科目") },
+                    label = { Text("買掛摘要") },
                     trailingIcon = {
                         Row {
-                            if (selectedRakurakuId != null) {
-                                IconButton(onClick = { selectedRakurakuId = null }) {
+                            if (selectedTekiyouId != null) {
+                                IconButton(onClick = { selectedTekiyouId = null }) {
                                     Icon(Icons.Default.Clear, "クリア")
                                 }
                             }
-                            IconButton(onClick = { showRakurakuPicker = true }) {
+                            IconButton(onClick = { showTekiyouPicker = true }) {
                                 Icon(Icons.Default.ArrowDropDown, "選択")
                             }
                         }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { showRakurakuPicker = true }
-                )
-
-                // 弥生勘定科目
-                OutlinedTextField(
-                    value = yayoiAccounts.find { it.id == selectedYayoiId }?.accountName ?: "未設定",
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("弥生勘定科目") },
-                    trailingIcon = {
-                        Row {
-                            if (selectedYayoiId != null) {
-                                IconButton(onClick = { selectedYayoiId = null }) {
-                                    Icon(Icons.Default.Clear, "クリア")
-                                }
-                            }
-                            IconButton(onClick = { showYayoiPicker = true }) {
-                                Icon(Icons.Default.ArrowDropDown, "選択")
-                            }
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showYayoiPicker = true }
+                        .clickable { showTekiyouPicker = true }
                 )
             }
         },
@@ -632,8 +611,7 @@ private fun ProductEditDialog(
                             canonicalName = name.trim(),
                             category = category,
                             frequencyCount = product?.frequencyCount ?: 0,
-                            yayoiAccountId = selectedYayoiId,
-                            rakurakuAccountId = selectedRakurakuId
+                            kaikakeTekiyouId = selectedTekiyouId
                         )
                         onSave(newProduct)
                     }
@@ -650,56 +628,43 @@ private fun ProductEditDialog(
         }
     )
 
-    // らくらく勘定科目選択ダイアログ
-    if (showRakurakuPicker) {
-        AccountPickerDialog(
+    // 買掛摘要選択ダイアログ
+    if (showTekiyouPicker) {
+        TekiyouPickerDialog(
             productName = name,
-            accountType = "らくらく勘定科目",
-            accounts = rakurakuAccounts.map { it.id to it.accountName },
-            selectedId = selectedRakurakuId,
+            tekiyouList = kaikakeTekiyouList,
+            selectedId = selectedTekiyouId,
             onSelect = { id ->
-                selectedRakurakuId = id
-                showRakurakuPicker = false
+                selectedTekiyouId = id
+                showTekiyouPicker = false
             },
-            onDismiss = { showRakurakuPicker = false }
-        )
-    }
-
-    // 弥生勘定科目選択ダイアログ
-    if (showYayoiPicker) {
-        AccountPickerDialog(
-            productName = name,
-            accountType = "弥生勘定科目",
-            accounts = yayoiAccounts.map { it.id to it.accountName },
-            selectedId = selectedYayoiId,
-            onSelect = { id ->
-                selectedYayoiId = id
-                showYayoiPicker = false
-            },
-            onDismiss = { showYayoiPicker = false }
+            onDismiss = { showTekiyouPicker = false }
         )
     }
 }
 
 /**
- * 勘定科目選択ダイアログ
+ * 買掛摘要選択ダイアログ
  */
 @Composable
-private fun AccountPickerDialog(
+private fun TekiyouPickerDialog(
     productName: String,
-    accountType: String,
-    accounts: List<Pair<Long, String>>,
-    selectedId: Long?,
-    onSelect: (Long?) -> Unit,
+    tekiyouList: List<RakurakuTekiyou>,
+    selectedId: Int?,
+    onSelect: (Int?) -> Unit,
     onDismiss: () -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
 
-    val filteredAccounts = remember(searchQuery, accounts) {
+    val filteredList = remember(searchQuery, tekiyouList) {
         if (searchQuery.isEmpty()) {
-            accounts
+            tekiyouList
         } else {
-            accounts.filter { it.second.contains(searchQuery, ignoreCase = true) }
+            tekiyouList.filter {
+                it.tekiyouName.contains(searchQuery, ignoreCase = true) ||
+                        it.searchKey.contains(searchQuery, ignoreCase = true) ||
+                        it.kamoku.contains(searchQuery, ignoreCase = true)
+            }
         }
     }
 
@@ -713,7 +678,7 @@ private fun AccountPickerDialog(
                     fontSize = 16.sp
                 )
                 Text(
-                    text = accountType,
+                    text = "買掛摘要を選択",
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -735,20 +700,47 @@ private fun AccountPickerDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 LazyColumn {
-                    items(filteredAccounts) { (id, name) ->
+                    items(filteredList) { tekiyou ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onSelect(id) }
+                                .clickable { onSelect(tekiyou.id) }
                                 .padding(vertical = 12.dp, horizontal = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
-                                selected = selectedId == id,
-                                onClick = { onSelect(id) }
+                                selected = selectedId == tekiyou.id,
+                                onClick = { onSelect(tekiyou.id) }
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(name)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = tekiyou.tekiyouName,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Row {
+                                    Text(
+                                        text = tekiyou.kamoku,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    tekiyou.businessRatio?.let { ratio ->
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "(${ratio}%)",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                            if (tekiyou.searchKey.isNotEmpty()) {
+                                Text(
+                                    text = tekiyou.searchKey,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }

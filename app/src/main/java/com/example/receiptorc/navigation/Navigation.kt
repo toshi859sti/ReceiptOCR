@@ -1,5 +1,6 @@
 package com.example.receiptorc.navigation
 
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -18,17 +19,22 @@ import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.example.receiptorc.data.AppPreferences
 import com.example.receiptorc.data.ReceiptDao
-import com.example.receiptorc.ui.AccountSettingsScreen
+import com.example.receiptorc.ui.DepositMenuScreen
+import com.example.receiptorc.ui.KaikakeTekiyouScreen
 import com.example.receiptorc.ui.MenuScreen
-import com.example.receiptorc.ui.RakurakuTekiyouScreen
-import com.example.receiptorc.ui.TekiyouMatchingScreen
 import com.example.receiptorc.ui.MonthlySummaryScreen
 import com.example.receiptorc.ui.OcrCaptureScreen
 import com.example.receiptorc.ui.OcrLearningStatusScreen
+import com.example.receiptorc.ui.OutputConfirmScreen
+import com.example.receiptorc.ui.PassbookDataScreen
 import com.example.receiptorc.ui.ProductListScreen
+import com.example.receiptorc.ui.PurchaseMenuScreen
+import com.example.receiptorc.ui.RakurakuTekiyouScreen
 import com.example.receiptorc.ui.ReceiptInputScreen
 import com.example.receiptorc.ui.SettingsScreen
 import com.example.receiptorc.ui.SheetEditorScreen
+import com.example.receiptorc.ui.TekiyouMatchingScreen
+import com.example.receiptorc.ui.YokinTekiyouScreen
 import com.example.receiptorc.viewmodel.OcrCaptureViewModel
 import com.example.receiptorc.viewmodel.SheetEditorViewModel
 
@@ -37,14 +43,20 @@ import com.example.receiptorc.viewmodel.SheetEditorViewModel
  */
 sealed class Screen(val route: String) {
     object Menu : Screen("menu")
+    object PurchaseMenu : Screen("purchase_menu")
+    object DepositMenu : Screen("deposit_menu")
     object OcrCapture : Screen("ocr_capture")
     object Settings : Screen("settings")
     object ReceiptInput : Screen("receipt_input")
     object OcrLearningStatus : Screen("ocr_learning_status")
     object ProductList : Screen("product_list")
-    object AccountSettings : Screen("account_settings")
-    object RakurakuTekiyou : Screen("rakuraku_tekiyou")
+    object KaikakeTekiyou : Screen("kaikake_tekiyou")
+    object PurchaseOutputConfirm : Screen("purchase_output_confirm")
+    object PassbookData : Screen("passbook_data")
     object TekiyouMatching : Screen("tekiyou_matching")
+    object YokinTekiyou : Screen("yokin_tekiyou")
+    object DepositOutputConfirm : Screen("deposit_output_confirm")
+    object RakurakuTekiyou : Screen("rakuraku_tekiyou")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
         fun createRoute(year: Int, month: Int): String {
             return "monthly_summary/$year/$month"
@@ -66,34 +78,110 @@ fun ReceiptNavGraph(
     appPreferences: AppPreferences,
     dao: ReceiptDao,
     database: com.example.receiptorc.data.ReceiptDatabase,
-    startDestination: String = Screen.Menu.route
+    startDestination: String = Screen.Menu.route,
+    sharedCsvUri: Uri? = null
 ) {
     NavHost(
         navController = navController,
         startDestination = startDestination
     ) {
-        // 起動メニュー画面
+        // メインメニュー画面
         composable(Screen.Menu.route) {
             MenuScreen(
                 appPreferences = appPreferences,
+                onNavigateToPurchaseMenu = {
+                    navController.navigate(Screen.PurchaseMenu.route)
+                },
+                onNavigateToDepositMenu = {
+                    navController.navigate(Screen.DepositMenu.route)
+                },
                 onNavigateToSettings = {
                     navController.navigate(Screen.Settings.route)
-                },
+                }
+            )
+        }
+
+        // 購買部門サブメニュー
+        composable(Screen.PurchaseMenu.route) {
+            PurchaseMenuScreen(
+                onBack = { navController.popBackStack() },
                 onNavigateToReceiptInput = {
                     navController.navigate(Screen.ReceiptInput.route)
                 },
                 onNavigateToProductList = {
                     navController.navigate(Screen.ProductList.route)
                 },
-                onNavigateToAccountSettings = {
-                    navController.navigate(Screen.AccountSettings.route)
+                onNavigateToKaikakeTekiyou = {
+                    navController.navigate(Screen.KaikakeTekiyou.route)
                 },
-                onNavigateToRakurakuTekiyou = {
-                    navController.navigate(Screen.RakurakuTekiyou.route)
+                onNavigateToOutputConfirm = {
+                    navController.navigate(Screen.PurchaseOutputConfirm.route)
+                }
+            )
+        }
+
+        // 預金部門サブメニュー
+        composable(Screen.DepositMenu.route) {
+            DepositMenuScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToPassbookData = {
+                    navController.navigate(Screen.PassbookData.route)
                 },
                 onNavigateToTekiyouMatching = {
                     navController.navigate(Screen.TekiyouMatching.route)
+                },
+                onNavigateToYokinTekiyou = {
+                    navController.navigate(Screen.YokinTekiyou.route)
+                },
+                onNavigateToOutputConfirm = {
+                    navController.navigate(Screen.DepositOutputConfirm.route)
                 }
+            )
+        }
+
+        // 買掛摘要辞書画面
+        composable(Screen.KaikakeTekiyou.route) {
+            KaikakeTekiyouScreen(
+                database = database,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 購買出力確認画面
+        composable(Screen.PurchaseOutputConfirm.route) {
+            OutputConfirmScreen(
+                department = "購買",
+                database = database,
+                appPreferences = appPreferences,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 通帳データ画面
+        composable(Screen.PassbookData.route) {
+            PassbookDataScreen(
+                database = database,
+                appPreferences = appPreferences,
+                onBack = { navController.popBackStack() },
+                initialUri = sharedCsvUri
+            )
+        }
+
+        // 預金摘要辞書画面
+        composable(Screen.YokinTekiyou.route) {
+            YokinTekiyouScreen(
+                database = database,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 預金出力確認画面
+        composable(Screen.DepositOutputConfirm.route) {
+            OutputConfirmScreen(
+                department = "預金",
+                database = database,
+                appPreferences = appPreferences,
+                onBack = { navController.popBackStack() }
             )
         }
 
@@ -189,14 +277,6 @@ fun ReceiptNavGraph(
         // 購買品リスト画面
         composable(Screen.ProductList.route) {
             ProductListScreen(
-                database = database,
-                onBack = { navController.popBackStack() }
-            )
-        }
-
-        // 勘定科目設定画面
-        composable(Screen.AccountSettings.route) {
-            AccountSettingsScreen(
                 database = database,
                 onBack = { navController.popBackStack() }
             )

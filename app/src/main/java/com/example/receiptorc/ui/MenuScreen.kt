@@ -11,25 +11,22 @@ import androidx.compose.ui.unit.sp
 import com.example.receiptorc.data.AppPreferences
 
 /**
- * 起動メニュー画面
+ * メインメニュー画面
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MenuScreen(
     appPreferences: AppPreferences,
-    onNavigateToSettings: () -> Unit,
-    onNavigateToReceiptInput: () -> Unit,
-    onNavigateToProductList: () -> Unit = {},
-    onNavigateToAccountSettings: () -> Unit = {},
-    onNavigateToRakurakuTekiyou: () -> Unit = {},
-    onNavigateToTekiyouMatching: () -> Unit = {}
+    onNavigateToPurchaseMenu: () -> Unit,
+    onNavigateToDepositMenu: () -> Unit,
+    onNavigateToSettings: () -> Unit
 ) {
     val eraYear = remember { appPreferences.eraYear }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Receipt OCR") },
+                title = { Text("Remoni") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -45,66 +42,37 @@ fun MenuScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // タイトルと年度表示
+            // タイトル表示
             Text(
-                text = "Receipt OCR",
+                text = "Remoni",
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(64.dp))
 
-            Text(
-                text = "令和${eraYear}年度",
-                fontSize = 24.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            // メニューボタン
+            // メニューボタン（3項目）
             MenuButton(
-                text = "伝票入力",
-                onClick = onNavigateToReceiptInput
+                text = "購買部門",
+                onClick = onNavigateToPurchaseMenu
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             MenuButton(
-                text = "購買品リスト",
-                onClick = onNavigateToProductList
+                text = "預金部門",
+                onClick = onNavigateToDepositMenu
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            MenuButton(
-                text = "勘定科目設定",
-                onClick = onNavigateToAccountSettings
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            MenuButton(
-                text = "摘要辞書",
-                onClick = onNavigateToRakurakuTekiyou
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            MenuButton(
-                text = "摘要マッチング",
-                onClick = onNavigateToTekiyouMatching
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             MenuButton(
                 text = "設定",
                 onClick = onNavigateToSettings
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(64.dp))
 
             // バージョン情報
             Text(

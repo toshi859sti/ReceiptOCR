@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,6 +55,34 @@ fun OcrLearningStatusScreen(
 
     // 表示タブ
     var selectedTab by remember { mutableIntStateOf(0) }
+
+    // 削除確認ダイアログ用
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var patternToDelete by remember { mutableStateOf<OcrVariant?>(null) }
+
+    // データ再読み込み関数
+    fun reloadData() {
+        scope.launch {
+            totalCount = ocrVariantDao.getTotalCount()
+            confidenceCounts = ocrVariantDao.getCountByConfidenceLevel()
+            sourceCounts = ocrVariantDao.getCountBySource()
+            recentPatterns = ocrVariantDao.getRecentPatterns(20)
+            mostUsedPatterns = ocrVariantDao.getMostUsedPatterns(20)
+            nearPromotionPatterns = ocrVariantDao.getNearPromotionPatterns(10)
+
+            // 商品名キャッシュを構築
+            val productIds = (recentPatterns + mostUsedPatterns + nearPromotionPatterns)
+                .map { it.productId }
+                .distinct()
+            val cache = mutableMapOf<Long, String>()
+            for (id in productIds) {
+                productMasterDao.getById(id)?.let {
+                    cache[id] = it.canonicalName
+                }
+            }
+            productNameCache = cache
+        }
+    }
 
     // データ読み込み
     LaunchedEffect(Unit) {
@@ -134,20 +163,84 @@ fun OcrLearningStatusScreen(
                 0 -> PatternList(
                     patterns = recentPatterns,
                     productNameCache = productNameCache,
-                    emptyMessage = "まだ学習パターンがありません"
+                    emptyMessage = "まだ学習パターンがありません",
+                    onDelete = { pattern ->
+                        patternToDelete = pattern
+                        showDeleteDialog = true
+                    }
                 )
                 1 -> PatternList(
                     patterns = mostUsedPatterns,
                     productNameCache = productNameCache,
-                    emptyMessage = "まだ学習パターンがありません"
+                    emptyMessage = "まだ学習パターンがありません",
+                    onDelete = { pattern ->
+                        patternToDelete = pattern
+                        showDeleteDialog = true
+                    }
                 )
                 2 -> PatternList(
                     patterns = nearPromotionPatterns,
                     productNameCache = productNameCache,
-                    emptyMessage = "昇格間近のパターンはありません"
+                    emptyMessage = "昇格間近のパターンはありません",
+                    onDelete = { pattern ->
+                        patternToDelete = pattern
+                        showDeleteDialog = true
+                    }
                 )
             }
         }
+    }
+
+    // 削除確認ダイアログ
+    if (showDeleteDialog && patternToDelete != null) {
+        AlertDialog(
+            onDismissRequest = {
+                showDeleteDialog = false
+                patternToDelete = null
+            },
+            title = { Text("学習データ削除") },
+            text = {
+                Column {
+                    Text("この学習パターンを削除しますか？")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "「${patternToDelete!!.variantText}」",
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "→ ${productNameCache[patternToDelete!!.productId] ?: "不明"}",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val toDelete = patternToDelete ?: return@TextButton
+                        showDeleteDialog = false
+                        patternToDelete = null
+                        scope.launch {
+                            ocrVariantDao.delete(toDelete)
+                            reloadData()
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("削除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showDeleteDialog = false
+                    patternToDelete = null
+                }) {
+                    Text("キャンセル")
+                }
+            }
+        )
     }
 }
 
@@ -213,9 +306,9 @@ private fun StatisticsSummary(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                ConfidenceBadge("AUTO", autoCount, Color(0xFFFF9800))
-                ConfidenceBadge("CONFIRMED", confirmedCount, Color(0xFF4CAF50))
-                ConfidenceBadge("LOCKED", lockedCount, Color(0xFF2196F3))
+                ConfidenceBadge("自動", autoCount, Color(0xFFFF9800))
+                ConfidenceBadge("確定", confirmedCount, Color(0xFF4CAF50))
+                ConfidenceBadge("固定", lockedCount, Color(0xFF2196F3))
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -301,7 +394,8 @@ private fun SourceBadge(label: String, count: Int) {
 private fun PatternList(
     patterns: List<OcrVariant>,
     productNameCache: Map<Long, String>,
-    emptyMessage: String
+    emptyMessage: String,
+    onDelete: (OcrVariant) -> Unit
 ) {
     if (patterns.isEmpty()) {
         Box(
@@ -321,10 +415,11 @@ private fun PatternList(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(patterns) { pattern ->
+            items(patterns, key = { it.id }) { pattern ->
                 PatternCard(
                     pattern = pattern,
-                    productName = productNameCache[pattern.productId] ?: "不明"
+                    productName = productNameCache[pattern.productId] ?: "不明",
+                    onDelete = { onDelete(pattern) }
                 )
             }
         }
@@ -337,17 +432,16 @@ private fun PatternList(
 @Composable
 private fun PatternCard(
     pattern: OcrVariant,
-    productName: String
+    productName: String,
+    onDelete: () -> Unit
 ) {
-    val dateFormat = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
-
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier.padding(12.dp)
         ) {
-            // 誤認識テキスト → 正解
+            // 誤認識テキスト → 正解 + 削除ボタン
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -373,6 +467,17 @@ private fun PatternCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "削除",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -388,13 +493,18 @@ private fun PatternCard(
                     "CONFIRMED" -> Color(0xFF4CAF50)
                     else -> Color(0xFFFF9800)
                 }
+                val levelLabel = when (pattern.confidenceLevel) {
+                    "LOCKED" -> "固定"
+                    "CONFIRMED" -> "確定"
+                    else -> "自動"
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(
                         shape = MaterialTheme.shapes.small,
                         color = levelColor.copy(alpha = 0.2f)
                     ) {
                         Text(
-                            text = pattern.confidenceLevel,
+                            text = levelLabel,
                             fontSize = 10.sp,
                             color = levelColor,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -525,7 +635,7 @@ private fun calculatePromotionProgressV3(pattern: OcrVariant): Pair<Float, Strin
         val statusText = if (remaining > 0) {
             "あと${remaining}回の手動確定で昇格"
         } else {
-            "CONFIRMED昇格条件達成"
+            "確定に昇格条件達成"
         }
         Pair(progress, statusText)
     } else {
@@ -535,7 +645,7 @@ private fun calculatePromotionProgressV3(pattern: OcrVariant): Pair<Float, Strin
         val highScoreProgress = (pattern.highScoreHits / 2f).coerceAtMost(1f)
 
         val totalProgress = (hitProgress + scoreProgress + highScoreProgress) / 3f
-        val statusText = "CONFIRMED昇格まで"
+        val statusText = "確定に昇格まで"
         Pair(totalProgress, statusText)
     }
 }

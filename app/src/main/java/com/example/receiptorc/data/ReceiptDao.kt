@@ -80,4 +80,14 @@ interface ReceiptDao {
     // 全伝票のユニークな商品名を取得
     @Query("SELECT DISTINCT productName FROM receipt_items WHERE productName != '' ORDER BY productName")
     suspend fun getAllDistinctProductNames(): List<String>
+
+    // 全データ削除
+    @Query("DELETE FROM receipt_items")
+    suspend fun deleteAllReceiptItems()
+
+    @Query("DELETE FROM monthly_data")
+    suspend fun deleteAllMonthlyData()
+
+    @Query("DELETE FROM sheet_data")
+    suspend fun deleteAllSheetData()
 }

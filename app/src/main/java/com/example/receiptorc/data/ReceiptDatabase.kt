@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DepositMeisai::class,
         TekiyouMatchingRule::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -404,6 +404,48 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 10 → 11（摘要辞書isEnabled追加、ProductMaster変更）
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // 1. RakurakuTekiyouにisEnabledカラムを追加
+                database.execSQL("""
+                    ALTER TABLE rakuraku_tekiyou
+                    ADD COLUMN isEnabled INTEGER NOT NULL DEFAULT 1
+                """.trimIndent())
+
+                // 2. ProductMasterテーブルを再作成（yayoiAccountId, rakurakuAccountId削除、kaikakeTekiyouId追加）
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS product_master_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        canonicalName TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        frequencyCount INTEGER NOT NULL DEFAULT 0,
+                        kaikakeTekiyouId INTEGER,
+                        FOREIGN KEY (kaikakeTekiyouId) REFERENCES rakuraku_tekiyou(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+
+                // 旧データを移行（勘定科目マッピングは破棄）
+                database.execSQL("""
+                    INSERT INTO product_master_new (id, canonicalName, category, frequencyCount, kaikakeTekiyouId)
+                    SELECT id, canonicalName, category, frequencyCount, NULL
+                    FROM product_master
+                """.trimIndent())
+
+                // 旧テーブル削除
+                database.execSQL("DROP TABLE product_master")
+
+                // 新テーブルをリネーム
+                database.execSQL("ALTER TABLE product_master_new RENAME TO product_master")
+
+                // インデックス作成
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_product_master_kaikakeTekiyouId
+                    ON product_master (kaikakeTekiyouId)
+                """.trimIndent())
+            }
+        }
+
         // マイグレーション: version 8 → 9（RakurakuTekiyou追加）
         private val MIGRATION_8_9 = object : Migration(8, 9) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -505,7 +547,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance

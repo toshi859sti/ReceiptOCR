@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- レモンの本体（楕円形） -->
+    <path
+        android:fillColor="#FFE135"
+        android:strokeColor="#FFC107"
+        android:strokeWidth="1.5"
+        android:pathData="M54,72
+                         C38,72 26,62 26,50
+                         C26,38 38,28 54,28
+                         C70,28 82,38 82,50
+                         C82,62 70,72 54,72Z" />
+    <!-- レモンの先端（左） -->
+    <path
+        android:fillColor="#FFE135"
+        android:strokeColor="#FFC107"
+        android:strokeWidth="1"
+        android:pathData="M26,50
+                         Q18,50 16,48
+                         Q18,46 26,50Z" />
+    <!-- レモンの先端（右） -->
+    <path
+        android:fillColor="#FFE135"
+        android:strokeColor="#FFC107"
+        android:strokeWidth="1"
+        android:pathData="M82,50
+                         Q90,50 92,48
+                         Q90,46 82,50Z" />
+    <!-- 葉っぱ -->
+    <path
+        android:fillColor="#4CAF50"
+        android:strokeColor="#388E3C"
+        android:strokeWidth="0.8"
+        android:pathData="M54,28
+                         Q50,20 54,14
+                         Q58,20 54,28Z" />
+    <!-- 葉っぱの茎 -->
+    <path
+        android:strokeColor="#795548"
+        android:strokeWidth="1.5"
+        android:pathData="M54,28 L54,22" />
+    <!-- ハイライト -->
+    <path
+        android:fillColor="#FFFDE7"
+        android:pathData="M42,40
+                         C40,42 42,46 46,44
+                         C48,43 46,38 42,40Z" />
+</vector>

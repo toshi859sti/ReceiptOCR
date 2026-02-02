@@ -2,6 +2,7 @@ package com.example.receiptorc.data
 
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -12,17 +13,14 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "product_master",
+    indices = [
+        Index(value = ["kaikakeTekiyouId"])
+    ],
     foreignKeys = [
         ForeignKey(
-            entity = YayoiAccount::class,
+            entity = RakurakuTekiyou::class,
             parentColumns = ["id"],
-            childColumns = ["yayoiAccountId"],
-            onDelete = ForeignKey.SET_NULL
-        ),
-        ForeignKey(
-            entity = RakurakuAccount::class,
-            parentColumns = ["id"],
-            childColumns = ["rakurakuAccountId"],
+            childColumns = ["kaikakeTekiyouId"],
             onDelete = ForeignKey.SET_NULL
         )
     ]
@@ -40,9 +38,6 @@ data class ProductMaster(
     /** 使用頻度（よく買う商品を優先マッチング） */
     val frequencyCount: Int = 0,
 
-    /** 弥生会計 勘定科目ID */
-    val yayoiAccountId: Long? = null,
-
-    /** らくらく青色申告 勘定科目ID */
-    val rakurakuAccountId: Long? = null
+    /** 買掛摘要辞書ID（RakurakuTekiyouのID） */
+    val kaikakeTekiyouId: Int? = null
 )

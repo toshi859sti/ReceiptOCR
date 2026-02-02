@@ -39,5 +39,8 @@ data class RakurakuTekiyou(
     val businessRatio: Int? = null,
 
     /** 共有フラグ（現金/預金のみ） */
-    val isShared: Boolean? = null
+    val isShared: Boolean? = null,
+
+    /** 使用するフラグ（選択可能かどうか） */
+    val isEnabled: Boolean = true
 )

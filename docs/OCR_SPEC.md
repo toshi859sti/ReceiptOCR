@@ -297,57 +297,71 @@ private fun cleanItemName(itemName: String): String {
 
 ---
 
-## OcrResultEvaluator スコアリング (2026-01-01~)
+## ProductNameCorrectorV3 スコアリング (2026-01-18~)
 
-### 総合スコア構成
+### 総合スコア構成（100点満点）
 ```kotlin
 val totalScore =
-    dictionaryMatchScore * 0.40 +  // 辞書マッチ: 40%
-    editDistanceScore * 0.25 +     // 編集距離: 25%
-    numericScore * 0.20 +          // 数値正確性: 20%
-    confidenceScore * 0.10 +       // ML Kit信頼度: 10%
-    lengthScore * 0.05             // 長さ: 5%
+    textSimilarity +       // 文字類似度: 最大60点
+    prefixBonus +          // 先頭欠落ボーナス: 最大10点
+    dakutenBonus +         // 濁点誤認識ボーナス: 最大5点
+    variantBonus +         // 既存知識ボーナス: 最大15点
+    historyBonus +         // 手動修正履歴ボーナス: 最大10点
+    riskPenalty            // リスクペナルティ: 最大-30点
 ```
 
 ### 各スコアリング詳細
 
-#### 辞書マッチスコア
+#### 文字類似度（最大60点）
+```kotlin
+val distance = levenshteinDistance(raw, product)
+val normalizedSimilarity = 1.0 - (distance.toDouble() / maxLen)
+val textSimilarity = (normalizedSimilarity * 60.0).coerceIn(0.0, 60.0)
+```
+
+#### 先頭欠落ボーナス（最大10点）
 ```kotlin
 when {
-    similarity >= 0.90 -> 1.0
-    similarity >= 0.80 -> 0.9
-    similarity >= 0.70 -> 0.8
-    similarity >= 0.60 -> 0.6
-    similarity >= 0.50 -> 0.4
+    isPrefixDroppedMatch(raw, product, 1) -> 10.0  // 先頭1文字欠落
+    isPrefixDroppedMatch(raw, product, 2) -> 5.0   // 先頭2文字欠落
     else -> 0.0
 }
 ```
 
-#### 編集距離スコア
+#### 濁点誤認識ボーナス（最大5点）
 ```kotlin
-val editSimilarity = 1f - (editDistance / maxLength.toFloat())
-editSimilarity.coerceIn(0f, 1f)
+if (removeDakuten(raw) == removeDakuten(product)) 5.0 else 0.0
 ```
 
-#### 数値スコア
+#### 既存知識ボーナス（最大15点）
 ```kotlin
-val digitRatio = digitCount / text.length.toFloat()
-when {
-    digitRatio > 0.5 -> 0.0   // 商品名なのに数字多すぎる
-    digitRatio > 0.3 -> 0.5
-    else -> 1.0
-}
-```
-
-#### 長さスコア
-```kotlin
-when {
-    length >= 3 -> 1.0
-    length == 2 -> 0.7
-    length == 1 -> 0.3
+when (existingVariant?.confidenceLevel) {
+    "LOCKED" -> 15.0
+    "CONFIRMED" -> 10.0
+    "AUTO" -> 0.0  // AUTOは補正に使わない
     else -> 0.0
 }
 ```
+
+#### 手動修正履歴ボーナス（最大10点）
+```kotlin
+if (existingVariant?.manualCorrectCount > 0) 10.0 else 0.0
+```
+
+#### リスクペナルティ（最大-30点）
+```kotlin
+// 容量違い: -30点
+// 数字違い: -30点
+// 合計は-30点が下限
+```
+
+### 判定閾値
+| スコア | 判定 | 動作 |
+|--------|------|------|
+| ≥ 78点 & 差≥12点 | AUTO | マスタマッチで自動補正 |
+| ≥ 75点 & 差≥10点 | AUTO | CONFIRMED知識で自動補正 |
+| < 78点 or 差<12点 | NEED_CONFIRM | 補正なし（確認推奨） |
+| 候補なし | NO_MATCH | 補正なし |
 
 ---
 
@@ -391,6 +405,7 @@ private const val DEBUG_SKIP_MARKER_CHECK = false  // true: マーカー検出�
 
 ## 更新履歴
 
+- **2026-02-02**: ProductNameCorrectorV3スコアリングに更新（100点満点、3層構造）
 - **2026-01-01**: OcrResultEvaluator スコアリング追加、DoubleOCR実装
 - **2025-12-31 23:30**: 適応的解像度OCRシステム実装
 - **2025-12-31 20:50**: ImageAnalysis 4K化

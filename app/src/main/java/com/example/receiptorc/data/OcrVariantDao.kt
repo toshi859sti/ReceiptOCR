@@ -7,6 +7,9 @@ interface OcrVariantDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(variant: OcrVariant): Long
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(variant: OcrVariant): Long
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(variants: List<OcrVariant>)
 
@@ -449,6 +452,12 @@ interface OcrVariantDao {
     suspend fun getNearPromotionPatterns(limit: Int = 10): List<OcrVariant>
 
     /**
+     * 全誤認識パターンを取得（エクスポート用）
+     */
+    @Query("SELECT * FROM ocr_variants ORDER BY lastSeenAt DESC")
+    suspend fun getAll(): List<OcrVariant>
+
+    /**
      * 全誤認識パターンを削除（初期化用）
      */
     @Query("DELETE FROM ocr_variants")
@@ -459,6 +468,12 @@ interface OcrVariantDao {
      */
     @Query("DELETE FROM ocr_variants WHERE productId = :productId")
     suspend fun deleteByProductId(productId: Long)
+
+    /**
+     * 商品IDに紐づく誤認識パターン数を取得
+     */
+    @Query("SELECT COUNT(*) FROM ocr_variants WHERE productId = :productId")
+    suspend fun countByProductId(productId: Long): Int
 
     // ==================================
     // 旧API互換（既存コードとの互換性維持）

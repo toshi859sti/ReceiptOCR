@@ -7,6 +7,9 @@ interface ProductMasterDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(product: ProductMaster): Long
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(product: ProductMaster): Long
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(products: List<ProductMaster>)
 
