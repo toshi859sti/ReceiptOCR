@@ -6,7 +6,6 @@ import androidx.camera.core.*
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,11 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -250,8 +246,18 @@ fun CameraScreen(
                                     color = MaterialTheme.colorScheme.onSurface,
                                     lineHeight = 26.sp
                                 )
+
+                                // マーカー検出状況
+                                val markerGood = detectedMarkerCount >= 4
+                                Text(
+                                    text = "マーカー: $detectedMarkerCount/4 ${if (markerGood) "✓" else "✗"}",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
+                                    color = if (markerGood) Color.Green else Color.Red,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+
                                 // 総合ステータス
-                                val allGood = isFocused && hasDetectedMarker
+                                val allGood = isFocused && markerGood
                                 Text(
                                     text = if (allGood) "✓ 撮影準備完了" else "カメラを調整してください",
                                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 20.sp),
