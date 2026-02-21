@@ -250,7 +250,12 @@ interface OcrVariantDao {
     // ============================================================
 
     /**
-     * LOCKED または 手動CONFIRMEDを検索（無条件適用: Layer 1）
+     * LOCKED または 手動修正由来を検索（無条件適用: Layer 1）
+     *
+     * 手動修正由来（source=USER）は1回の訂正で即座に適用対象とする
+     * - LOCKED: 最優先
+     * - CONFIRMED + USER: 2番目
+     * - AUTO + USER: 3番目（1回の手動訂正でも適用）
      */
     @Query("""
         SELECT * FROM ocr_variants
@@ -258,10 +263,10 @@ interface OcrVariantDao {
         AND isDisabled = 0
         AND (
             confidenceLevel = 'LOCKED'
-            OR (confidenceLevel = 'CONFIRMED' AND source = 'USER')
+            OR source = 'USER'
         )
         ORDER BY
-            CASE confidenceLevel WHEN 'LOCKED' THEN 0 ELSE 1 END,
+            CASE confidenceLevel WHEN 'LOCKED' THEN 0 WHEN 'CONFIRMED' THEN 1 ELSE 2 END,
             hitCount DESC
         LIMIT 1
     """)
@@ -281,7 +286,7 @@ interface OcrVariantDao {
     suspend fun findAutoConfirmedVariants(normalizedText: String): List<OcrVariant>
 
     /**
-     * 指定商品IDリストからLOCKED/手動CONFIRMEDを検索
+     * 指定商品IDリストからLOCKED/手動修正由来を検索
      */
     @Query("""
         SELECT * FROM ocr_variants
@@ -290,10 +295,10 @@ interface OcrVariantDao {
         AND isDisabled = 0
         AND (
             confidenceLevel = 'LOCKED'
-            OR (confidenceLevel = 'CONFIRMED' AND source = 'USER')
+            OR source = 'USER'
         )
         ORDER BY
-            CASE confidenceLevel WHEN 'LOCKED' THEN 0 ELSE 1 END,
+            CASE confidenceLevel WHEN 'LOCKED' THEN 0 WHEN 'CONFIRMED' THEN 1 ELSE 2 END,
             hitCount DESC
         LIMIT 1
     """)

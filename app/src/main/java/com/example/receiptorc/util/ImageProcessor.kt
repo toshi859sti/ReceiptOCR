@@ -225,6 +225,54 @@ object ImageProcessor {
     }
 
     /**
+     * ArUco検出結果から4つのマーカーの外枠座標を取得
+     *
+     * カメラプレビュー上にガイド枠を表示するために使用
+     *
+     * @param arucoResult ArUco検出結果
+     * @return 外枠の4点座標（左上、右上、右下、左下）、検出失敗時はnull
+     */
+    fun getMarkerOuterCorners(arucoResult: ArucoDetectionResult): List<FloatArray>? {
+        Log.d(TAG, "[OUTER] isValid=${arucoResult.isValid}, blockType=${arucoResult.blockType}, corners=${arucoResult.corners.size}, ids.rows=${arucoResult.ids.rows()}")
+
+        // マーカーが1つも検出されていない場合はnull
+        if (arucoResult.corners.isEmpty()) {
+            Log.d(TAG, "[OUTER] Returning null: no markers")
+            return null
+        }
+
+        try {
+            // マーカーIDと座標のマップを作成
+            val markerCorners = mutableMapOf<Int, Array<Point>>()
+            for (i in 0 until arucoResult.ids.rows()) {
+                val id = arucoResult.ids.get(i, 0)[0].toInt()
+                val cornerArray = arucoResult.corners[i].toArray()
+                markerCorners[id] = cornerArray
+                Log.d(TAG, "[OUTER] Marker $id: ${cornerArray.size} corners")
+            }
+
+            Log.d(TAG, "[OUTER] Available IDs: ${markerCorners.keys}")
+
+            // 検出されたマーカーのコーナーをすべて返す（部分検出対応）
+            // 各マーカーの4つのコーナーすべてを返して、UI側で描画
+            val allCorners = mutableListOf<FloatArray>()
+
+            for ((id, corners) in markerCorners) {
+                // 各マーカーの4つのコーナーを追加
+                for (corner in corners) {
+                    allCorners.add(floatArrayOf(corner.x.toFloat(), corner.y.toFloat()))
+                }
+            }
+
+            Log.d(TAG, "[OUTER] Returning ${allCorners.size} corner points from ${markerCorners.size} markers")
+            return allCorners
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting marker outer corners", e)
+            return null
+        }
+    }
+
+    /**
      * マーカーの座標からブロックの境界を計算
      *
      * @param corners マーカーの角座標リスト

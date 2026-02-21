@@ -765,12 +765,18 @@ object UnderlyingBaseProcessor {
     fun cleanItemName(itemName: String): String {
         var cleaned = itemName
 
-        // 不要な文字列を最初に除去（合計欄と同じ行に出現する文字列）
+        // 不要な文字列を最初に除去（合計欄と同じ行に出現する文字列、店舗名など）
         val unwantedStrings = listOf(
+            // 案内文
             "＊以下の方法にて、ご入金をお願いします。",
             "＊以下の方法にて、ご入金をお願いします",
             "*以下の方法にて、ご入金をお願いします。",
-            "*以下の方法にて、ご入金をお願いします"
+            "*以下の方法にて、ご入金をお願いします",
+            // 店舗名（隣の列から混入することがある）
+            "北有馬",
+            "東南部基",
+            "南部基幹",
+            "南有馬"
         )
 
         for (unwanted in unwantedStrings) {

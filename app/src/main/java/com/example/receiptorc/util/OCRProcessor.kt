@@ -1092,13 +1092,17 @@ object OCRProcessor {
         val filteredBoxes = UnderlyingBaseProcessor.filterNoise(textBoxes)
         Log.d(TAG, "[UNDERLAY] Step 4: Noise filtering (${textBoxes.size} → ${filteredBoxes.size})")
 
-        // 4.5. フォールバック用: 商品名列範囲内のTextBoxを抽出
+        // 4.5. フォールバック用: 商品名列と重複するTextBoxを抽出
         val itemRange = UnderlyingBaseProcessor.getItemRange()
         val fallbackCandidateBoxes = filteredBoxes.filter { box ->
-            // TextBoxのcenterXが商品名列範囲内にあるものを抽出
-            box.centerX in itemRange.first..itemRange.last
+            // TextBoxの境界ボックスが商品名列範囲と重複するものを抽出
+            // （centerXではなく、left-rightの範囲で判定）
+            val boxLeft = box.bounds.left
+            val boxRight = box.bounds.right
+            // 重複判定: boxの右端がitemの左端より右 AND boxの左端がitemの右端より左
+            boxRight >= itemRange.first && boxLeft <= itemRange.last
         }
-        Log.d(TAG, "[UNDERLAY] Step 4.5: Fallback candidates extracted (${fallbackCandidateBoxes.size} boxes in ITEM column)")
+        Log.d(TAG, "[UNDERLAY] Step 4.5: Fallback candidates extracted (${fallbackCandidateBoxes.size} boxes overlapping ITEM column)")
 
         // 5. 行クラスタリング（Y座標、閾値15px）
         val rows = UnderlyingBaseProcessor.clusterRows(filteredBoxes)
@@ -1210,7 +1214,14 @@ object OCRProcessor {
                     val sortedBoxes = matchingFallbackBoxes.sortedBy { it.centerX }
                     val separatedTexts = sortedBoxes.map { it.text }
                     val fallbackText = separatedTexts.joinToString("")
-                    val cleanedFallbackText = UnderlyingBaseProcessor.cleanItemName(fallbackText)
+
+                    // 日付プレフィックスを除去（先頭の英字1文字 + 6桁数字、または6桁数字）
+                    // 例: "p70207町袖" → "町袖", "070207灯油" → "灯油"
+                    val dateRemovedText = fallbackText
+                        .replace(Regex("^[a-zA-Zp]?\\d{6}"), "")  // 先頭の日付パターンを除去
+                        .trim()
+
+                    val cleanedFallbackText = UnderlyingBaseProcessor.cleanItemName(dateRemovedText)
 
                     if (cleanedFallbackText.isNotBlank()) {
                         // フォールバック結果を追加

@@ -2,7 +2,10 @@ package com.example.receiptorc.ui
 
 import android.app.DatePickerDialog
 import android.content.Context
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -25,7 +28,6 @@ import com.example.receiptorc.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -104,6 +106,17 @@ private fun PurchaseOutputConfirmContent(
     // 期間選択用のState
     var startDate by remember { mutableStateOf<Calendar?>(null) }
     var endDate by remember { mutableStateOf<Calendar?>(null) }
+
+    // CSV出力用のファイル選択ランチャー
+    val csvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                exportPurchaseCsvToUri(context, it, outputItems.filter { item -> item.isSelected })
+            }
+        }
+    }
 
     // データ読み込み
     LaunchedEffect(Unit) {
@@ -225,9 +238,10 @@ private fun PurchaseOutputConfirmContent(
                         )
                         Button(
                             onClick = {
-                                scope.launch {
-                                    exportPurchaseCsv(context, outputItems.filter { it.isSelected })
-                                }
+                                val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                                val timestamp = dateFormat.format(Date())
+                                val fileName = "購買_$timestamp.csv"
+                                csvLauncher.launch(fileName)
                             },
                             enabled = selectedCount > 0
                         ) {
@@ -377,6 +391,17 @@ private fun DepositOutputConfirmContent(
     var startDate by remember { mutableStateOf<Calendar?>(null) }
     var endDate by remember { mutableStateOf<Calendar?>(null) }
 
+    // CSV出力用のファイル選択ランチャー
+    val csvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                exportDepositCsvToUri(context, it, outputItems.filter { item -> item.isSelected })
+            }
+        }
+    }
+
     // データ読み込み
     LaunchedEffect(Unit) {
         isLoading = true
@@ -498,9 +523,10 @@ private fun DepositOutputConfirmContent(
                         )
                         Button(
                             onClick = {
-                                scope.launch {
-                                    exportDepositCsv(context, outputItems.filter { it.isSelected })
-                                }
+                                val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                                val timestamp = dateFormat.format(Date())
+                                val fileName = "預金_$timestamp.csv"
+                                csvLauncher.launch(fileName)
                             },
                             enabled = selectedCount > 0
                         ) {
@@ -738,19 +764,14 @@ private fun normalizeTekiyou(tekiyou: String): String {
 }
 
 /**
- * 購買CSVを出力
+ * 購買CSVを出力（URI経由）
  */
-private suspend fun exportPurchaseCsv(context: Context, items: List<PurchaseOutputItem>) {
+private suspend fun exportPurchaseCsvToUri(context: Context, uri: Uri, items: List<PurchaseOutputItem>) {
     withContext(Dispatchers.IO) {
         try {
-            val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-            val timestamp = dateFormat.format(Date())
-            val fileName = "購買_$timestamp.csv"
-
-            val file = File(context.getExternalFilesDir(null), fileName)
-            file.bufferedWriter(Charsets.UTF_8).use { writer ->
+            context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
                 // ヘッダー行
-                writer.write("ID,日付,摘要,メモ,購入")
+                writer.write("ID,日付,摘要,メモ,金額")
                 writer.newLine()
 
                 // データ行
@@ -768,7 +789,7 @@ private suspend fun exportPurchaseCsv(context: Context, items: List<PurchaseOutp
             }
 
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSVを出力しました: $fileName", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "CSVを出力しました", Toast.LENGTH_LONG).show()
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
@@ -779,30 +800,29 @@ private suspend fun exportPurchaseCsv(context: Context, items: List<PurchaseOutp
 }
 
 /**
- * 預金CSVを出力
+ * 預金CSVを出力（URI経由）
  */
-private suspend fun exportDepositCsv(context: Context, items: List<DepositOutputItem>) {
+private suspend fun exportDepositCsvToUri(context: Context, uri: Uri, items: List<DepositOutputItem>) {
     withContext(Dispatchers.IO) {
         try {
-            val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-            val timestamp = dateFormat.format(Date())
-            val fileName = "預金_$timestamp.csv"
-
-            val file = File(context.getExternalFilesDir(null), fileName)
-            file.bufferedWriter(Charsets.UTF_8).use { writer ->
+            context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
                 // ヘッダー行
-                writer.write("ID,日付,摘要,メモ,入金,出金")
+                writer.write("ID,日付,摘要,メモ,金額")
                 writer.newLine()
 
-                // データ行
+                // データ行（入金はプラス、出金はマイナス）
                 for (item in items) {
+                    val amount = when {
+                        item.deposit != null -> item.deposit
+                        item.withdrawal != null -> -item.withdrawal
+                        else -> 0
+                    }
                     val line = listOf(
                         item.id.toString(),
                         item.date,
                         escapeCsvField(item.tekiyou),
                         escapeCsvField(item.memo),
-                        item.deposit?.toString() ?: "",
-                        item.withdrawal?.toString() ?: ""
+                        amount.toString()
                     ).joinToString(",")
                     writer.write(line)
                     writer.newLine()
@@ -810,7 +830,7 @@ private suspend fun exportDepositCsv(context: Context, items: List<DepositOutput
             }
 
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSVを出力しました: $fileName", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "CSVを出力しました", Toast.LENGTH_LONG).show()
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {

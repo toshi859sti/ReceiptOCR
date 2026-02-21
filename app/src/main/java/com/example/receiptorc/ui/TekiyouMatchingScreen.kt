@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -50,9 +51,13 @@ fun TekiyouMatchingScreen(
     // フィルタ
     var filterType by remember { mutableStateOf<Boolean?>(null) } // null=全て, true=入金, false=出金
     var showOnlyWithData by remember { mutableStateOf(false) }    // 通帳データありのみ表示
+    var showOnlyUnmatched by remember { mutableStateOf(false) }   // 未マッチのみ表示
+
+    // スクロール状態を保持
+    val listState = rememberLazyListState()
 
     // 統計情報
-    val filteredRules = remember(matchingRules, filterType, showOnlyWithData, activePatterns) {
+    val filteredRules = remember(matchingRules, filterType, showOnlyWithData, showOnlyUnmatched, activePatterns) {
         matchingRules.filter { rule ->
             val typeMatch = when (filterType) {
                 true -> rule.isDeposit
@@ -60,7 +65,8 @@ fun TekiyouMatchingScreen(
                 null -> true
             }
             val dataMatch = if (showOnlyWithData) rule.pattern in activePatterns else true
-            typeMatch && dataMatch
+            val unmatchedMatch = if (showOnlyUnmatched) rule.rakurakuTekiyouId == null else true
+            typeMatch && dataMatch && unmatchedMatch
         }
     }
     val matchedCount = filteredRules.count { it.rakurakuTekiyouId != null }
@@ -204,22 +210,38 @@ fun TekiyouMatchingScreen(
                 )
             }
 
-            // 通帳データありフィルタ
+            // フィルタチェックボックス行
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // 通帳データありのみ
                 Checkbox(
                     checked = showOnlyWithData,
                     onCheckedChange = { showOnlyWithData = it }
                 )
                 Text(
-                    text = "通帳データありのみ (${activePatterns.size}件)",
-                    fontSize = 14.sp,
+                    text = "通帳データあり",
+                    fontSize = 13.sp,
                     modifier = Modifier.clickable { showOnlyWithData = !showOnlyWithData }
                 )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // 未マッチのみ
+                Checkbox(
+                    checked = showOnlyUnmatched,
+                    onCheckedChange = { showOnlyUnmatched = it }
+                )
+                Text(
+                    text = "未マッチのみ",
+                    fontSize = 13.sp,
+                    color = if (showOnlyUnmatched) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.clickable { showOnlyUnmatched = !showOnlyUnmatched }
+                )
+
                 Spacer(modifier = Modifier.weight(1f))
                 Text(
                     text = "表示: ${filteredRules.size}件",
@@ -241,6 +263,7 @@ fun TekiyouMatchingScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
+                    state = listState,
                     contentPadding = PaddingValues(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {

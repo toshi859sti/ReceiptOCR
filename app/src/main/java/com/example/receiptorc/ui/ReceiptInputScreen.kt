@@ -2275,11 +2275,19 @@ private suspend fun registerManualCorrectionsOnCommit(
 
 /**
  * V3: 学習用正規化
+ *
+ * 処理内容:
+ * 1. 空白除去
+ * 2. 記号除去
+ * 3. 末尾の単独英字除去（OCRゴミ対策: 「灯油H」→「灯油」）
+ * 4. 先頭の単独英字除去（OCRゴミ対策: 「p灯油」→「灯油」）
  */
 private fun normalizeForLearning(text: String): String {
     return text
         .replace(Regex("[\\s　]"), "")  // 空白除去
         .replace(Regex("[^一-龯ぁ-んァ-ンa-zA-Z0-9]"), "")  // 記号除去
+        .replace(Regex("[a-zA-Z]$"), "")  // 末尾の単独英字除去
+        .replace(Regex("^[a-zA-Z]"), "")  // 先頭の単独英字除去
 }
 
 private suspend fun addNewSheet(

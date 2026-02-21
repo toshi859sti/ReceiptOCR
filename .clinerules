@@ -11,7 +11,8 @@ Android向けの伝票OCRアプリケーション。ArUcoマーカーを使用�
 - **[CHANGELOG.md](docs/CHANGELOG.md)** - 過去の改善履歴 (2025-12-23以降)
 - **[OCR_SPEC.md](docs/OCR_SPEC.md)** - 技術仕様 (座標、閾値、定数)
 - **[DICTIONARY.md](docs/DICTIONARY.md)** - 辞書補正システム設計
-- **[CORRECTION_SYSTEM.md](docs/CORRECTION_SYSTEM.md)** - V3三層補正システム (**NEW**)
+- **[CORRECTION_SYSTEM.md](docs/CORRECTION_SYSTEM.md)** - V3三層補正システム
+- **[CSV_SPEC.md](docs/CSV_SPEC.md)** - CSV出力仕様（Windowsアプリ連携用） (**NEW**)
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - システムアーキテクチャ
 
 ---
@@ -23,9 +24,45 @@ Android向けの伝票OCRアプリケーション。ArUcoマーカーを使用�
 
 ---
 
-## 現在の状況 (2026-01-16)
+## 現在の状況 (2026-02-05)
 
-### ✅ 最新完了 (2026-01-16)
+### ✅ 最新完了 (2026-02-05)
+**CSV出力機能の改善**
+
+#### 1. 出力先選択機能（SAF対応）
+出力確認画面でCSVファイルの出力先をユーザーが選択できるように改善:
+
+- **Storage Access Framework (SAF) 対応**
+  - `ActivityResultContracts.CreateDocument("text/csv")` を使用
+  - ユーザーがDownloadフォルダ、Google Drive等の任意の場所を選択可能
+  - Android 10以降のScoped Storage制限にも対応
+
+- **変更前**: アプリ専用フォルダに固定出力 (`getExternalFilesDir`)
+- **変更後**: システムのファイル選択ダイアログで出力先を選択
+
+#### 2. CSV形式の統一
+Windowsアプリ連携を考慮し、購買・預金CSVの金額列を統一:
+
+| CSV | 変更前 | 変更後 |
+|-----|--------|--------|
+| 購買 | `ID,日付,摘要,メモ,購入` | `ID,日付,摘要,メモ,金額` |
+| 預金 | `ID,日付,摘要,メモ,入金,出金` | `ID,日付,摘要,メモ,金額` |
+
+- **金額の符号ルール**:
+  - 購買: 正=購入、負=返品/値引
+  - 預金: 正=入金、負=出金
+
+**修正ファイル**:
+- `app/src/main/java/com/example/receiptorc/ui/OutputConfirmScreen.kt`
+  - `rememberLauncherForActivityResult` を追加
+  - `exportPurchaseCsvToUri()`, `exportDepositCsvToUri()` 関数を追加
+  - CSVヘッダーを「金額」に統一
+
+**仕様書**: [CSV_SPEC.md](docs/CSV_SPEC.md)
+
+---
+
+### ✅ 前回完了 (2026-01-16)
 **OCR補正システム V3 - 三層構造設計**
 
 誤変換ゼロを目指した新しい補正システムを実装:
@@ -445,6 +482,12 @@ Android向けの伝票OCRアプリケーション。ArUcoマーカーを使用�
 - **カテゴリ**: "一般購買", "給油所", "農業機械" (小計行から逆算)
 - **データ**: 114商品, 15弥生勘定科目, 15らくらく勘定科目, 13 OCR誤認識パターン
 
+### ファイル出力
+- **Storage Access Framework (SAF)**: Android 4.4以降のファイルアクセス標準
+  - `ActivityResultContracts.CreateDocument`: ファイル保存先選択
+  - `contentResolver.openOutputStream(uri)`: URI経由の書き込み
+  - 権限不要、Scoped Storage対応、クラウドストレージ対応
+
 ---
 
 ## 技術スタック
@@ -596,9 +639,9 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 
 ## 最終更新
 
-- **日時**: 2026-01-16
-- **ブランチ**: feature/underlay-base
-- **最新セッション**: OCR補正システム V3 実装（三層構造設計、学習システム）
-- **次回予定**: 実戦テスト、V3補正システムの動作確認
+- **日時**: 2026-02-05
+- **ブランチ**: feature/major-refactor
+- **最新セッション**: CSV出力先選択機能の実装（SAF対応）
+- **次回予定**: 実機テスト、SAF経由のCSV出力動作確認
 
 詳細な履歴は [CHANGELOG.md](docs/CHANGELOG.md) を参照してください。

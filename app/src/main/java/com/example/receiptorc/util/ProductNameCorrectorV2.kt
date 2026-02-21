@@ -80,6 +80,22 @@ object ProductNameCorrectorV2 {
     ): CorrectionResult {
         Log.d(TAG, "[CORRECTION-V2] Input: '$ocrName', Category: $category")
 
+        // Step 0: 手動訂正データの確認（Layer 1: 無条件適用）
+        val normalizedForVariant = normalizeForVariant(ocrName)
+        val unconditionalVariant = variantDao.findUnconditionalVariant(normalizedForVariant)
+        if (unconditionalVariant != null) {
+            val product = productDao.getById(unconditionalVariant.productId)
+            if (product != null) {
+                Log.d(TAG, "[CORRECTION-V2] ✅ UNCONDITIONAL VARIANT HIT: '$ocrName' → '${product.canonicalName}' (source=${unconditionalVariant.source})")
+                return CorrectionResult(
+                    correctedName = product.canonicalName,
+                    score = 1.0,
+                    matched = true,
+                    details = "Layer1: ${unconditionalVariant.source}"
+                )
+            }
+        }
+
         // 1. 商品名をパース（ベース名 + 容量分離）
         val ocrParts = parseProductName(ocrName)
         Log.d(TAG, "[CORRECTION-V2]   Parsed: base='${ocrParts.baseName}', capacity='${ocrParts.capacity}'")
@@ -407,6 +423,20 @@ object ProductNameCorrectorV2 {
             .replace("初", "和")
             .replace("財", "剤")
             .replace("到", "剤")
+    }
+
+    /**
+     * OcrVariant検索用正規化
+     *
+     * 手動訂正データとのマッチングに使用
+     * ReceiptInputScreen.normalizeForLearningと同じ処理
+     */
+    private fun normalizeForVariant(text: String): String {
+        return text
+            .replace(Regex("[\\s　]"), "")  // 空白除去
+            .replace(Regex("[^一-龯ぁ-んァ-ンa-zA-Z0-9]"), "")  // 記号除去
+            .replace(Regex("[a-zA-Z]$"), "")  // 末尾の単独英字除去
+            .replace(Regex("^[a-zA-Z]"), "")  // 先頭の単独英字除去
     }
 
     /**
