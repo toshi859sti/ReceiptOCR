@@ -305,7 +305,6 @@ fun ReceiptNavGraph(
                 database = database,
                 onBack = { navController.popBackStack() },
                 onCapture = {
-                    // TODO: カメラ画面への遷移
                     navController.navigate(Screen.OcrCapture.route)
                 },
                 onNavigateToSummary = { year, month ->

@@ -1322,9 +1322,10 @@ object OCRProcessor {
         Log.d(TAG, "[UNDERLAY] Step 11: Assigned categories to ${rowsWithCategories.size} rows")
 
         // 12. 辞書ベース商品名補正
-        Log.d(TAG, "[UNDERLAY] Step 12: Dictionary-based product name correction...")
-        // TODO: ここでProductNameCorrectorを使用するには、ContextとDatabaseが必要
-        // 現在はスキップし、後でCameraViewModelで呼び出す
+        // NOTE: ProductNameCorrectorはContextとDatabaseが必要なため、
+        //       OCRProcessor（static object）からは呼び出せない。
+        //       CameraViewModel側で呼び出す設計。
+        Log.d(TAG, "[UNDERLAY] Step 12: Product name correction deferred to ViewModel")
 
         Log.d(TAG, "[UNDERLAY] ========== Processing Complete ==========")
 
