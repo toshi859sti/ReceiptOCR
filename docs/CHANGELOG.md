@@ -4,6 +4,98 @@
 
 ---
 
+## 2026-02-22
+
+### OCR処理の大規模リファクタリング & リソースリーク修正
+
+**変更内容:**
+
+#### 1. 動的パラメータ計算（マジックナンバー排除）
+
+**IQRベース文字高さ推定:**
+- 固定値依存を排除し、実測値から動的に計算
+- 四分位範囲（IQR）による外れ値除去で精度向上
+
+```kotlin
+private fun estimateCharHeightIQR(heights: List<Int>): Float {
+    val sorted = heights.sorted()
+    val q1 = sorted[(sorted.size * 0.25).toInt()]
+    val q3 = sorted[(sorted.size * 0.75).toInt()]
+    val iqr = q3 - q1
+    val filtered = sorted.filter { it >= q1 - 1.5 * iqr && it <= q3 + 1.5 * iqr }
+    return filtered.average().toFloat().coerceAtLeast(10f)
+}
+```
+
+**動的閾値:**
+- `rowHeightThreshold`: 固定40px → 平均行高さの80%（最小15px）
+- `xTolerance`: 固定5px → ブロック幅の0.3%（3-10pxに制限）
+- `rowClusteringThreshold`: 固定15px → 平均TextBox高さの60%（10-30pxに制限）
+
+#### 2. validateDate の年号動的化
+
+```kotlin
+// 固定値「7」から動的計算に変更
+val currentReiwa = Calendar.getInstance().get(Calendar.YEAR) - 2018
+return when {
+    yy !in 1..20 -> false
+    yy > currentReiwa + 1 -> { Log.w(TAG, "Future date..."); true }
+    // ...
+}
+```
+
+#### 3. Mat/Bitmap リソースリーク修正
+
+**修正パターン:** try-finally で確実にリソース解放
+
+```kotlin
+// Before: 例外発生時にリーク
+val mat = Mat()
+// ... 処理 ...
+mat.release()
+
+// After: 例外発生時も確実に解放
+var mat: Mat? = null
+try {
+    mat = Mat()
+    // ... 処理 ...
+} finally {
+    mat?.release()
+}
+```
+
+**修正ファイル・関数:**
+
+| ファイル | 修正した関数 |
+|---------|------------|
+| OCRProcessor.kt | `extractProductNamesFromColumn()` |
+| ImageProcessor.kt | `detectArucoMarkers()`, `extractBlock()`, `perspectiveTransform()`, `detectColumnSeparatorInRange()` |
+| ImagePreprocessor.kt | `estimateCharHeightPx()`, `calcEdgeDensity()`, `calcStrokeWidthVariance()`, `estimateCharHeightSimple()`, `removeLines()` |
+| OcrQualityEvaluator.kt | `evaluateOcrQuality()` |
+| MultiScaleOcrProcessor.kt | `ocrProductNameMultiScale()`, `ocrQuantity()`, `ocrProductNameAuto()` |
+
+#### 4. コード品質改善
+
+- **未使用関数削除:** `extractProductNamesMultiScale()` (33行)
+- **TODOコメント削除:** 実装済みカメラナビゲーション関連
+- **DEBUG_SAVE_CELL_IMAGES:** 本番環境でfalseに設定
+- **複雑関数の分割:** ヘルパー関数抽出
+  - `extractTextBoxesFromOcrResult()` - OCR結果からTextBox抽出
+  - `mapTextBoxesToRows()` - TextBoxを行にマッピング
+
+**変更統計:**
+- 5ファイル修正
+- +579行 / -452行（ネット+127行）
+
+**コミット:**
+- `fcb070c` Fix Mat/Bitmap resource leaks with try-finally pattern
+- `cadbdfe` Remove outdated TODO comments
+- `1d9dfa7` Add dynamic row clustering threshold and improve constant documentation
+- `d73ab09` Remove unused extractProductNamesMultiScale function
+- `c60c007` Eliminate magic numbers with dynamic parameter calculation
+
+---
+
 ## 2026-02-01
 
 ### Remoniへのリブランディング & UI改善
