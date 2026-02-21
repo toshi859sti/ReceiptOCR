@@ -545,39 +545,6 @@ object OCRProcessor {
             null
         }
     }
-
-    /**
-     * 商品名列の複数スケールOCR処理（実験的）
-     *
-     * 仕様書ベースの新実装:
-     * 1. 商品名列を切り出し
-     * 2. 複数スケール(1x/2x/3x)でOCR
-     * 3. 辞書スコアリングで最良の結果を選択
-     *
-     * @param warpedBitmap warp後の伝票画像
-     * @param rows 既存の行データ（Y座標でマッピングするために使用）
-     * @param rowYCoordinates 各行の実際のY座標（centerY）
-     * @param dictionary 商品名辞書
-     * @return 商品名のマップ（行インデックス → 商品名）
-     */
-    private suspend fun extractProductNamesMultiScale(
-        warpedBitmap: Bitmap,
-        rows: List<UnderlyingBaseProcessor.ReceiptRow>,
-        rowYCoordinates: List<Int>,
-        dictionary: List<String>
-    ): Map<Int, String> {
-        Log.d(TAG, "[PRODUCT-MULTISCALE] ========== Multi-Scale Product Name OCR Start ==========")
-
-        // TODO: 実装を追加
-        // 1. 商品名列ROIを取得
-        // 2. 行ごとに切り出し
-        // 3. 複数スケール(1x/2x/3x)でOCR
-        // 4. 辞書スコアリングで最良の結果を選択
-
-        Log.d(TAG, "[PRODUCT-MULTISCALE] ========== Multi-Scale Product Name OCR Complete ==========")
-        return emptyMap()
-    }
-
     /**
      * リソースのクリーンアップ
      */
