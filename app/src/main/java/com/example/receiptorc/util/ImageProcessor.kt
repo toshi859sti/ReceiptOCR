@@ -23,8 +23,9 @@ import kotlin.math.sqrt
 object ImageProcessor {
     private const val TAG = "ImageProcessor"
 
-    // デバッグモード：trueにするとセル画像を保存
-    private const val DEBUG_SAVE_CELL_IMAGES = true
+    // デバッグモード：trueにするとセル画像を保存（本番ではfalse）
+    // デバッグ時のみ手動でtrueに変更してください
+    private const val DEBUG_SAVE_CELL_IMAGES = false
 
     // マーカーサイズ（mm）
     private const val MARKER_SIZE_MM = 25.0
@@ -941,7 +942,9 @@ object ImageProcessor {
 
             // 同じX座標付近の線分をグループ化（実線と破線の区別）
             val lineGroups = mutableMapOf<Int, MutableList<LineSegment>>()
-            val xTolerance = 5 // X座標の許容誤差（ピクセル）- より厳しく設定して別のグループを識別
+            // X座標の許容誤差を動的に計算（ブロック幅の0.3%、最小3px、最大10px）
+            val xTolerance = (blockBitmap.width * 0.003).toInt().coerceIn(3, 10)
+            Log.d(TAG, "Dynamic xTolerance: $xTolerance (blockWidth: ${blockBitmap.width})")
 
             for (segment in verticalLineSegments) {
                 var foundGroup = false

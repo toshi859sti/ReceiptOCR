@@ -243,7 +243,12 @@ object OCRProcessor {
 
         // 8. Y座標でマッチング（同じ行のテキストを対応付け）
         val rows = mutableListOf<BBlockRow>()
-        val rowHeightThreshold = 40 // 40px以内なら同じ行とみなす
+
+        // 動的にrowHeightThresholdを計算（IQRベース）
+        val lineHeights = leftLines.mapNotNull { it.boundingBox?.height() }
+        val avgLineHeight = estimateCharHeightIQR(lineHeights)
+        val rowHeightThreshold = maxOf((avgLineHeight * 0.8).toInt(), 15)
+        Log.d(TAG, "Dynamic rowHeightThreshold: $rowHeightThreshold (avgLineHeight: $avgLineHeight)")
 
         // 左列の各行に対して、対応する右列の行を探す
         var rowIndex = 0
@@ -323,13 +328,47 @@ object OCRProcessor {
         val mm = parts[1].toIntOrNull()
         val dd = parts[2].toIntOrNull()
 
+        // 現在の令和年を動的に計算
+        val currentReiwa = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) - 2018
+
         // 各値が妥当な範囲内かチェック
         return when {
             yy == null || mm == null || dd == null -> false
-            yy !in 6..7 -> false  // YYは06（6）または07（7）
+            yy !in 1..20 -> false  // 令和1年〜20年を許容
+            yy > currentReiwa + 1 -> {
+                // 未来の年はログ出力して警告（エラーにはしない）
+                Log.w(TAG, "Future date detected: R$yy/$mm/$dd (current: R$currentReiwa)")
+                true
+            }
             mm !in 1..12 -> false  // MMは1-12
             dd !in 1..31 -> false  // DDは1-31
             else -> true
+        }
+    }
+
+    /**
+     * IQRベースで文字高さを推定（外れ値を除去）
+     *
+     * @param heights 高さのリスト（ピクセル）
+     * @return 推定された平均文字高さ（外れ値除去後）
+     */
+    private fun estimateCharHeightIQR(heights: List<Int>): Float {
+        if (heights.size < 4) return 28f  // サンプル不足時のフォールバック
+
+        val sorted = heights.sorted()
+        val q1 = sorted[(sorted.size * 0.25).toInt()]
+        val q3 = sorted[(sorted.size * 0.75).toInt()]
+        val iqr = q3 - q1
+
+        val lower = q1 - 1.5 * iqr
+        val upper = q3 + 1.5 * iqr
+
+        val filtered = sorted.filter { it >= lower && it <= upper }
+
+        return if (filtered.isNotEmpty()) {
+            filtered.average().toFloat().coerceAtLeast(10f)
+        } else {
+            28f  // フィルタ後に空の場合のフォールバック
         }
     }
 
