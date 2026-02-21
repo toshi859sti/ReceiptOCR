@@ -25,47 +25,57 @@ object UnderlyingBaseProcessor {
     // ============================================
 
     /**
-     * 行クラスタリングの閾値
-     * 実測値: 64.5mm / 20行 ≈ 3.2mm/行 ≈ 25px/行
-     * 閾値は行高の半分程度（12-15px）が最適
+     * 行クラスタリングの閾値（デフォルト値、動的計算のフォールバック用）
+     *
+     * 根拠:
+     * - 伝票の通常行高: 64.5mm / 20行 ≈ 3.2mm/行
+     * - warp後スケール 8.1px/mm で約 25px/行
+     * - 閾値は行高の60%程度（15px）が最適
+     * - 同一行内のY座標ズレを吸収しつつ、別行を分離
      */
-    const val ROW_CLUSTERING_Y_THRESHOLD = 15  // 別行を分離
+    private const val DEFAULT_ROW_CLUSTERING_Y_THRESHOLD = 15
 
     /**
      * 伝票位置（mm、A4左上原点）
+     *
+     * 根拠: A4用紙（210×297mm）上の伝票配置を実測
      */
     private const val RECEIPT_LEFT_MM = 43.0   // A4左端から伝票左端まで
     private const val RECEIPT_TOP_MM = 31.0    // A4上端から伝票上端まで
 
     /**
-     * 列範囲（mm単位、A4左上原点、伝票左上原点からの実測値ベース）
-     * 伝票左端43mm + 各列位置
+     * 列範囲（mm単位、A4左上原点）
+     *
+     * 根拠: 伝票の列構成を実測（伝票左端43mm + 各列位置）
+     * 列構成: 取引日 | 商品名 | 取扱支店 | 数量 | 税込単価 | 税込金額 | 分類計
      */
-    private const val DATE_START_MM = RECEIPT_LEFT_MM + 6.0        // 49.0mm
-    private const val DATE_END_MM = RECEIPT_LEFT_MM + 20.5         // 63.5mm
-    private const val ITEM_START_MM = RECEIPT_LEFT_MM + 20.5       // 63.5mm
-    private const val ITEM_END_MM = RECEIPT_LEFT_MM + 80.0         // 123.0mm
-    private const val STORE_START_MM = RECEIPT_LEFT_MM + 80.0      // 123.0mm (取扱支店、無視)
+    private const val DATE_START_MM = RECEIPT_LEFT_MM + 6.0        // 49.0mm - 取引日列開始
+    private const val DATE_END_MM = RECEIPT_LEFT_MM + 20.5         // 63.5mm - 取引日列終了
+    private const val ITEM_START_MM = RECEIPT_LEFT_MM + 20.5       // 63.5mm - 商品名列開始
+    private const val ITEM_END_MM = RECEIPT_LEFT_MM + 80.0         // 123.0mm - 商品名列終了
+    private const val STORE_START_MM = RECEIPT_LEFT_MM + 80.0      // 123.0mm - 取扱支店（OCR対象外）
     private const val STORE_END_MM = RECEIPT_LEFT_MM + 135.0       // 178.0mm
-    private const val QUANTITY_START_MM = RECEIPT_LEFT_MM + 80.0   // 123.0mm (数量、計測不要範囲内)
+    private const val QUANTITY_START_MM = RECEIPT_LEFT_MM + 80.0   // 123.0mm - 数量（OCR対象外）
     private const val QUANTITY_END_MM = RECEIPT_LEFT_MM + 135.0    // 178.0mm
-    private const val UNITPRICE_START_MM = RECEIPT_LEFT_MM + 80.0  // 123.0mm (税込単価、無視)
+    private const val UNITPRICE_START_MM = RECEIPT_LEFT_MM + 80.0  // 123.0mm - 税込単価（OCR対象外）
     private const val UNITPRICE_END_MM = RECEIPT_LEFT_MM + 135.0   // 178.0mm
-    private const val AMOUNT_START_MM = RECEIPT_LEFT_MM + 135.0    // 178.0mm (税込金額)
-    private const val AMOUNT_END_MM = RECEIPT_LEFT_MM + 156.0      // 199.0mm
-    private const val CATEGORY_START_MM = RECEIPT_LEFT_MM + 156.0  // 199.0mm (分類計)
-    private const val CATEGORY_END_MM = RECEIPT_LEFT_MM + 177.5    // 220.5mm
+    private const val AMOUNT_START_MM = RECEIPT_LEFT_MM + 135.0    // 178.0mm - 税込金額列開始
+    private const val AMOUNT_END_MM = RECEIPT_LEFT_MM + 156.0      // 199.0mm - 税込金額列終了
+    private const val CATEGORY_START_MM = RECEIPT_LEFT_MM + 156.0  // 199.0mm - 分類計列開始
+    private const val CATEGORY_END_MM = RECEIPT_LEFT_MM + 177.5    // 220.5mm - 分類計列終了
 
     /**
-     * Y座標範囲（mm単位、A4左上原点、伝票左上原点からの実測値ベース）
-     * 伝票上端31mm + 各行位置
+     * Y座標範囲（mm単位、A4左上原点）
+     *
+     * 根拠: 伝票の行構成を実測（伝票上端31mm + 各行位置）
+     * 行構成: ヘッダー行 | 通常行（20行）| 小計行（3行）| 合計行
      */
-    private const val NORMAL_ROW_Y_START_MM = RECEIPT_TOP_MM + 56.5   // 87.5mm（通常行・小計行）
-    private const val NORMAL_ROW_Y_END_MM = RECEIPT_TOP_MM + 120.5    // 151.5mm（通常行・小計行）
-    private const val SUBTOTAL_Y_START_MM = RECEIPT_TOP_MM + 56.5     // 87.5mm（小計行も通常行と同じ範囲）
-    private const val SUBTOTAL_Y_END_MM = RECEIPT_TOP_MM + 120.5      // 151.5mm（小計行も通常行と同じ範囲）
-    private const val MONTHLY_TOTAL_Y_START_MM = RECEIPT_TOP_MM + 121.0 // 152.0mm（合計欄、実測値Y=2138pxに対応）
-    private const val MONTHLY_TOTAL_Y_END_MM = RECEIPT_TOP_MM + 126.0   // 157.0mm（合計欄、範囲を拡大）
+    private const val NORMAL_ROW_Y_START_MM = RECEIPT_TOP_MM + 56.5   // 87.5mm - 通常行開始
+    private const val NORMAL_ROW_Y_END_MM = RECEIPT_TOP_MM + 120.5    // 151.5mm - 通常行終了（小計行含む）
+    private const val SUBTOTAL_Y_START_MM = RECEIPT_TOP_MM + 56.5     // 87.5mm - 小計行（通常行と同範囲）
+    private const val SUBTOTAL_Y_END_MM = RECEIPT_TOP_MM + 120.5      // 151.5mm
+    private const val MONTHLY_TOTAL_Y_START_MM = RECEIPT_TOP_MM + 121.0 // 152.0mm - 月合計行開始
+    private const val MONTHLY_TOTAL_Y_END_MM = RECEIPT_TOP_MM + 126.0   // 157.0mm - 月合計行終了
 
     /**
      * 列範囲（px単位、実行時に初期化）
@@ -355,6 +365,10 @@ object UnderlyingBaseProcessor {
         val sortedBoxes = textBoxes.sortedBy { it.centerY }
         Log.d(TAG, "Sorted ${sortedBoxes.size} boxes by Y coordinate")
 
+        // 動的閾値計算: テキストボックスの高さに基づく（IQRベース外れ値除去）
+        val rowClusteringThreshold = calculateRowClusteringThreshold(textBoxes)
+        Log.d(TAG, "Dynamic row clustering threshold: ${rowClusteringThreshold}px")
+
         // ステップ2: Y座標差でクラスタ化
         val rows = mutableListOf<MutableList<TextBox>>()
         var currentRow = mutableListOf<TextBox>()
@@ -363,7 +377,7 @@ object UnderlyingBaseProcessor {
         for (box in sortedBoxes) {
             val yDiff = kotlin.math.abs(box.centerY - lastY)
 
-            if (yDiff <= ROW_CLUSTERING_Y_THRESHOLD) {
+            if (yDiff <= rowClusteringThreshold) {
                 // 同じ行
                 currentRow.add(box)
             } else {
@@ -381,7 +395,7 @@ object UnderlyingBaseProcessor {
             rows.add(currentRow)
         }
 
-        Log.d(TAG, "Clustered into ${rows.size} rows using Y-threshold=${ROW_CLUSTERING_Y_THRESHOLD}px")
+        Log.d(TAG, "Clustered into ${rows.size} rows using Y-threshold=${rowClusteringThreshold}px")
 
         // ステップ3: 各行の情報をログ出力
         rows.forEachIndexed { index, row ->
@@ -391,6 +405,44 @@ object UnderlyingBaseProcessor {
         }
 
         return rows
+    }
+
+    /**
+     * 行クラスタリング閾値を動的に計算（IQRベース外れ値除去）
+     *
+     * テキストボックスの高さに基づいて閾値を決定。
+     * 同一行内のY座標ズレを吸収しつつ、別行を分離する。
+     *
+     * @param textBoxes テキストボックスのリスト
+     * @return 行クラスタリング閾値（px）
+     */
+    private fun calculateRowClusteringThreshold(textBoxes: List<TextBox>): Int {
+        val heights = textBoxes.map { it.bounds.height() }
+
+        if (heights.size < 4) {
+            // サンプル不足時はデフォルト値を使用
+            return DEFAULT_ROW_CLUSTERING_Y_THRESHOLD
+        }
+
+        // IQRベースで外れ値を除去
+        val sorted = heights.sorted()
+        val q1 = sorted[(sorted.size * 0.25).toInt()]
+        val q3 = sorted[(sorted.size * 0.75).toInt()]
+        val iqr = q3 - q1
+
+        val lower = q1 - 1.5 * iqr
+        val upper = q3 + 1.5 * iqr
+
+        val filtered = sorted.filter { it >= lower && it <= upper }
+
+        val avgHeight = if (filtered.isNotEmpty()) {
+            filtered.average()
+        } else {
+            sorted.average()
+        }
+
+        // 閾値は文字高さの60%（同一行のズレを吸収、別行を分離）
+        return (avgHeight * 0.6).toInt().coerceIn(10, 30)
     }
 
     /**
