@@ -246,75 +246,87 @@ object OcrQualityEvaluator {
     fun evaluateOcrQuality(bitmap: Bitmap): OcrQuality {
         Log.d(TAG, "evaluateOcrQuality: input bitmap ${bitmap.width}x${bitmap.height}, config=${bitmap.config}, isRecycled=${bitmap.isRecycled}")
 
-        // ===============================================
-        // ステップ1: フォーカス・コントラスト評価 (1280px)
-        // ===============================================
-        val previewScale = 1280.0f / maxOf(bitmap.width, bitmap.height)
-        val previewWidth = (bitmap.width * previewScale).toInt()
-        val previewHeight = (bitmap.height * previewScale).toInt()
+        // リソース管理用変数（try-finallyで確実に解放）
+        var previewBitmap: Bitmap? = null
+        var grayPreview: Bitmap? = null
+        var ocrBitmap: Bitmap? = null
+        var grayOcr: Bitmap? = null
+        var edge: Bitmap? = null
 
-        val previewBitmap = Bitmap.createScaledBitmap(bitmap, previewWidth, previewHeight, true)
-        Log.d(TAG, "evaluateOcrQuality: preview scaled to ${previewBitmap.width}x${previewBitmap.height} (${String.format("%.1f", previewScale * 100)}%)")
+        try {
+            // ===============================================
+            // ステップ1: フォーカス・コントラスト評価 (1280px)
+            // ===============================================
+            val previewScale = 1280.0f / maxOf(bitmap.width, bitmap.height)
+            val previewWidth = (bitmap.width * previewScale).toInt()
+            val previewHeight = (bitmap.height * previewScale).toInt()
 
-        // グレースケール化
-        val grayPreview = ImagePreprocessor.toGray(previewBitmap)
-        previewBitmap.recycle()
+            previewBitmap = Bitmap.createScaledBitmap(bitmap, previewWidth, previewHeight, true)
+            Log.d(TAG, "evaluateOcrQuality: preview scaled to ${previewBitmap.width}x${previewBitmap.height} (${String.format("%.1f", previewScale * 100)}%)")
 
-        // フォーカス計算
-        val focus = calculateSharpness(grayPreview)
+            // グレースケール化
+            grayPreview = ImagePreprocessor.toGray(previewBitmap)
 
-        // コントラスト計算（グレースケール画像を使用）
-        val contrastValue = contrastScore(grayPreview)
-        grayPreview.recycle()
+            // フォーカス計算
+            val focus = calculateSharpness(grayPreview!!)
 
-        // ===============================================
-        // ステップ2: 文字高さ評価 (2400px OCRスケール)
-        // ===============================================
-        // OCR実行時の2400pxスケールで文字高さを測定
-        val ocrScale = 2400.0f / maxOf(bitmap.width, bitmap.height)
-        val ocrWidth = (bitmap.width * ocrScale).toInt()
-        val ocrHeight = (bitmap.height * ocrScale).toInt()
+            // コントラスト計算（グレースケール画像を使用）
+            val contrastValue = contrastScore(grayPreview!!)
 
-        val ocrBitmap = Bitmap.createScaledBitmap(bitmap, ocrWidth, ocrHeight, true)
-        Log.d(TAG, "evaluateOcrQuality: OCR scaled to ${ocrBitmap.width}x${ocrBitmap.height} (${String.format("%.1f", ocrScale * 100)}%)")
+            // ===============================================
+            // ステップ2: 文字高さ評価 (2400px OCRスケール)
+            // ===============================================
+            // OCR実行時の2400pxスケールで文字高さを測定
+            val ocrScale = 2400.0f / maxOf(bitmap.width, bitmap.height)
+            val ocrWidth = (bitmap.width * ocrScale).toInt()
+            val ocrHeight = (bitmap.height * ocrScale).toInt()
 
-        // グレースケール化
-        val grayOcr = ImagePreprocessor.toGray(ocrBitmap)
-        ocrBitmap.recycle()
+            ocrBitmap = Bitmap.createScaledBitmap(bitmap, ocrWidth, ocrHeight, true)
+            Log.d(TAG, "evaluateOcrQuality: OCR scaled to ${ocrBitmap.width}x${ocrBitmap.height} (${String.format("%.1f", ocrScale * 100)}%)")
 
-        // エッジ検出
-        val edge = ImagePreprocessor.edgeDetect(grayOcr)
+            // グレースケール化
+            grayOcr = ImagePreprocessor.toGray(ocrBitmap!!)
 
-        // 文字高さ推定（2400pxスケール）
-        val charHeight = ImagePreprocessor.estimateCharHeight(edge)
-        Log.d(TAG, "evaluateOcrQuality: charHeight at OCR scale (2400px) = ${charHeight}px")
-        edge.recycle()
-        grayOcr.recycle()
+            // エッジ検出
+            edge = ImagePreprocessor.edgeDetect(grayOcr!!)
 
-        // ===============================================
-        // ステップ3: 総合評価
-        // ===============================================
-        val focusScoreValue = focusScore(focus)
-        val charHeightScoreValue = charHeightScore(charHeight)
+            // 文字高さ推定（2400pxスケール）
+            val charHeight = ImagePreprocessor.estimateCharHeight(edge!!)
+            Log.d(TAG, "evaluateOcrQuality: charHeight at OCR scale (2400px) = ${charHeight}px")
 
-        // 重み付き総合スコア
-        val total = focusScoreValue * WEIGHT_FOCUS +
-                    charHeightScoreValue * WEIGHT_CHAR_HEIGHT +
-                    contrastValue * WEIGHT_CONTRAST
+            // ===============================================
+            // ステップ3: 総合評価
+            // ===============================================
+            val focusScoreValue = focusScore(focus)
+            val charHeightScoreValue = charHeightScore(charHeight)
 
-        val quality = OcrQuality(
-            score = total,
-            focus = focus,
-            focusScore = focusScoreValue,
-            charHeight = charHeight,
-            charHeightScore = charHeightScoreValue,
-            contrast = contrastValue,
-            contrastScore = contrastValue,
-            isGood = total >= QUALITY_THRESHOLD
-        )
+            // 重み付き総合スコア
+            val total = focusScoreValue * WEIGHT_FOCUS +
+                        charHeightScoreValue * WEIGHT_CHAR_HEIGHT +
+                        contrastValue * WEIGHT_CONTRAST
 
-        Log.d(TAG, quality.toString())
-        return quality
+            val quality = OcrQuality(
+                score = total,
+                focus = focus,
+                focusScore = focusScoreValue,
+                charHeight = charHeight,
+                charHeightScore = charHeightScoreValue,
+                contrast = contrastValue,
+                contrastScore = contrastValue,
+                isGood = total >= QUALITY_THRESHOLD
+            )
+
+            Log.d(TAG, quality.toString())
+            return quality
+
+        } finally {
+            // リソースを確実に解放
+            previewBitmap?.recycle()
+            grayPreview?.recycle()
+            ocrBitmap?.recycle()
+            grayOcr?.recycle()
+            edge?.recycle()
+        }
     }
 
     /**

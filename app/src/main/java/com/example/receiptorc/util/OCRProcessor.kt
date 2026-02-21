@@ -759,203 +759,149 @@ object OCRProcessor {
     ): Map<Int, DoubleOcrResult> {
         Log.d(TAG, "[PRODUCT] ========== Product Name Column Re-OCR Start ==========")
 
-        // 1. 商品名列ROIを取得
-        val itemRange = UnderlyingBaseProcessor.getItemRange()
-        val itemX = itemRange.first
-        val itemWidth = itemRange.last - itemRange.first
+        // リソース管理用変数（try-finallyで確実に解放）
+        var itemColumnBitmap: Bitmap? = null
+        var grayBitmap: Bitmap? = null
+        var enhancedBitmap: Bitmap? = null
+        var grayMat: org.opencv.core.Mat? = null
+        var grayMatGray: org.opencv.core.Mat? = null
+        var openedMat: org.opencv.core.Mat? = null
+        var grayMatForOcr: org.opencv.core.Mat? = null
+        var grayBitmapForOcr: Bitmap? = null
+        var scaledGrayBitmap: Bitmap? = null
+        var binaryMat: org.opencv.core.Mat? = null
+        var binaryBitmapForOcr: Bitmap? = null
+        var scaledBinaryBitmap: Bitmap? = null
 
-        Log.d(TAG, "[PRODUCT] Product name column ROI: X=$itemX, Width=$itemWidth")
-
-        // 2. 商品名列を切り出し（通常行のY座標範囲に限定、合計行を除外）
-        val normalRowYRange = UnderlyingBaseProcessor.getNormalRowYRange()
-        val itemY = normalRowYRange.first
-        val itemHeight = normalRowYRange.last - normalRowYRange.first
-
-        Log.d(TAG, "[PRODUCT] Y-range limited to normal rows: Y=$itemY, Height=$itemHeight (excluding total row)")
-
-        val itemColumnBitmap = Bitmap.createBitmap(
-            warpedBitmap,
-            itemX,
-            itemY,
-            itemWidth.coerceAtMost(warpedBitmap.width - itemX),
-            itemHeight.coerceAtMost(warpedBitmap.height - itemY)
-        )
-
-        // 3. 前処理: グレースケール + コントラスト調整
-        val grayBitmap = ImagePreprocessor.toGray(itemColumnBitmap)
-        val enhancedBitmap = ImagePreprocessor.adjustContrast(grayBitmap, 1.2f)
-
-        // 4. Bitmap → Mat 変換
-        val grayMat = org.opencv.core.Mat()
-        org.opencv.android.Utils.bitmapToMat(enhancedBitmap, grayMat)
-        val grayMatGray = org.opencv.core.Mat()
-        org.opencv.imgproc.Imgproc.cvtColor(grayMat, grayMatGray, org.opencv.imgproc.Imgproc.COLOR_RGBA2GRAY)
-        grayMat.release()
-
-        // 5. 文字高さ測定
-        val charPx = ImagePreprocessor.estimateCharHeightPx(enhancedBitmap)
-        Log.d(TAG, "[PRODUCT] Character height: ${charPx}px")
-
-        // 6. 画像特徴計測（段階A: 二値OCRを走らせるか判定）
-        val edgeDensity = ImagePreprocessor.calcEdgeDensity(grayMatGray)
-        val blackRatio = ImagePreprocessor.calcBlackRatio(grayMatGray)
-        val strokeWidthVar = ImagePreprocessor.calcStrokeWidthVariance(grayMatGray)
-
-        // 7. 二値OCR候補スコアを計算
-        val binaryCandidateScore = ImagePreprocessor.calcBinaryCandidateScore(
-            charPx, edgeDensity, blackRatio, strokeWidthVar
-        )
-
-        // 8. モルフォロジーOpen（ノイズ除去）
-        val openedMat = ImagePreprocessor.safeMorphOpen(grayMatGray, charPx)
-        Log.d(TAG, "[PRODUCT] Applied morph open")
-
-        // 9. 段階A判定: 二値OCRを走らせるか
-        // ハード条件（最低限）: strokeWidthVarは減点要素として使用（ハード条件ではない）
-        val canTryBinary = (
-            charPx >= 18f &&
-            blackRatio <= 0.45 &&
-            edgeDensity >= 0.02
-        )
-
-        // スコア条件
-        val shouldUseBinary = canTryBinary && binaryCandidateScore >= 0.5
-
-        Log.d(TAG, "[PRODUCT] 段階A - Binary candidate: score=${String.format("%.3f", binaryCandidateScore)}, " +
-            "charPx=$charPx, blackRatio=${String.format("%.3f", blackRatio)}, " +
-            "edgeDensity=${String.format("%.3f", edgeDensity)}, " +
-            "canTry=$canTryBinary, useBinary=$shouldUseBinary")
-
-        // スケールファクター計算（座標逆変換用）
-        val scaleFactor = ImagePreprocessor.calcScaleFactor(charPx, 32f)
-        Log.d(TAG, "[PRODUCT] Scale factor: $scaleFactor")
-
-        // 10. グレー版OCR（常に実行 = 主系）
-        val grayMatForOcr = openedMat.clone()
-        val grayBitmapForOcr = matToBitmap(grayMatForOcr)
-        val scaledGrayBitmap = scaleForOcr(grayBitmapForOcr, charPx)
-        val grayOcrText = recognizeText(scaledGrayBitmap)
-        Log.d(TAG, "[PRODUCT-GRAY] OCR result: ${if (grayOcrText != null) "success" else "failed"}")
-
-        // 11. 二値版OCR（条件付き = 補助火力）
+        var grayOcrText: com.google.mlkit.vision.text.Text? = null
         var binaryOcrText: com.google.mlkit.vision.text.Text? = null
-        if (shouldUseBinary) {
-            val binaryMat = ImagePreprocessor.safeAdaptiveThreshold(openedMat, charPx)
-            val binaryBitmapForOcr = matToBitmap(binaryMat)
-            val scaledBinaryBitmap = scaleForOcr(binaryBitmapForOcr, charPx)
-            binaryOcrText = recognizeText(scaledBinaryBitmap)
-            Log.d(TAG, "[PRODUCT-BINARY] OCR result: ${if (binaryOcrText != null) "success" else "failed"}")
+        var scaleFactor = 1f
+        var itemX = 0
+        var itemY = 0
+        var binaryCandidateScore = 0.0
 
-            binaryMat.release()
-            binaryBitmapForOcr.recycle()
-            scaledBinaryBitmap.recycle()
-        } else {
-            Log.d(TAG, "[PRODUCT-BINARY] Skipped (段階A条件を満たさず)")
+        try {
+            // 1. 商品名列ROIを取得
+            val itemRange = UnderlyingBaseProcessor.getItemRange()
+            itemX = itemRange.first
+            val itemWidth = itemRange.last - itemRange.first
+
+            Log.d(TAG, "[PRODUCT] Product name column ROI: X=$itemX, Width=$itemWidth")
+
+            // 2. 商品名列を切り出し（通常行のY座標範囲に限定、合計行を除外）
+            val normalRowYRange = UnderlyingBaseProcessor.getNormalRowYRange()
+            itemY = normalRowYRange.first
+            val itemHeight = normalRowYRange.last - normalRowYRange.first
+
+            Log.d(TAG, "[PRODUCT] Y-range limited to normal rows: Y=$itemY, Height=$itemHeight (excluding total row)")
+
+            itemColumnBitmap = Bitmap.createBitmap(
+                warpedBitmap,
+                itemX,
+                itemY,
+                itemWidth.coerceAtMost(warpedBitmap.width - itemX),
+                itemHeight.coerceAtMost(warpedBitmap.height - itemY)
+            )
+
+            // 3. 前処理: グレースケール + コントラスト調整
+            grayBitmap = ImagePreprocessor.toGray(itemColumnBitmap!!)
+            enhancedBitmap = ImagePreprocessor.adjustContrast(grayBitmap!!, 1.2f)
+
+            // 4. Bitmap → Mat 変換
+            grayMat = org.opencv.core.Mat()
+            org.opencv.android.Utils.bitmapToMat(enhancedBitmap, grayMat)
+            grayMatGray = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.cvtColor(grayMat, grayMatGray, org.opencv.imgproc.Imgproc.COLOR_RGBA2GRAY)
+            grayMat!!.release()
+            grayMat = null  // 解放済みマーク
+
+            // 5. 文字高さ測定
+            val charPx = ImagePreprocessor.estimateCharHeightPx(enhancedBitmap!!)
+            Log.d(TAG, "[PRODUCT] Character height: ${charPx}px")
+
+            // 6. 画像特徴計測（段階A: 二値OCRを走らせるか判定）
+            val edgeDensity = ImagePreprocessor.calcEdgeDensity(grayMatGray!!)
+            val blackRatio = ImagePreprocessor.calcBlackRatio(grayMatGray!!)
+            val strokeWidthVar = ImagePreprocessor.calcStrokeWidthVariance(grayMatGray!!)
+
+            // 7. 二値OCR候補スコアを計算
+            binaryCandidateScore = ImagePreprocessor.calcBinaryCandidateScore(
+                charPx, edgeDensity, blackRatio, strokeWidthVar
+            )
+
+            // 8. モルフォロジーOpen（ノイズ除去）
+            openedMat = ImagePreprocessor.safeMorphOpen(grayMatGray!!, charPx)
+            Log.d(TAG, "[PRODUCT] Applied morph open")
+
+            // 9. 段階A判定: 二値OCRを走らせるか
+            val canTryBinary = (
+                charPx >= 18f &&
+                blackRatio <= 0.45 &&
+                edgeDensity >= 0.02
+            )
+
+            val shouldUseBinary = canTryBinary && binaryCandidateScore >= 0.5
+
+            Log.d(TAG, "[PRODUCT] 段階A - Binary candidate: score=${String.format("%.3f", binaryCandidateScore)}, " +
+                "charPx=$charPx, blackRatio=${String.format("%.3f", blackRatio)}, " +
+                "edgeDensity=${String.format("%.3f", edgeDensity)}, " +
+                "canTry=$canTryBinary, useBinary=$shouldUseBinary")
+
+            // スケールファクター計算（座標逆変換用）
+            scaleFactor = ImagePreprocessor.calcScaleFactor(charPx, 32f)
+            Log.d(TAG, "[PRODUCT] Scale factor: $scaleFactor")
+
+            // 10. グレー版OCR（常に実行 = 主系）
+            grayMatForOcr = openedMat!!.clone()
+            grayBitmapForOcr = matToBitmap(grayMatForOcr!!)
+            scaledGrayBitmap = scaleForOcr(grayBitmapForOcr!!, charPx)
+            grayOcrText = recognizeText(scaledGrayBitmap!!)
+            Log.d(TAG, "[PRODUCT-GRAY] OCR result: ${if (grayOcrText != null) "success" else "failed"}")
+
+            // 11. 二値版OCR（条件付き = 補助火力）
+            if (shouldUseBinary) {
+                binaryMat = ImagePreprocessor.safeAdaptiveThreshold(openedMat!!, charPx)
+                binaryBitmapForOcr = matToBitmap(binaryMat!!)
+                scaledBinaryBitmap = scaleForOcr(binaryBitmapForOcr!!, charPx)
+                binaryOcrText = recognizeText(scaledBinaryBitmap!!)
+                Log.d(TAG, "[PRODUCT-BINARY] OCR result: ${if (binaryOcrText != null) "success" else "failed"}")
+            } else {
+                Log.d(TAG, "[PRODUCT-BINARY] Skipped (段階A条件を満たさず)")
+            }
+
+        } finally {
+            // リソースを確実に解放（例外発生時も含む）
+            itemColumnBitmap?.recycle()
+            grayBitmap?.recycle()
+            enhancedBitmap?.recycle()
+            grayMat?.release()
+            grayMatGray?.release()
+            openedMat?.release()
+            grayMatForOcr?.release()
+            grayBitmapForOcr?.recycle()
+            scaledGrayBitmap?.recycle()
+            binaryMat?.release()
+            binaryBitmapForOcr?.recycle()
+            scaledBinaryBitmap?.recycle()
         }
-
-        // クリーンアップ
-        itemColumnBitmap.recycle()
-        grayBitmap.recycle()
-        enhancedBitmap.recycle()
-        grayMatGray.release()
-        openedMat.release()
-        grayMatForOcr.release()
-        grayBitmapForOcr.recycle()
-        scaledGrayBitmap.recycle()
 
         if (grayOcrText == null && binaryOcrText == null) {
             Log.w(TAG, "[PRODUCT] Both gray and binary OCR failed")
             return emptyMap()
         }
 
-        // 9. グレー版のTextBox抽出
-        val grayProductBoxes = mutableListOf<UnderlyingBaseProcessor.TextBox>()
-        grayOcrText?.textBlocks?.forEach { block ->
-            block.lines.forEach { line ->
-                val bounds = line.boundingBox
-                if (bounds != null) {
-                    val scaledBounds = android.graphics.Rect(
-                        (bounds.left / scaleFactor).toInt() + itemX,
-                        (bounds.top / scaleFactor).toInt() + itemY,
-                        (bounds.right / scaleFactor).toInt() + itemX,
-                        (bounds.bottom / scaleFactor).toInt() + itemY
-                    )
-                    grayProductBoxes.add(
-                        UnderlyingBaseProcessor.TextBox(
-                            text = line.text.trim(),
-                            bounds = scaledBounds,
-                            centerX = scaledBounds.centerX(),
-                            centerY = scaledBounds.centerY()
-                        )
-                    )
-                }
-            }
-        }
+        // 9. TextBox抽出（ヘルパー関数使用）
+        val grayProductBoxes = extractTextBoxesFromOcrResult(
+            grayOcrText, scaleFactor, itemX, itemY
+        ).sortedBy { it.centerY }
 
-        // 10. 二値版のTextBox抽出
-        val binaryProductBoxes = mutableListOf<UnderlyingBaseProcessor.TextBox>()
-        binaryOcrText?.textBlocks?.forEach { block ->
-            block.lines.forEach { line ->
-                val bounds = line.boundingBox
-                if (bounds != null) {
-                    val scaledBounds = android.graphics.Rect(
-                        (bounds.left / scaleFactor).toInt() + itemX,
-                        (bounds.top / scaleFactor).toInt() + itemY,
-                        (bounds.right / scaleFactor).toInt() + itemX,
-                        (bounds.bottom / scaleFactor).toInt() + itemY
-                    )
-                    binaryProductBoxes.add(
-                        UnderlyingBaseProcessor.TextBox(
-                            text = line.text.trim(),
-                            bounds = scaledBounds,
-                            centerX = scaledBounds.centerX(),
-                            centerY = scaledBounds.centerY()
-                        )
-                    )
-                }
-            }
-        }
+        val binaryProductBoxes = extractTextBoxesFromOcrResult(
+            binaryOcrText, scaleFactor, itemX, itemY
+        ).sortedBy { it.centerY }
 
-        // 11. 両方のTextBoxをソート
-        grayProductBoxes.sortBy { it.centerY }
-        binaryProductBoxes.sortBy { it.centerY }
-
-        // 12. 行にマッピング（グレー版）
-        val grayProductMap = mutableMapOf<Int, String>()
-        val yThreshold = 15
-
-        rows.forEachIndexed { rowIndex, row ->
-            if (row.rowType != UnderlyingBaseProcessor.RowType.NORMAL) return@forEachIndexed
-            val rowY = rowYCoordinates.getOrNull(rowIndex) ?: return@forEachIndexed
-
-            val matchingBoxes = grayProductBoxes.filter { box ->
-                kotlin.math.abs(box.centerY - rowY) <= yThreshold
-            }
-
-            if (matchingBoxes.isNotEmpty()) {
-                val combinedText = matchingBoxes.sortedBy { it.centerX }.joinToString("") { it.text }
-                val cleanedText = UnderlyingBaseProcessor.cleanItemName(combinedText)
-                grayProductMap[rowIndex] = cleanedText
-            }
-        }
-
-        // 13. 行にマッピング（二値版）
-        val binaryProductMap = mutableMapOf<Int, String>()
-
-        rows.forEachIndexed { rowIndex, row ->
-            if (row.rowType != UnderlyingBaseProcessor.RowType.NORMAL) return@forEachIndexed
-            val rowY = rowYCoordinates.getOrNull(rowIndex) ?: return@forEachIndexed
-
-            val matchingBoxes = binaryProductBoxes.filter { box ->
-                kotlin.math.abs(box.centerY - rowY) <= yThreshold
-            }
-
-            if (matchingBoxes.isNotEmpty()) {
-                val combinedText = matchingBoxes.sortedBy { it.centerX }.joinToString("") { it.text }
-                val cleanedText = UnderlyingBaseProcessor.cleanItemName(combinedText)
-                binaryProductMap[rowIndex] = cleanedText
-            }
-        }
+        // 10. 行にマッピング（ヘルパー関数使用）
+        val grayProductMap = mapTextBoxesToRows(grayProductBoxes, rows, rowYCoordinates)
+        val binaryProductMap = mapTextBoxesToRows(binaryProductBoxes, rows, rowYCoordinates)
 
         // 14. ダブルOCR結果を統合（binaryCandidateScoreを含む）
         val doubleOcrMap = mutableMapOf<Int, DoubleOcrResult>()
@@ -977,6 +923,109 @@ object OCRProcessor {
 
         Log.d(TAG, "[PRODUCT] ========== Product Name Column Re-OCR Complete: ${doubleOcrMap.size} products ==========")
         return doubleOcrMap
+    }
+
+    /**
+     * ML Kit OCR結果からTextBoxリストを抽出（座標変換付き）
+     *
+     * @param ocrText ML Kit OCR結果（null可）
+     * @param scaleFactor スケールファクター（座標逆変換用）
+     * @param offsetX 切り出し領域のX座標オフセット
+     * @param offsetY 切り出し領域のY座標オフセット
+     * @return TextBoxのリスト（ocrTextがnullの場合は空リスト）
+     */
+    private fun extractTextBoxesFromOcrResult(
+        ocrText: Text?,
+        scaleFactor: Float,
+        offsetX: Int,
+        offsetY: Int
+    ): List<UnderlyingBaseProcessor.TextBox> {
+        if (ocrText == null) return emptyList()
+
+        val textBoxes = mutableListOf<UnderlyingBaseProcessor.TextBox>()
+
+        ocrText.textBlocks.forEach { block ->
+            block.lines.forEach { line ->
+                val bounds = line.boundingBox ?: return@forEach
+                val text = line.text.trim()
+                if (text.isEmpty()) return@forEach
+
+                // 座標をスケール逆変換 + オフセット適用
+                val originalLeft = (bounds.left / scaleFactor).toInt() + offsetX
+                val originalTop = (bounds.top / scaleFactor).toInt() + offsetY
+                val originalRight = (bounds.right / scaleFactor).toInt() + offsetX
+                val originalBottom = (bounds.bottom / scaleFactor).toInt() + offsetY
+
+                val originalBounds = android.graphics.Rect(
+                    originalLeft, originalTop, originalRight, originalBottom
+                )
+
+                textBoxes.add(
+                    UnderlyingBaseProcessor.TextBox(
+                        text = text,
+                        bounds = originalBounds,
+                        centerX = originalBounds.centerX(),
+                        centerY = originalBounds.centerY()
+                    )
+                )
+
+                Log.d(TAG, "[PRODUCT] TextBox: '$text' at centerY=${originalBounds.centerY()}")
+            }
+        }
+
+        return textBoxes
+    }
+
+    /**
+     * TextBoxを行にマッピング
+     *
+     * 各TextBoxのcenterYと最も近い行のY座標を比較してマッピング
+     *
+     * @param productBoxes TextBoxリスト（Y座標でソート済み前提）
+     * @param rows 行データリスト
+     * @param rowYCoordinates 各行のY座標リスト（rowsと同じ順序）
+     * @return マッピング結果（行インデックス → テキスト）
+     */
+    private fun mapTextBoxesToRows(
+        productBoxes: List<UnderlyingBaseProcessor.TextBox>,
+        rows: List<UnderlyingBaseProcessor.ReceiptRow>,
+        rowYCoordinates: List<Int>
+    ): Map<Int, String> {
+        val productMap = mutableMapOf<Int, String>()
+
+        // 行ごとのY座標と閾値を計算
+        val lineHeights = productBoxes.mapNotNull { it.bounds.height() }
+        val avgLineHeight = if (lineHeights.isNotEmpty()) lineHeights.average() else 28.0
+        val rowHeightThreshold = maxOf((avgLineHeight * 0.8).toInt(), 15)
+
+        productBoxes.forEach { box ->
+            // 最も近い行を検索
+            var bestIndex = -1
+            var bestDistance = Int.MAX_VALUE
+
+            rowYCoordinates.forEachIndexed { idx, rowY ->
+                val distance = kotlin.math.abs(box.centerY - rowY)
+                if (distance < bestDistance && distance < rowHeightThreshold * 2) {
+                    bestDistance = distance
+                    bestIndex = idx
+                }
+            }
+
+            if (bestIndex >= 0 && bestIndex < rows.size) {
+                // 既存のテキストに追記（同じ行に複数のTextBoxがある場合）
+                val existing = productMap[bestIndex]
+                productMap[bestIndex] = if (existing != null) {
+                    "$existing ${box.text}"
+                } else {
+                    box.text
+                }
+                Log.d(TAG, "[PRODUCT] Mapped box '${box.text}' to row $bestIndex (distance=$bestDistance)")
+            } else {
+                Log.d(TAG, "[PRODUCT] Box '${box.text}' at Y=${box.centerY} not matched to any row")
+            }
+        }
+
+        return productMap
     }
 
     /**

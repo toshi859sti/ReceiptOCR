@@ -76,25 +76,31 @@ object MultiScaleOcrProcessor {
     ): String {
         Log.d(TAG, "Product name adaptive OCR: ${columnBitmap.width}x${columnBitmap.height}")
 
-        // 前処理: グレースケール + コントラスト調整
-        val gray = ImagePreprocessor.toGray(columnBitmap)
-        val enhanced = ImagePreprocessor.adjustContrast(gray, 1.2f)
+        var gray: Bitmap? = null
+        var enhanced: Bitmap? = null
+        var scaled: Bitmap? = null
 
-        // 文字高さベースの自動スケーリング（ML Kit最適域: 30-40px）
-        val scaled = ImagePreprocessor.scaleItemColumnForOcr(enhanced)
+        try {
+            // 前処理: グレースケール + コントラスト調整
+            gray = ImagePreprocessor.toGray(columnBitmap)
+            enhanced = ImagePreprocessor.adjustContrast(gray, 1.2f)
 
-        // OCR実行（1回のみ）
-        val result = ocrJapanese(scaled)
+            // 文字高さベースの自動スケーリング（ML Kit最適域: 30-40px）
+            scaled = ImagePreprocessor.scaleItemColumnForOcr(enhanced)
 
-        // クリーンアップ
-        gray.recycle()
-        enhanced.recycle()
-        if (scaled !== enhanced) {
-            scaled.recycle()
+            // OCR実行（1回のみ）
+            val result = ocrJapanese(scaled!!)
+
+            Log.d(TAG, "Product name OCR result: '$result'")
+            return result
+        } finally {
+            // リソースを確実に解放
+            gray?.recycle()
+            enhanced?.recycle()
+            if (scaled !== enhanced) {
+                scaled?.recycle()
+            }
         }
-
-        Log.d(TAG, "Product name OCR result: '$result'")
-        return result
     }
 
     /**
@@ -112,23 +118,29 @@ object MultiScaleOcrProcessor {
     suspend fun ocrQuantity(columnBitmap: Bitmap): String {
         Log.d(TAG, "Quantity OCR: ${columnBitmap.width}x${columnBitmap.height}")
 
-        // 前処理: グレースケール化
-        val gray = ImagePreprocessor.toGray(columnBitmap)
+        var gray: Bitmap? = null
+        var scaled4x: Bitmap? = null
 
-        // 4倍拡大
-        val scaled4x = ImagePreprocessor.scale(gray, 4)
+        try {
+            // 前処理: グレースケール化
+            gray = ImagePreprocessor.toGray(columnBitmap)
 
-        // Latin OCR
-        val result = ocrLatin(scaled4x)
+            // 4倍拡大
+            scaled4x = ImagePreprocessor.scale(gray, 4)
 
-        gray.recycle()
-        scaled4x.recycle()
+            // Latin OCR
+            val result = ocrLatin(scaled4x!!)
 
-        // 数字のみを抽出
-        val digitsOnly = result.replace(Regex("[^0-9]"), "")
+            // 数字のみを抽出
+            val digitsOnly = result.replace(Regex("[^0-9]"), "")
 
-        Log.d(TAG, "Quantity result: '$result' → digits: '$digitsOnly'")
-        return digitsOnly
+            Log.d(TAG, "Quantity result: '$result' → digits: '$digitsOnly'")
+            return digitsOnly
+        } finally {
+            // リソースを確実に解放
+            gray?.recycle()
+            scaled4x?.recycle()
+        }
     }
 
     /**
@@ -147,28 +159,33 @@ object MultiScaleOcrProcessor {
     ): String {
         Log.d(TAG, "Product name auto OCR: ${columnBitmap.width}x${columnBitmap.height}")
 
-        // 文字高さ推定
-        val gray = ImagePreprocessor.toGray(columnBitmap)
-        val edge = ImagePreprocessor.edgeDetect(gray)
-        val charHeight = ImagePreprocessor.estimateCharHeight(edge)
-        val recommendedScale = ImagePreprocessor.decideScaleFactor(charHeight)
+        var gray: Bitmap? = null
+        var edge: Bitmap? = null
+        var enhanced: Bitmap? = null
 
-        edge.recycle()
+        try {
+            // 文字高さ推定
+            gray = ImagePreprocessor.toGray(columnBitmap)
+            edge = ImagePreprocessor.edgeDetect(gray)
+            val charHeight = ImagePreprocessor.estimateCharHeight(edge!!)
+            val recommendedScale = ImagePreprocessor.decideScaleFactor(charHeight)
 
-        Log.d(TAG, "Auto OCR: charHeight=$charHeight, recommendedScale=$recommendedScale")
+            Log.d(TAG, "Auto OCR: charHeight=$charHeight, recommendedScale=$recommendedScale")
 
-        // 推奨スケールが1なら等倍のみ、2以上なら複数スケール
-        return if (recommendedScale == 1) {
-            // 高解像度なので等倍でOK
-            val enhanced = ImagePreprocessor.adjustContrast(gray, 1.2f)
-            val result = ocrJapanese(enhanced)
-            gray.recycle()
-            enhanced.recycle()
-            result
-        } else {
-            // 低解像度なので複数スケールで試す
-            gray.recycle()
-            ocrProductNameMultiScale(columnBitmap, dictionary)
+            // 推奨スケールが1なら等倍のみ、2以上なら複数スケール
+            return if (recommendedScale == 1) {
+                // 高解像度なので等倍でOK
+                enhanced = ImagePreprocessor.adjustContrast(gray, 1.2f)
+                ocrJapanese(enhanced!!)
+            } else {
+                // 低解像度なので複数スケールで試す
+                ocrProductNameMultiScale(columnBitmap, dictionary)
+            }
+        } finally {
+            // リソースを確実に解放
+            gray?.recycle()
+            edge?.recycle()
+            enhanced?.recycle()
         }
     }
 

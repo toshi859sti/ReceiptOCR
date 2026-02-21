@@ -146,83 +146,90 @@ object ImageProcessor {
      * Arucoマーカーを検出
      */
     fun detectArucoMarkers(bitmap: Bitmap): ArucoDetectionResult {
-        val mat = bitmapToMat(bitmap)
-        val grayMat = Mat()
+        var mat: Mat? = null
+        var grayMat: Mat? = null
+        var blurredMat: Mat? = null
 
-        // 重要: Utils.bitmapToMatはBGRA形式に変換するため、COLOR_BGRA2GRAYを使用
-        if (mat.channels() == 4) {
-            Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_BGRA2GRAY)
-        } else if (mat.channels() == 3) {
-            Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_BGR2GRAY)
-        } else {
-            mat.copyTo(grayMat)
-        }
+        try {
+            mat = bitmapToMat(bitmap)
+            grayMat = Mat()
 
-        Log.d(TAG, "Image size: ${bitmap.width}x${bitmap.height}, Mat channels: ${mat.channels()}, type: ${mat.type()}")
-
-        // 前処理: グレースケール + 軽いGaussianBlur のみ（固定）
-        val blurredMat = Mat()
-        Imgproc.GaussianBlur(grayMat, blurredMat, Size(3.0, 3.0), 0.0)
-
-        Log.d(TAG, "Using fixed preprocessing: Grayscale + GaussianBlur(3x3)")
-
-        // 辞書: DICT_4X4_50 固定
-        val dictionary = Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50)
-        val detectorParams = DetectorParameters()
-        val detector = ArucoDetector(dictionary, detectorParams)
-
-        // ArUco検出
-        val corners = ArrayList<Mat>()
-        val ids = Mat()
-        detector.detectMarkers(blurredMat, corners, ids)
-
-        val detectedCount = corners.size
-        Log.d(TAG, "Dictionary DICT_4X4_50: Detected $detectedCount markers")
-
-        // メモリ解放
-        mat.release()
-        grayMat.release()
-        blurredMat.release()
-
-        if (detectedCount > 0) {
-            Log.d(TAG, "ArUco detection completed with $detectedCount markers")
-            val bestCorners = corners
-            val bestIds = ids
-
-            // 検出されたマーカーIDを確認
-            val detectedIds = mutableListOf<Int>()
-            for (i in 0 until bestIds.rows()) {
-                val id = bestIds.get(i, 0)[0].toInt()
-                detectedIds.add(id)
-                Log.d(TAG, "Marker ID: $id")
+            // 重要: Utils.bitmapToMatはBGRA形式に変換するため、COLOR_BGRA2GRAYを使用
+            if (mat!!.channels() == 4) {
+                Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_BGRA2GRAY)
+            } else if (mat.channels() == 3) {
+                Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_BGR2GRAY)
+            } else {
+                mat.copyTo(grayMat)
             }
 
-            Log.d(TAG, "All detected IDs: $detectedIds")
+            Log.d(TAG, "Image size: ${bitmap.width}x${bitmap.height}, Mat channels: ${mat.channels()}, type: ${mat.type()}")
 
-            // ブロックタイプを判定
-            val blockType = when {
-                detectedIds.containsAll(listOf(0, 1, 2, 3)) -> {
-                    Log.d(TAG, "B_BLOCK detected")
-                    BlockType.B_BLOCK
+            // 前処理: グレースケール + 軽いGaussianBlur のみ（固定）
+            blurredMat = Mat()
+            Imgproc.GaussianBlur(grayMat, blurredMat, Size(3.0, 3.0), 0.0)
+
+            Log.d(TAG, "Using fixed preprocessing: Grayscale + GaussianBlur(3x3)")
+
+            // 辞書: DICT_4X4_50 固定
+            val dictionary = Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50)
+            val detectorParams = DetectorParameters()
+            val detector = ArucoDetector(dictionary, detectorParams)
+
+            // ArUco検出
+            val corners = ArrayList<Mat>()
+            val ids = Mat()
+            detector.detectMarkers(blurredMat, corners, ids)
+
+            val detectedCount = corners.size
+            Log.d(TAG, "Dictionary DICT_4X4_50: Detected $detectedCount markers")
+
+            if (detectedCount > 0) {
+                Log.d(TAG, "ArUco detection completed with $detectedCount markers")
+                val bestCorners = corners
+                val bestIds = ids
+
+                // 検出されたマーカーIDを確認
+                val detectedIds = mutableListOf<Int>()
+                for (i in 0 until bestIds.rows()) {
+                    val id = bestIds.get(i, 0)[0].toInt()
+                    detectedIds.add(id)
+                    Log.d(TAG, "Marker ID: $id")
                 }
-                detectedIds.containsAll(listOf(4, 5, 6, 7)) -> {
-                    Log.d(TAG, "C_BLOCK detected")
-                    BlockType.C_BLOCK
+
+                Log.d(TAG, "All detected IDs: $detectedIds")
+
+                // ブロックタイプを判定
+                val blockType = when {
+                    detectedIds.containsAll(listOf(0, 1, 2, 3)) -> {
+                        Log.d(TAG, "B_BLOCK detected")
+                        BlockType.B_BLOCK
+                    }
+                    detectedIds.containsAll(listOf(4, 5, 6, 7)) -> {
+                        Log.d(TAG, "C_BLOCK detected")
+                        BlockType.C_BLOCK
+                    }
+                    else -> {
+                        Log.d(TAG, "Incomplete block. Required: [0,1,2,3] or [4,5,6,7], Got: $detectedIds")
+                        null
+                    }
                 }
-                else -> {
-                    Log.d(TAG, "Incomplete block. Required: [0,1,2,3] or [4,5,6,7], Got: $detectedIds")
-                    null
-                }
+
+                val isValid = blockType != null && bestCorners.size >= 4
+                val matOfPoint2fList = bestCorners.map { MatOfPoint2f(it) }
+
+                return ArucoDetectionResult(matOfPoint2fList, bestIds, isValid, blockType)
             }
 
-            val isValid = blockType != null && bestCorners.size >= 4
-            val matOfPoint2fList = bestCorners.map { MatOfPoint2f(it) }
+            Log.w(TAG, "No markers detected with any dictionary")
+            return ArucoDetectionResult(emptyList(), Mat(), false, null)
 
-            return ArucoDetectionResult(matOfPoint2fList, bestIds, isValid, blockType)
+        } finally {
+            // リソースを確実に解放
+            mat?.release()
+            grayMat?.release()
+            blurredMat?.release()
         }
-
-        Log.w(TAG, "No markers detected with any dictionary")
-        return ArucoDetectionResult(emptyList(), Mat(), false, null)
     }
 
     /**
@@ -436,11 +443,16 @@ object ImageProcessor {
         blockType: BlockType,
         useFixedOutput: Boolean = false
     ): Bitmap? {
-        try {
-            val mat = bitmapToMat(bitmap)
+        // リソース管理用変数（try-finallyで確実に解放）
+        var mat: Mat? = null
+        var srcMat: MatOfPoint2f? = null
+        var dstMat: MatOfPoint2f? = null
+        var transformMatrix: Mat? = null
+        var warpedMat: Mat? = null
 
-            val srcMat: MatOfPoint2f
-            val dstMat: MatOfPoint2f
+        try {
+            mat = bitmapToMat(bitmap)
+
             val dstWidth: Int
             val dstHeight: Int
 
@@ -497,8 +509,7 @@ object ImageProcessor {
                 val blockBounds = calculateBlockBounds(corners, ids, blockType)
                 if (blockBounds == null) {
                     Log.e(TAG, "Failed to calculate block bounds")
-                    mat.release()
-                    return null
+                    return null  // finallyブロックでリソース解放
                 }
 
                 srcMat = MatOfPoint2f(
@@ -527,10 +538,10 @@ object ImageProcessor {
             }
 
             // 透視変換行列を計算
-            val transformMatrix = Imgproc.getPerspectiveTransform(srcMat, dstMat)
+            transformMatrix = Imgproc.getPerspectiveTransform(srcMat, dstMat)
 
             // 透視変換を適用
-            val warpedMat = Mat()
+            warpedMat = Mat()
             Imgproc.warpPerspective(
                 mat,
                 warpedMat,
@@ -538,15 +549,17 @@ object ImageProcessor {
                 Size(dstWidth.toDouble(), dstHeight.toDouble())
             )
 
-            mat.release()
-            transformMatrix.release()
-            srcMat.release()
-            dstMat.release()
-
-            return matToBitmap(warpedMat)
+            return matToBitmap(warpedMat!!)
         } catch (e: Exception) {
             Log.e(TAG, "Error in perspective transform", e)
             return null
+        } finally {
+            // リソースを確実に解放
+            mat?.release()
+            srcMat?.release()
+            dstMat?.release()
+            transformMatrix?.release()
+            warpedMat?.release()
         }
     }
 
@@ -560,8 +573,9 @@ object ImageProcessor {
         transformedBitmap: Bitmap,
         blockType: BlockType
     ): BlockExtractionResult? {
+        var mat: Mat? = null
         try {
-            val mat = bitmapToMat(transformedBitmap)
+            mat = bitmapToMat(transformedBitmap)
 
             Log.d(TAG, "Block extraction - Type: $blockType")
             Log.d(TAG, "  Block image size: ${mat.cols()}x${mat.rows()} px")
@@ -574,12 +588,12 @@ object ImageProcessor {
             // セルに分割
             val cellImages = divideBlockIntoCells(mat, blockType)
 
-            mat.release()
-
             return BlockExtractionResult(transformedBitmap, cellImages)
         } catch (e: Exception) {
             Log.e(TAG, "Error in extracting block", e)
             return null
+        } finally {
+            mat?.release()
         }
     }
 
@@ -848,12 +862,20 @@ object ImageProcessor {
         xMax: Int,
         calculatedSeparatorX: Int
     ): Int? {
+        // リソース管理用変数（try-finallyで確実に解放）
+        var mat: Mat? = null
+        var grayMat: Mat? = null
+        var headerMat: Mat? = null
+        var edges: Mat? = null
+        var lines: Mat? = null
+        var debugMat: Mat? = null
+
         try {
-            val mat = bitmapToMat(blockBitmap)
-            val grayMat = Mat()
+            mat = bitmapToMat(blockBitmap)
+            grayMat = Mat()
 
             // グレースケールに変換
-            if (mat.channels() == 4) {
+            if (mat!!.channels() == 4) {
                 Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_BGRA2GRAY)
             } else if (mat.channels() == 3) {
                 Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_BGR2GRAY)
@@ -871,16 +893,16 @@ object ImageProcessor {
             // ブロック高さの10%と比較して小さい方を使用
             val headerHeight = minOf(headerHeightPx, (blockBitmap.height * 0.1).toInt())
             val headerRoi = Rect(0, 0, blockBitmap.width, headerHeight)
-            val headerMat = Mat(grayMat, headerRoi)
+            headerMat = Mat(grayMat, headerRoi)
 
             Log.d(TAG, "Detecting line in header region: height=$headerHeight px (${headerHeightMm}mm ≈ ${headerHeightPx}px, max=${(blockBitmap.height * 0.1).toInt()}px)")
 
             // エッジ検出（Canny）- ヘッダー領域のみ
-            val edges = Mat()
+            edges = Mat()
             Imgproc.Canny(headerMat, edges, 50.0, 150.0)
 
             // Hough Line Transform で線分を検出（ヘッダー領域内）
-            val lines = Mat()
+            lines = Mat()
             Imgproc.HoughLinesP(
                 edges,
                 lines,
@@ -891,12 +913,12 @@ object ImageProcessor {
                 10.0                    // maxLineGap: 線分間の最大ギャップ
             )
 
-            Log.d(TAG, "Detected ${lines.rows()} line segments")
+            Log.d(TAG, "Detected ${lines!!.rows()} line segments")
 
             // デバッグ用：検出した線を描画するためのカラー画像
-            val debugMat = Mat()
+            debugMat = Mat()
             mat.copyTo(debugMat)
-            if (debugMat.channels() == 4) {
+            if (debugMat!!.channels() == 4) {
                 Imgproc.cvtColor(debugMat, debugMat, Imgproc.COLOR_BGRA2BGR)
             }
 
@@ -1008,13 +1030,7 @@ object ImageProcessor {
 
             if (solidLineGroup == null) {
                 Log.w(TAG, "No vertical separator line detected")
-                mat.release()
-                grayMat.release()
-                headerMat.release()
-                edges.release()
-                lines.release()
-                debugMat.release()
-                return null
+                return null  // finallyブロックでリソース解放
             }
 
             val separatorX = solidLineGroup.x
@@ -1211,19 +1227,19 @@ object ImageProcessor {
                 Log.d(TAG, "Line detection debug image saved")
             }
 
-            // メモリ解放
-            mat.release()
-            grayMat.release()
-            headerMat.release()
-            edges.release()
-            lines.release()
-            debugMat.release()
-
             return separatorX
 
         } catch (e: Exception) {
             Log.e(TAG, "Error detecting column separator", e)
             return null
+        } finally {
+            // リソースを確実に解放
+            mat?.release()
+            grayMat?.release()
+            headerMat?.release()
+            edges?.release()
+            lines?.release()
+            debugMat?.release()
         }
     }
 

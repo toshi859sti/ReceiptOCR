@@ -262,29 +262,36 @@ object ImagePreprocessor {
      * @return 推定文字高さ（px）、検出失敗時は0
      */
     fun estimateCharHeightPx(bitmap: Bitmap): Float {
+        var src: org.opencv.core.Mat? = null
+        var gray: org.opencv.core.Mat? = null
+        var edges: org.opencv.core.Mat? = null
+        var kernel: org.opencv.core.Mat? = null
+        var hierarchy: org.opencv.core.Mat? = null
+        var contours: MutableList<org.opencv.core.MatOfPoint>? = null
+
         try {
             // Bitmap → Mat
-            val src = org.opencv.core.Mat()
+            src = org.opencv.core.Mat()
             org.opencv.android.Utils.bitmapToMat(bitmap, src)
 
             // グレースケール化
-            val gray = org.opencv.core.Mat()
+            gray = org.opencv.core.Mat()
             org.opencv.imgproc.Imgproc.cvtColor(src, gray, org.opencv.imgproc.Imgproc.COLOR_RGBA2GRAY)
 
             // エッジ検出（Canny）
-            val edges = org.opencv.core.Mat()
+            edges = org.opencv.core.Mat()
             org.opencv.imgproc.Imgproc.Canny(gray, edges, 80.0, 160.0)
 
             // 膨張（文字をまとめる）
-            val kernel = org.opencv.imgproc.Imgproc.getStructuringElement(
+            kernel = org.opencv.imgproc.Imgproc.getStructuringElement(
                 org.opencv.imgproc.Imgproc.MORPH_RECT,
                 org.opencv.core.Size(3.0, 3.0)
             )
             org.opencv.imgproc.Imgproc.dilate(edges, edges, kernel)
 
             // 輪郭検出
-            val contours = mutableListOf<org.opencv.core.MatOfPoint>()
-            val hierarchy = org.opencv.core.Mat()
+            contours = mutableListOf()
+            hierarchy = org.opencv.core.Mat()
             org.opencv.imgproc.Imgproc.findContours(
                 edges,
                 contours,
@@ -294,7 +301,7 @@ object ImagePreprocessor {
             )
 
             // 高さを収集
-            val heights = contours.mapNotNull { cnt ->
+            val heights = contours!!.mapNotNull { cnt ->
                 val rect = org.opencv.imgproc.Imgproc.boundingRect(cnt)
                 when {
                     rect.height < 6 -> null       // ノイズ
@@ -302,14 +309,6 @@ object ImagePreprocessor {
                     else -> rect.height.toFloat()
                 }
             }
-
-            // リソース解放
-            src.release()
-            gray.release()
-            edges.release()
-            kernel.release()
-            hierarchy.release()
-            contours.forEach { it.release() }
 
             if (heights.isEmpty()) {
                 Log.w(TAG, "estimateCharHeightPx: No valid contours found")
@@ -326,6 +325,14 @@ object ImagePreprocessor {
         } catch (e: Exception) {
             Log.e(TAG, "estimateCharHeightPx: Error", e)
             return 0f
+        } finally {
+            // リソースを確実に解放
+            src?.release()
+            gray?.release()
+            edges?.release()
+            kernel?.release()
+            hierarchy?.release()
+            contours?.forEach { it.release() }
         }
     }
 
@@ -469,17 +476,20 @@ object ImagePreprocessor {
      * @return エッジ密度（0.0〜1.0）
      */
     fun calcEdgeDensity(grayMat: org.opencv.core.Mat): Double {
-        val edges = org.opencv.core.Mat()
-        org.opencv.imgproc.Imgproc.Canny(grayMat, edges, 50.0, 150.0)
+        var edges: org.opencv.core.Mat? = null
+        try {
+            edges = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.Canny(grayMat, edges, 50.0, 150.0)
 
-        val edgeCount = org.opencv.core.Core.countNonZero(edges)
-        val total = edges.rows() * edges.cols()
+            val edgeCount = org.opencv.core.Core.countNonZero(edges)
+            val total = edges.rows() * edges.cols()
 
-        edges.release()
-
-        val density = if (total > 0) edgeCount.toDouble() / total.toDouble() else 0.0
-        Log.d(TAG, "calcEdgeDensity: $density")
-        return density
+            val density = if (total > 0) edgeCount.toDouble() / total.toDouble() else 0.0
+            Log.d(TAG, "calcEdgeDensity: $density")
+            return density
+        } finally {
+            edges?.release()
+        }
     }
 
     /**
@@ -520,14 +530,18 @@ object ImagePreprocessor {
      * @return ストローク幅のばらつき 0.0〜1.0（低いほど良好）
      */
     fun calcStrokeWidthVariance(grayMat: org.opencv.core.Mat): Double {
+        var edges: org.opencv.core.Mat? = null
+        var hierarchy: org.opencv.core.Mat? = null
+        var contours: MutableList<org.opencv.core.MatOfPoint>? = null
+
         try {
             // エッジ検出
-            val edges = org.opencv.core.Mat()
+            edges = org.opencv.core.Mat()
             org.opencv.imgproc.Imgproc.Canny(grayMat, edges, 50.0, 150.0)
 
             // 輪郭検出
-            val contours = mutableListOf<org.opencv.core.MatOfPoint>()
-            val hierarchy = org.opencv.core.Mat()
+            contours = mutableListOf()
+            hierarchy = org.opencv.core.Mat()
             org.opencv.imgproc.Imgproc.findContours(
                 edges,
                 contours,
@@ -537,14 +551,10 @@ object ImagePreprocessor {
             )
 
             // 各輪郭の幅を収集
-            val widths = contours.mapNotNull { cnt ->
+            val widths = contours!!.mapNotNull { cnt ->
                 val rect = org.opencv.imgproc.Imgproc.boundingRect(cnt)
                 if (rect.width in 2..50) rect.width.toDouble() else null
             }
-
-            edges.release()
-            hierarchy.release()
-            contours.forEach { it.release() }
 
             if (widths.size < 3) {
                 Log.d(TAG, "calcStrokeWidthVariance: Insufficient data")
@@ -565,6 +575,11 @@ object ImagePreprocessor {
         } catch (e: Exception) {
             Log.e(TAG, "calcStrokeWidthVariance: Error", e)
             return 0.5
+        } finally {
+            // リソースを確実に解放
+            edges?.release()
+            hierarchy?.release()
+            contours?.forEach { it.release() }
         }
     }
 
@@ -644,8 +659,12 @@ object ImagePreprocessor {
         removeVertical: Boolean = true,
         removeHorizontal: Boolean = false
     ): org.opencv.core.Mat {
+        // 解放対象のMat（例外発生時に解放が必要）
+        val toRelease = mutableListOf<org.opencv.core.Mat>()
+        var result: org.opencv.core.Mat? = null
+
         try {
-            var result = grayMat.clone()
+            result = grayMat.clone()
 
             // 縦罫線除去（最優先）
             if (removeVertical) {
@@ -653,20 +672,22 @@ object ImagePreprocessor {
                     org.opencv.imgproc.Imgproc.MORPH_RECT,
                     org.opencv.core.Size(1.0, (grayMat.rows() * 0.6).toDouble())
                 )
+                toRelease.add(verticalKernel)
+
                 val noVerticalLines = org.opencv.core.Mat()
+                toRelease.add(noVerticalLines)
                 org.opencv.imgproc.Imgproc.morphologyEx(
                     result,
                     noVerticalLines,
                     org.opencv.imgproc.Imgproc.MORPH_OPEN,
                     verticalKernel
                 )
+
                 val temp = org.opencv.core.Mat()
                 org.opencv.core.Core.subtract(result, noVerticalLines, temp)
 
-                result.release()
+                result!!.release()
                 result = temp
-                noVerticalLines.release()
-                verticalKernel.release()
 
                 Log.d(TAG, "removeLines: Removed vertical lines")
             }
@@ -677,28 +698,35 @@ object ImagePreprocessor {
                     org.opencv.imgproc.Imgproc.MORPH_RECT,
                     org.opencv.core.Size((grayMat.cols() * 0.6).toDouble(), 1.0)
                 )
+                toRelease.add(horizontalKernel)
+
                 val noHorizontalLines = org.opencv.core.Mat()
+                toRelease.add(noHorizontalLines)
                 org.opencv.imgproc.Imgproc.morphologyEx(
                     result,
                     noHorizontalLines,
                     org.opencv.imgproc.Imgproc.MORPH_OPEN,
                     horizontalKernel
                 )
+
                 val temp = org.opencv.core.Mat()
                 org.opencv.core.Core.subtract(result, noHorizontalLines, temp)
 
-                result.release()
+                result!!.release()
                 result = temp
-                noHorizontalLines.release()
-                horizontalKernel.release()
 
                 Log.d(TAG, "removeLines: Removed horizontal lines")
             }
 
-            return result
+            // 一時Matを解放（resultは戻り値なので解放しない）
+            toRelease.forEach { it.release() }
+            return result!!
 
         } catch (e: Exception) {
             Log.e(TAG, "removeLines: Error", e)
+            // エラー時はすべて解放
+            toRelease.forEach { it.release() }
+            result?.release()
             return grayMat.clone()
         }
     }
@@ -710,9 +738,13 @@ object ImagePreprocessor {
      * @return 推定文字高さ（px）
      */
     fun estimateCharHeightSimple(grayMat: org.opencv.core.Mat): Float {
+        var binary: org.opencv.core.Mat? = null
+        var hierarchy: org.opencv.core.Mat? = null
+        var contours: MutableList<org.opencv.core.MatOfPoint>? = null
+
         try {
             // 軽めの二値化
-            val binary = org.opencv.core.Mat()
+            binary = org.opencv.core.Mat()
             org.opencv.imgproc.Imgproc.adaptiveThreshold(
                 grayMat,
                 binary,
@@ -724,8 +756,8 @@ object ImagePreprocessor {
             )
 
             // 輪郭抽出
-            val contours = mutableListOf<org.opencv.core.MatOfPoint>()
-            val hierarchy = org.opencv.core.Mat()
+            contours = mutableListOf()
+            hierarchy = org.opencv.core.Mat()
             org.opencv.imgproc.Imgproc.findContours(
                 binary,
                 contours,
@@ -735,14 +767,10 @@ object ImagePreprocessor {
             )
 
             // 高さを収集
-            val heights = contours.mapNotNull { cnt ->
+            val heights = contours!!.mapNotNull { cnt ->
                 val rect = org.opencv.imgproc.Imgproc.boundingRect(cnt)
                 if (rect.height in 8..80) rect.height.toFloat() else null
             }
-
-            binary.release()
-            hierarchy.release()
-            contours.forEach { it.release() }
 
             if (heights.isEmpty()) {
                 Log.w(TAG, "estimateCharHeightSimple: No contours found, using default 20")
@@ -759,6 +787,11 @@ object ImagePreprocessor {
         } catch (e: Exception) {
             Log.e(TAG, "estimateCharHeightSimple: Error", e)
             return 20f
+        } finally {
+            // リソースを確実に解放
+            binary?.release()
+            hierarchy?.release()
+            contours?.forEach { it.release() }
         }
     }
 
