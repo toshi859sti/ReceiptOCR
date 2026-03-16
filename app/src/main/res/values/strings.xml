@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Remoni</string>
+    <string name="app_name">JA仕訳変換</string>
     <string name="camera_permission_required">カメラ権限が必要です</string>
     <string name="storage_permission_required">ストレージ権限が必要です</string>
 </resources>

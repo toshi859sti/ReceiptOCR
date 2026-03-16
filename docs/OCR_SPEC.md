@@ -1,416 +1,425 @@
-# Receipt OCR - Technical Specifications
+# 購買品OCR仕様書（マーカー方式）
 
-OCRシステムの技術仕様（座標、閾値、定数）を定義。
+ArUcoマーカーを台紙に貼付して透視変換を行っていた旧方式のOCR仕様。
+現行のGreenFrame方式への移行後も、OCRパイプライン（列定義・補正システム・検算）は本仕様を継承。
 
 ---
 
-## 基本設定
+## 対象伝票
 
-### ArUcoマーカー
-- **マーカーサイズ**: 25mm
-- **辞書**: DICT_4X4_50
-- **マーカーID**: 0, 1, 2, 3 (B_BLOCK)
+- **名称**: 島原雲仙農業協同組合 購買代金請求明細書
+- **用紙サイズ**: A5横（A4を半分に折った左半分）
+
+---
+
+## 台紙・マーカー仕様
+
+| 項目 | 値 |
+|------|----|
+| マーカー種別 | ArUco DICT_4X4_50 |
+| マーカーID | 0, 1, 2, 3（B_BLOCK） |
+| マーカーサイズ | 25mm |
+| 台紙 | A4用紙に4隅貼付 |
+
+---
+
+## 透視変換
 
 ### 出力サイズ
-- **固定出力**: 2400×1700px (A4全体) - 旧方式
-- **動的出力**: ~4158×2940px (可変、実測px/mm比率ベース) - 新方式 (2025-12-31~)
-- **mm→px変換率 (固定)**: 8.1 px/mm
-- **mm→px変換率 (動的)**: 10.0-14.0 px/mm (文字高さ30px以上を確保)
+| 方式 | 出力サイズ | px/mm | 採用時期 |
+|------|------------|-------|----------|
+| 固定 | 2400×1700px | 8.1 px/mm | 旧 |
+| 動的（文字高さ保証） | ~4158×2940px | 10.0〜14.0 px/mm | 2025-12-31〜 |
 
-### 行クラスタリング
-- **Y座標差閾値**: 15px
-- **根拠**: 実測値 64.5mm/20行 ≈ 3.2mm/行
+### 動的 px/mm 決定ロジック
+```kotlin
+val targetPxPerMm = when {
+    measuredPxPerMm < 10.0 -> 14.0  // 文字を救う
+    measuredPxPerMm < 14.0 -> measuredPxPerMm
+    else -> 14.0
+}
+dstWidth  = (paperWidthMm  * targetPxPerMm).toInt()  // 例: 4158px
+dstHeight = (paperHeightMm * targetPxPerMm).toInt()  // 例: 2940px
+```
 
 ---
 
-## 品質管理閾値
+## 撮影フロー（2ブロック方式）
 
-### フォーカス (シャープネス)
-- **閾値**: 250.0 (Laplacian分散)
-- **更新履歴**:
-  - 初期: 150.0
-  - 2025-12-24: 200.0
-  - 2025-12-25: 250.0 (現在)
+旧方式では伝票を **Bブロック**（日付＋商品名）と **Cブロック**（金額）に分けて2回撮影した。
+
+```
+撮影① Bブロック
+ → ArUcoマーカー検出 → 透視変換 → 列分割 → OCR
+   ├ 左列（日付）: Latin OCR
+   └ 右列（商品名）: Japanese OCR
+
+撮影② Cブロック
+ → ArUcoマーカー検出 → 透視変換 → 金額列 OCR
+   └ 金額: Latin OCR
+
+Y座標マッチング で Bブロック行 と Cブロック金額を結合
+ → ParsedRow(date, productName, amount)
+```
+
+---
+
+## 伝票座標定義（A4左上原点）
+
+### 伝票位置
+- 伝票左端: A4左端から 43.0mm
+- 伝票上端: A4上端から 31.0mm
+
+### 列範囲（伝票左端からの相対位置）
+
+| 列名 | mm範囲 | px範囲（8.1px/mm） | 処理 | OCRモデル |
+|------|--------|--------------------|------|-----------|
+| 取引日 (DATE) | 5.5〜20.0mm | 392〜510px | 取得 | Latin |
+| 商品名 (ITEM) | 20.0〜79.5mm | 510〜992px | 取得 | Japanese |
+| 取扱支店 (STORE) | 79.5〜97.0mm | 992〜1133px | 無視 | — |
+| 数量 (QUANTITY) | 97.0〜117.0mm | 1133〜1295px | 取得 | Latin |
+| 税込単価 (UNITPRICE) | 117.0〜134.5mm | 1295〜1437px | 無視 | — |
+| 税込金額 (AMOUNT) | 134.5〜156.0mm | 1437〜1611px | 取得 | Latin |
+| 分類計 (CATEGORY_SUM) | 156.0〜177.5mm | 1611〜1786px | 取得 | Latin |
+
+### Y座標範囲（伝票上端からの相対位置）
+
+| 範囲種別 | mm範囲 | 備考 |
+|----------|--------|------|
+| 通常行（一般購買＋給油所） | 56.5〜120.5mm | 2025-12-24修正（実測値ベース） |
+| 小計行 | 120.5〜132.0mm | 分類小計 |
+
+---
+
+## 列別OCR処理詳細
+
+### 商品名列（ITEM）
+
+#### DoubleOCR方式（2026-01-01〜）
+グレー版OCRを主系とし、二値版が明確に優れている場合のみ採用する。
+
+**前処理パイプライン:**
+1. グレースケール変換
+2. コントラスト強化（1.2倍）
+3. 文字高さ測定 → 拡大倍率決定（1.0〜3.0倍、目標32px）
+4. エッジ密度測定 → 二値化要否判定
+5. （条件付き）適応的二値化（ADAPTIVE_THRESH_GAUSSIAN_C, blockSize=11, C=2）
+
+**グレー版OCRスコア:**
+```
+grayScore = 0.35×confidence + 0.20×scriptScore + 0.25×dictScore + 0.10×bboxConsistency + 0.10×lengthScore
+```
+
+**二値版OCR採用条件（すべて満たす必要あり）:**
+1. binaryCandidateScore ≥ 0.6
+2. confidence ≥ 0.55
+3. dictMatchScore ≥ 0.5
+4. binaryScore ≥ grayScore + 0.15
+
+**binaryCandidateScore（段階A判定）:**
+```
+strokePenalty =
+    strokeWidthVar ≤ 0.3 → 0.0
+    strokeWidthVar ≤ 0.6 → 0.1
+    strokeWidthVar ≤ 0.9 → 0.2
+    else → 0.3
+
+binaryCandidateScore =
+    0.40 × charHeightNorm
+  + 0.40 × edgeDensityNorm
+  - 0.20 × strokePenalty
+```
+
+#### 適応的スケーリング（2025-12-31〜）
+```kotlin
+// 文字高さ測定（OpenCV輪郭検出ベース）
+val charPx = ImagePreprocessor.estimateCharHeightPx(enhancedBitmap)
+// 拡大倍率: (32f / charPx).coerceIn(1.0f, 3.0f)
+val scaleFactor = ImagePreprocessor.calcScaleFactor(charPx, targetCharPx = 32f)
+```
+
+#### 文字高さとスコアの関係
+```
+< 15px  → score 0.0（認識不能）
+15〜20px → lerp(0.0, 0.4)（認識困難）
+20〜25px → lerp(0.4, 0.6)（不安定）
+25〜30px → lerp(0.6, 0.75)（最低限）
+30〜40px → lerp(0.75, 1.0)（良好）  ← ML Kit最適域
+40〜50px → 1.0（理想的）
+50〜70px → 0.95
+> 70px  → 0.7
+```
+
+### 数量列（QUANTITY）
+```kotlin
+// 4倍拡大 → Latin OCR → 数字のみ抽出
+val scaled4x = ImagePreprocessor.scale(gray, 4)
+val result = OCRProcessor.recognizeTextLatin(scaled4x)
+val digits = result.filter { it.isDigit() }
+```
+
+### 金額列（AMOUNT）
+```kotlin
+// 負値対応 + 数値正規化
+val isNegative = text.contains("-")
+val normalized  = ValidationUtils.sanitizeNumber(text)
+```
+
+---
+
+## 数値正規化（共通）
+
+### sanitizeNumber
+OCR典型誤認識の補正テーブル適用 → 数字とマイナスのみ残す:
+
+| 誤認識 | 正解 |
+|--------|------|
+| O / o | 0 |
+| l / I | 1 |
+| S / s | 5 |
+| B | 8 |
+
+```kotlin
+fun sanitizeNumber(raw: String): Int? {
+    var s = raw
+        .replace("O", "0").replace("o", "0")
+        .replace("l", "1").replace("I", "1")
+        .replace("S", "5").replace("s", "5")
+        .replace("B", "8")
+    return s.filter { it.isDigit() || it == '-' }.toIntOrNull()
+}
+```
+
+### 商品名クリーニング（日付パターン除去）
+商品名列に取引日がOCR混入する場合に除去:
+```kotlin
+// パターン1: OCR誤認識を含む日付 (例: p71xxx, めE1021)
+val pattern1 = Regex("^.{0,3}[0-9oOlI.:/ ]{4,7}[|]?")
+// パターン2: 正確な6桁日付 (例: 071011)
+val pattern2 = Regex("^\\d{6}[|]?")
+// 先頭の区切り文字削除
+cleaned = cleaned.trimStart('|', ' ', '　')
+```
+
+---
+
+## 日付パース
+
+OCRで取得した日付テキスト → (year, month, day) に変換。
+
+| 桁数 | 解釈 | 例 |
+|------|------|----|
+| 6桁以上 | YY MM DD | "060130" → 年06, 月01, 日30 |
+| 4桁 | MM DD（年は0） | "0130" → 月01, 日30 |
+| それ以外 | デフォルト (0, 1, 1) | — |
+
+---
+
+## 検算バリデーション（validateWithRounding）
+
+単価×数量=金額 を端数処理3パターンで許容:
+
+```kotlin
+fun validateWithRounding(unitPrice: Int, quantity: Int, amount: Int): Boolean {
+    val exact = unitPrice.toBigDecimal() * quantity.toBigDecimal()
+    val candidates = listOf(
+        exact.setScale(0, FLOOR).toInt(),
+        exact.setScale(0, HALF_UP).toInt(),
+        exact.setScale(0, CEILING).toInt()
+    )
+    return candidates.any { it == amount }
+}
+```
+
+---
+
+## 商品名補正システム
+
+3バージョンが存在し、最新はV3（2026-01-18〜）。
+
+### V3スコアリング（100点満点）
+
+```
+totalScore =
+    文字類似度（最大60点）
+  + 先頭欠落ボーナス（最大10点）
+  + 濁点誤認識ボーナス（最大5点）
+  + 既存知識ボーナス（最大15点）
+  + 手動修正履歴ボーナス（最大10点）
+  + リスクペナルティ（最大-30点）
+```
+
+#### 文字類似度（最大60点）
+レーベンシュタイン距離ベース:
+```kotlin
+val distance = levenshteinDistance(normalizedRaw, normalizedProduct)
+val similarity = 1.0 - (distance.toDouble() / maxLen)
+textSimilarity = (similarity * 60.0).coerceIn(0.0, 60.0)
+```
+
+#### 先頭欠落ボーナス（最大10点）
+OCR行先頭文字欠落パターンを救済:
+- 先頭1文字欠落: +10点
+- 先頭2文字欠落: +5点
+
+#### 濁点誤認識ボーナス（最大5点）
+濁点除去後に一致する場合: +5点
+
+#### 既存知識ボーナス（最大15点）
+OcrVariantテーブルの信頼度に連動:
+| confidenceLevel | ボーナス |
+|-----------------|--------|
+| LOCKED | +15点 |
+| CONFIRMED | +10点 |
+| AUTO | 0点（補正に使用しない） |
+
+#### 手動修正履歴ボーナス（最大10点）
+manualCorrectCount > 0 の場合: +10点
+
+#### リスクペナルティ（最大-30点）
+- 容量違い（両方に容量がありかつ不一致）: -30点
+- 数字違い（商品名中の数字が異なる）: -30点
+- 下限: -30点
+
+#### 判定閾値
+
+| 条件 | 判定 | 動作 |
+|------|------|------|
+| Layer 1: LOCKED / 手動CONFIRMED バリアントに一致 | UNCONDITIONAL_VARIANT | 無条件補正 |
+| Layer 2: CONFIRMED バリアント × スコア≥75 & 差≥10 | CONFIRMED_VARIANT | スコア検証後補正 |
+| Layer 3: スコア≥78 & 差≥12 & ペナルティ>-30 | MASTER_MATCH | マスタ直接補正 |
+| スコア<78 または 差<12 | REJECT | 補正なし |
+| ペナルティ≤-30 | REJECT_RISK | 補正なし |
+
+#### 自動学習登録条件
+| 条件 | 値 |
+|------|----|
+| 最低スコア | 88点以上 |
+| 最低差分 | 12点以上 |
+| 最低文字数 | 3文字以上 |
+
+### V3 OcrVariant 昇格条件
+
+| 遷移 | 条件 |
+|------|------|
+| AUTO → CONFIRMED（自動学習由来） | hitCount≥3 & avgFinalScore≥0.90 & highScoreHits≥2 & autoFailCount=0 |
+| AUTO → CONFIRMED（手動修正由来） | manualCorrectCount≥2（異なるバッチ） & autoFailCount=0 |
+| CONFIRMED → LOCKED | hitCount≥10 & avgFinalScore≥0.92 & autoFailCount=0 |
+
+| 降格条件 | 動作 |
+|----------|------|
+| AUTO & autoFailCount≥1 | 無効化（isDisabled=true） |
+| CONFIRMED & autoFailCount≥1 | AUTO降格 |
+| LOCKED & autoFailCount≥1 | カウントのみ（手動解除が必要） |
+
+### V2スコアリング（参考・2025-12末〜2026-01-17）
+
+剤型あり商品:
+- ブランド一致度: 30%（前方一致・N-gram・部分一致）
+- 剤型一致度: 30%（OCR誤認識パターンマップ使用）
+- 編集距離: 25%
+- OCR信頼度（日本語文字率）: 15%
+
+剤型なし商品（ガソリン・灯油等）:
+- ブランド一致度: 40%
+- 編集距離: 35%
+- OCR信頼度: 25%
+
+採用閾値: スコア≥0.75（自動補正） / スコア≥0.60（候補表示）
+
+### 剤型揺れマップ（V2で使用）
+| 正規形 | OCR誤認識パターン例 |
+|--------|---------------------|
+| 顆粒 | 類粒, 顆立, 拉粒 |
+| 水和剤 | 水初剤, 水和則, 水和財 |
+| 乳剤 | 刺, 乱, 孚剤 |
+| フロアブル | フロアフル, 7ロアブル |
+| 粒剤 | 粒則, 粒到 |
+
+---
+
+## 品質管理（カメラ撮影時）
+
+### フォーカス評価（Laplacian分散）
+| 閾値 | 時期 |
+|------|------|
+| 150.0 | 初期 |
+| 200.0 | 2025-12-24 |
+| 250.0 | 2025-12-25〜 |
 
 ### 輝度
-- **最小値**: 40.0 (グレースケール平均値)
-- **最大値**: 220.0
-- **計算方法**: グレースケール変換 (0.299R + 0.587G + 0.114B) → 平均
+- 最小: 40.0（グレースケール平均）
+- 最大: 220.0
 
-### OCR品質スコア
-- **総合閾値**: 70% (0.70)
-- **重み配分**:
-  - フォーカス: 20%
-  - 文字高さ: 50%
-  - コントラスト: 30%
+### OCR品質スコア重み配分（OcrQualityEvaluator）
+| 指標 | 旧重み | 新重み |
+|------|--------|--------|
+| フォーカス | 20% | 30% |
+| 文字高さ | 50% | 40% |
+| コントラスト | 30% | 30% |
+
+- フォーカススコア < 0.35 → 総合スコアに関係なく強制不合格（MIN_FOCUS_SCORE）
 
 ### 安定フレーム数
-- **MIN_STABLE_FOCUS_FRAMES**: 1
-- **更新履歴**: 3 → 1 (2025-12-31)
+- MIN_STABLE_FOCUS_FRAMES: 3フレーム連続OK → 撮影
 
 ---
 
-## OCR画像前処理パラメータ
+## 画像前処理パラメータ
 
-### シャープニング (Unsharp Mask)
+### シャープニング（Unsharp Mask）
 ```kotlin
-Imgproc.GaussianBlur(grayMat, blurred, Size(0.0, 0.0), 3.0)
+Imgproc.GaussianBlur(grayMat, blurred, Size(0.0, 0.0), sigma=3.0)
 Core.addWeighted(grayMat, 1.5, blurred, -0.5, 0.0, sharpened)
 ```
-- **重み (元画像)**: 1.5
-- **重み (ブラー)**: -0.5
-- **Gaussianブラー sigma**: 3.0
 
-### CLAHE (コントラスト制限適応ヒストグラム均等化)
+### CLAHE（コントラスト制限適応ヒストグラム均等化）
 ```kotlin
 val clahe = Imgproc.createCLAHE()
 clahe.clipLimit = 2.0
 clahe.tilesGridSize = Size(8.0, 8.0)
 ```
-- **clipLimit**: 2.0
-- **タイルサイズ**: 8×8
 
----
-
-## 適応的解像度OCRシステム (2025-12-31~)
-
-### 動的透視変換
-- **ArUcoマーカー間距離測定**: ID 0-1 間 (247mm)
-- **実測px/mm**: 9.47-9.78 (3264×2448入力時)
-- **目標px/mm**:
-  ```kotlin
-  val targetPxPerMm = when {
-      measuredPxPerMm < 10.0 -> 14.0  // 文字を救う
-      measuredPxPerMm < 14.0 -> measuredPxPerMm
-      else -> 14.0
-  }
-  ```
-- **出力サイズ計算**:
-  ```kotlin
-  dstWidth = (paperWidthMm * targetPxPerMm).toInt()   // 4158px
-  dstHeight = (paperHeightMm * targetPxPerMm).toInt() // 2940px
-  ```
-
-### 文字高さ測定
-- **手法**: Cannyエッジ検出 → 膨張 → 輪郭検出
-- **Cannyエッジ閾値**: 80.0-160.0
-- **膨張カーネル**: 3×3 MORPH_RECT
-- **有効高さ範囲**: 6-80px (ノイズ/罫線除外)
-- **統計手法**: 中央値 (外れ値に強い)
-
-### 適応的スケーリング
-- **目標文字高さ**: 32px (ML Kit最適域: 30-40px)
-- **スケール倍率**:
-  ```kotlin
-  val scaleFactor = (32f / currentCharPx).coerceIn(1.0f, 3.0f)
-  ```
-- **制限**: 1.0-3.0倍
-
-### 文字高さスコアリング (2400pxスケール)
-```kotlin
-when {
-    height < 15 -> 0.0
-    height < 20 -> lerp(0.0, 0.4, (height - 15) / 5)   // 認識困難
-    height < 25 -> lerp(0.4, 0.6, (height - 20) / 5)   // 不安定
-    height < 30 -> lerp(0.6, 0.75, (height - 25) / 5)  // 最低限
-    height <= 40 -> lerp(0.75, 1.0, (height - 30) / 10) // 良好
-    height <= 50 -> 1.0                                 // 理想的
-    height <= 70 -> 0.95
-    else -> 0.7
-}
-```
-
----
-
-## 伝票座標定義
-
-### 伝票位置 (A4左上原点)
-- **伝票左端**: 43.0mm (A4左端から)
-- **伝票上端**: 31.0mm (A4上端から)
-
-### 列範囲 (伝票左端からの相対位置 mm)
-| 列名 | mm範囲 | px範囲 (8.1px/mm) | 用途 | 処理 |
-|------|--------|-------------------|------|------|
-| DATE | 5.5-20.0 | 392-510 | 取引日 | 取得 |
-| ITEM | 20.0-79.5 | 510-992 | 商品名 | 取得 |
-| STORE | 79.5-97.0 | 992-1133 | 取扱支店 | 無視 |
-| QUANTITY | 97.0-117.0 | 1133-1295 | 数量 | 取得 |
-| UNITPRICE | 117.0-134.5 | 1295-1437 | 税込単価 | 無視 |
-| AMOUNT | 134.5-156.0 | 1437-1611 | 税込金額 | 取得 |
-| CATEGORY | 156.0-177.5 | 1611-1786 | 分類計 | 取得 |
-
-### Y座標範囲 (伝票上端からの相対位置 mm)
-| 範囲種別 | mm範囲 | 説明 |
-|----------|--------|------|
-| 通常行 | 56.5-120.5 | 一般購買+給油所セクション |
-| 小計行 | 120.5-132.0 | 分類小計行 |
-
-**更新履歴:**
-- 2025-12-24: 通常行上限 120.5mm に修正 (実測値ベース)
-
----
-
-## 列別OCR設定
-
-### 商品名列 (ITEM)
-
-#### 旧方式 (固定倍率)
-```kotlin
-// 固定3倍拡大
-val upscaledBitmap = Bitmap.createScaledBitmap(
-    itemColumnBitmap, width * 3, height * 3, true
-)
-```
-
-#### 新方式 (適応的スケーリング, 2025-12-31~)
-```kotlin
-// 1. グレースケール変換
-val grayBitmap = ImagePreprocessor.toGray(itemColumnBitmap)
-
-// 2. コントラスト強化 (1.2倍)
-val enhancedBitmap = ImagePreprocessor.adjustContrast(grayBitmap, 1.2f)
-
-// 3. 文字高さ測定 → 倍率計算
-val charPx = ImagePreprocessor.estimateCharHeightPx(enhancedBitmap)
-val scaleFactor = ImagePreprocessor.calcScaleFactor(charPx, 32f)
-
-// 4. スケーリング実行 (1.0-3.0倍)
-val upscaledBitmap = Bitmap.createScaledBitmap(
-    enhancedBitmap,
-    (enhancedBitmap.width * scaleFactor).toInt(),
-    (enhancedBitmap.height * scaleFactor).toInt(),
-    true
-)
-```
-
-#### DoubleOCR (Gray + Binary, 2026-01-01~)
-```kotlin
-// 1. Gray版OCR
-val grayResult = recognizeTextJapanese(grayBitmap)
-
-// 2. Binary版OCR (条件付き)
-val binaryResult = if (charPx >= 18 && edgeDensity >= 0.02) {
-    val binaryBitmap = ImagePreprocessor.adaptiveThreshold(enhancedBitmap)
-    recognizeTextJapanese(binaryBitmap)
-} else null
-
-// 3. 評価・選択
-val selectedResult = OcrResultEvaluator.selectBest(
-    grayResult, binaryResult, productDao, category
-)
-```
-
-**前処理パイプライン:**
-1. グレースケール変換
-2. コントラスト強化 (1.2倍)
-3. モルフォロジーOpen (kernel 3×3)
-4. エッジ密度測定 → 二値化要否判定
-5. 適応的二値化 (blockSize=11, C=2)
-
-### 数量列 (QUANTITY)
-```kotlin
-// 1. 列切り出し (X: 1133-1295px)
-val quantityColumnBitmap = Bitmap.createBitmap(
-    warpedBitmap, quantityX, 0, quantityWidth, height
-)
-
-// 2. 4倍アップスケール (162px → 648px)
-val upscaledBitmap = Bitmap.createScaledBitmap(
-    quantityColumnBitmap, width * 4, height * 4, true
-)
-
-// 3. Latin OCR (数字に特化)
-val text = recognizeTextLatin(upscaledBitmap)
-
-// 4. Y座標マッピング → 上書き
-```
-- **拡大倍率**: 4倍 (固定)
-- **OCRモード**: Latin (数字認識に強い)
-- **正規化**: o→0, l→1, I→1, スペース削除
-
-### 金額列 (AMOUNT)
-```kotlin
-// 負値対応 + 数値正規化
-val isNegative = box.text.contains("-")
-val normalized = normalizeToDigits(box.text)
-val value = normalized.toIntOrNull()
-amount = if (isNegative && value != null) -value else value
-```
-
-### 小計列 (CATEGORY_SUM)
-```kotlin
-// normalizeToDigits適用
-val normalized = normalizeToDigits(box.text)
-categorySum = normalized.toIntOrNull()
-```
-
----
-
-## 正規化関数
-
-### normalizeToDigits
-```kotlin
-fun normalizeToDigits(text: String): String {
-    return text
-        .replace("o", "0").replace("O", "0")
-        .replace("l", "1").replace("I", "1")
-        .replace("S", "5").replace("s", "5")
-        .replace(" ", "").replace(",", "")
-}
-```
-
-### normalizeQuantity
-```kotlin
-fun normalizeQuantity(raw: String): Int? {
-    return raw
-        .replace("o", "0").replace("O", "0")
-        .replace("l", "1").replace("I", "1")
-        .replace(" ", "").replace(",", "")
-        .toIntOrNull()
-}
-```
-
-### cleanItemName (日付パターン除去)
-```kotlin
-private fun cleanItemName(itemName: String): String {
-    // パターン1: OCR誤認識を含む日付 (p71xxx, めE1021)
-    val pattern1 = Regex("^.{0,3}[0-9oOlI.:/ ]{4,7}[|]?")
-    var cleaned = itemName.replace(pattern1, "")
-
-    // パターン2: 正確な6桁日付 (071011)
-    if (cleaned == itemName) {
-        val pattern2 = Regex("^\\d{6}[|]?")
-        cleaned = itemName.replace(pattern2, "")
-    }
-
-    // 前方区切り文字削除
-    cleaned = cleaned.trimStart('|', ' ', '　')
-
-    // 空文字列チェック
-    if (cleaned.isEmpty() || cleaned.length < 2) {
-        cleaned = itemName
-    }
-
-    return cleaned
-}
-```
-
----
-
-## ProductNameCorrectorV3 スコアリング (2026-01-18~)
-
-### 総合スコア構成（100点満点）
-```kotlin
-val totalScore =
-    textSimilarity +       // 文字類似度: 最大60点
-    prefixBonus +          // 先頭欠落ボーナス: 最大10点
-    dakutenBonus +         // 濁点誤認識ボーナス: 最大5点
-    variantBonus +         // 既存知識ボーナス: 最大15点
-    historyBonus +         // 手動修正履歴ボーナス: 最大10点
-    riskPenalty            // リスクペナルティ: 最大-30点
-```
-
-### 各スコアリング詳細
-
-#### 文字類似度（最大60点）
-```kotlin
-val distance = levenshteinDistance(raw, product)
-val normalizedSimilarity = 1.0 - (distance.toDouble() / maxLen)
-val textSimilarity = (normalizedSimilarity * 60.0).coerceIn(0.0, 60.0)
-```
-
-#### 先頭欠落ボーナス（最大10点）
-```kotlin
-when {
-    isPrefixDroppedMatch(raw, product, 1) -> 10.0  // 先頭1文字欠落
-    isPrefixDroppedMatch(raw, product, 2) -> 5.0   // 先頭2文字欠落
-    else -> 0.0
-}
-```
-
-#### 濁点誤認識ボーナス（最大5点）
-```kotlin
-if (removeDakuten(raw) == removeDakuten(product)) 5.0 else 0.0
-```
-
-#### 既存知識ボーナス（最大15点）
-```kotlin
-when (existingVariant?.confidenceLevel) {
-    "LOCKED" -> 15.0
-    "CONFIRMED" -> 10.0
-    "AUTO" -> 0.0  // AUTOは補正に使わない
-    else -> 0.0
-}
-```
-
-#### 手動修正履歴ボーナス（最大10点）
-```kotlin
-if (existingVariant?.manualCorrectCount > 0) 10.0 else 0.0
-```
-
-#### リスクペナルティ（最大-30点）
-```kotlin
-// 容量違い: -30点
-// 数字違い: -30点
-// 合計は-30点が下限
-```
-
-### 判定閾値
-| スコア | 判定 | 動作 |
-|--------|------|------|
-| ≥ 78点 & 差≥12点 | AUTO | マスタマッチで自動補正 |
-| ≥ 75点 & 差≥10点 | AUTO | CONFIRMED知識で自動補正 |
-| < 78点 or 差<12点 | NEED_CONFIRM | 補正なし（確認推奨） |
-| 候補なし | NO_MATCH | 補正なし |
+### 行クラスタリング閾値
+- Y座標差: 15px
+- 根拠: 実測値 64.5mm/20行 ≈ 3.2mm/行
 
 ---
 
 ## カメラ解像度
 
-### ImageAnalysis解像度
-- **目標解像度**: 3840×2160 (4K)
-- **実際の解像度**: 3264×2448 (デバイス最大値)
-- **更新履歴**:
-  - 初期: 1920×1080 (FHD)
-  - 2025-12-31: 3840×2160 (4K) ✅
-
-### Preview解像度
-- **参考値**: 1600×1200 (4:3)
+| 用途 | 解像度 | 採用時期 |
+|------|--------|----------|
+| ImageAnalysis（OCR） | 1920×1080 (FHD) | 初期 |
+| ImageAnalysis（OCR） | 3840×2160 (4K) → 実際 3264×2448 | 2025-12-31〜 |
+| 品質評価スケール | 1280px | 速度最適化 |
 
 ---
 
-## デバッグフラグ
+## ROIクロップ（現行GreenFrame方式との対応）
 
-### マーカー検出バイパス (暫定)
-```kotlin
-private const val DEBUG_SKIP_MARKER_CHECK = false  // true: マーカー検出スキップ
-```
-- **注意**: 本番環境では `false` 必須
+現行の `OcrCaptureViewModel.parseRowBitmap()` では、透視変換後の行ビットマップをX比率でクロップ。
 
----
-
-## パフォーマンス最適化
-
-### 品質評価スケール
-- **プレビュースケール**: 1280px (フォーカス・コントラスト評価)
-- **OCRスケール**: 2400px (文字高さ評価)
-- **効果**: 品質評価速度 10-20倍高速化
-
-### 処理フロー最適化
-- **旧**: 多スケールOCR (1x/2x/3x試行)
-- **新**: 単一適応スケール (文字高さ測定ベース)
-- **効果**: 処理時間削減、精度向上
+| 列名 | X比率 |
+|------|-------|
+| 取引日 | 0.02〜0.10 |
+| 商品名 | 0.10〜0.46 |
+| 取扱支店 | 0.46〜0.55 |
+| 数量 | 0.55〜0.62 |
+| 税込単価 | 0.62〜0.72 |
+| 税込金額 | 0.72〜0.83 |
 
 ---
 
 ## 更新履歴
 
-- **2026-02-02**: ProductNameCorrectorV3スコアリングに更新（100点満点、3層構造）
-- **2026-01-01**: OcrResultEvaluator スコアリング追加、DoubleOCR実装
-- **2025-12-31 23:30**: 適応的解像度OCRシステム実装
-- **2025-12-31 20:50**: ImageAnalysis 4K化
-- **2025-12-31 19:40**: 文字高さスコアリング2400pxスケール対応
-- **2025-12-31 15:30**: 文字高さスコアリング1280pxスケール調整
-- **2025-12-25**: フォーカス閾値250.0、OCR画像前処理追加
-- **2025-12-24**: フォーカス閾値200.0、Y軸範囲修正、商品名クリーニング
-- **2025-12-23**: 行クラスタリング閾値15px、列範囲再定義
+| 日付 | 内容 |
+|------|------|
+| 2026-03-14 | GreenFrame方式移行後にマーカー方式仕様として整理 |
+| 2026-02-02 | ProductNameCorrectorV3（100点満点・3層構造）採用 |
+| 2026-01-18 | ProductNameCorrectorV3全面再設計（低頻度利用向け） |
+| 2026-01-01 | OcrResultEvaluator・DoubleOCR実装 |
+| 2025-12-31 | 適応的解像度OCR・4K撮影・動的透視変換 |
+| 2025-12-25 | フォーカス閾値250.0・OCR画像前処理強化 |
+| 2025-12-24 | フォーカス閾値200.0・Y軸範囲修正・商品名クリーニング |
+| 2025-12-23 | 行クラスタリング閾値15px・列範囲再定義 |

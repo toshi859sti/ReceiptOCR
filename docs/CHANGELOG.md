@@ -4,6 +4,75 @@
 
 ---
 
+## 2026-02-28
+
+### 預金摘要辞書：預金-出金に17件追加
+
+**変更ファイル:** `app/src/main/assets/rakurakutekiyou.csv`
+
+**内容:**
+
+預金-出金セクションに以下17件を新規追加（検索文字順でソート、インデックス再採番）。
+
+| 摘要名 | 検索文字 | 科目 | 事業割合 |
+|--------|---------|------|---------|
+| 電気料金 | denki | 動力光熱費 | 40 |
+| 電話料金 | denwa | 通信費 | 40 |
+| 花の種・苗購入 | hana | 種苗費 | 100 |
+| 肥料購入 | hiryou | 肥料費 | 100 |
+| 買掛支払 | kaikake | 買掛金 | — |
+| 家計費の支出 | kakei | 家計費 | — |
+| 借入金返済 | kariire | 借入金 | — |
+| 国民年金 | kokumin | 家計費 | — |
+| 共同施設利用 | kyoudou | 地代・賃借料 | — |
+| 荷造運賃手数料 | nidukuri | 荷造運賃手数料 | 100 |
+| 農具購入（経費） | nougu | 農具費 | 100 |
+| 農業共済 | nougyou | 農業共済掛金 | 100 |
+| 農業者年金 | nougyousya | 家計費 | — |
+| 農薬購入 | nouyaku | 農薬衛生費 | 100 |
+| 作業着購入 | sagyou | 作業用衣料費 | 100 |
+| 専従者給与支払 | senzyuu | 専従者給与 | 100 |
+| 租税公課 | sozei | 租税公課 | 100 |
+
+預金-入金は指定5件すべて既存のためスキップ。
+
+---
+
+### 伝票データ編集：小計カテゴリ・日付バグ修正
+
+**症状:**
+- 決定ボタン押下後、全小計が「一般購買」に変わる
+- 小計行に日付が表示される
+- 合計欄が「未分類」で集計される
+
+**根本原因:**
+
+#### 1. `CategoryRecalculator.kt` - 小計行のカテゴリ再検出ロジックの欠陥
+
+旧コードは小計行のカテゴリを `productName` から再検出していた。
+DB に保存される小計行の productName は `[小計] ${row.productName}` だが、
+`row.productName` が空の場合 `[小計] ` となり検出失敗 → "未分類" → ロード時に一般購買へフォールバック。
+
+また、旧コードは「伝票ごとに最初の小計1つだけ」を使う設計で、
+1伝票に複数小計（一般購買・農業機械・給油所）がある場合に対応できていなかった。
+
+**修正内容 (`util/CategoryRecalculator.kt`):**
+- 小計行のカテゴリ再検出をやめ、既存の `category` フィールドを保持
+- subtotals リスト構築時も `item.category` を優先し、無効時のみ productName から検出
+- 「次の小計を探す」方式に完全書き換え（1伝票複数小計に対応）
+
+#### 2. `ReceiptInputScreen.kt` - 小計行ロード時の日付整形
+
+DB から読み込む際に小計行も日付を整形していたため、
+空日付が `year/month/01` として表示されていた。
+
+**修正内容 (`ui/ReceiptInputScreen.kt` - `convertReceiptItemsToRows`):**
+- `isSubtotal == true` の場合は `date = ""` を設定（日付を整形しない）
+
+**動作確認:** 伝票1（小計なし）+ 伝票2（一般購買・農業機械・給油所の3小計）で正常動作を確認。
+
+---
+
 ## 2026-02-22
 
 ### OCR処理の大規模リファクタリング & リソースリーク修正
@@ -1751,6 +1820,123 @@ OcrQuality(score=0.888, focus=713.7 (1.00),
        val rawText: String?
    )
    ```
+
+---
+
+## 2026-03-01
+
+### 購買品リスト：複数バグ修正・機能追加
+
+---
+
+#### 1. 出力確認画面：摘要未マッチ問題の修正
+
+**症状:** 購買品リストではすべて買掛摘要とマッチしているのに、出力確認画面では一部の項目が未マッチになる。
+
+**原因:** `OutputConfirmScreen.loadPurchaseOutputItems()` が `productMasterDao.getByName(item.productName)` による完全一致のみで検索していた。`ReceiptItem.productName` はOCRテキストそのままであり、`ProductMaster.canonicalName` と一致しないケースがある。
+
+**修正 (`ui/OutputConfirmScreen.kt`):**
+```kotlin
+val productMaster = productMasterDao.getByName(item.productName)
+    ?: ocrVariantDao.getByText(item.productName)
+        ?.let { variant -> productMasterDao.getById(variant.productId) }
+```
+`getByName()` が null の場合、OcrVariant経由でフォールバック検索する。
+
+---
+
+#### 2. 購買品リスト：商品統合機能の追加
+
+**概要:** 同一商品が別エントリとして重複登録されているケースを手動統合できる機能を追加。
+
+**変更ファイル:**
+- `ui/ProductListScreen.kt` - 統合ダイアログ（`ProductMergeDialog`）、統合ボタン（MergeType アイコン）追加
+- `data/OcrVariantDao.kt` - `updateProductId(oldProductId, newProductId)` 追加
+
+**統合処理の流れ:**
+1. 統合元の OcrVariant を統合先の `productId` に付け替え
+2. 統合元の `canonicalName` を統合先の LOCKED/USER OcrVariant として登録（既存 ReceiptItem からの摘要逆引き保全）
+3. 統合先の `frequencyCount` を合算
+4. ReceiptItem の `productName`（統合元名）を統合先名に一括書き換え
+5. 統合元 ProductMaster を削除
+
+**ポイント:** ReceiptItem.productName は外部キーを持たないテキストのため、統合後も旧名で保存されたままになる。手順4でこれを解消し、手順2でOutputConfirmScreen の OcrVariant フォールバックも機能するよう二重で保全する。
+
+---
+
+#### 3. 購買品リスト：再集計時のスペース正規化
+
+**目的:** OCR誤認識による全角スペース混入等でほぼ同一の商品が別エントリ化するのを防止。
+
+**修正 (`ui/ProductListScreen.kt`):**
+```kotlin
+private fun String.normalizeSpaces() = trim().replace(Regex("[\\s\u3000]+"), " ")
+
+// 再集計時の比較に適用
+val existingNormalized = currentProducts.map { it.canonicalName.normalizeSpaces() }.toSet()
+val newProducts = receiptProductNames.filter { name ->
+    name.isNotBlank() && name.normalizeSpaces() !in existingNormalized
+}
+```
+
+---
+
+#### 4. 購買品リスト：小計・合計行の混入防止と既存エントリ削除
+
+**症状:** 再集計を実行すると「一般購買小計」「合計」等の行が購買品として追加される。
+
+**原因:** `ReceiptItem` には小計・合計行も格納されており、`getAllDistinctProductNames()` がそれらを含んでいた。
+
+**修正1 (`data/ReceiptDao.kt`):**
+```sql
+SELECT DISTINCT productName FROM receipt_items
+WHERE productName != ''
+  AND productName NOT LIKE '%小計%'
+  AND productName NOT LIKE '%合計%'
+ORDER BY productName
+```
+
+**修正2 (`ui/ProductListScreen.kt` の `recalculateProducts()`):**
+再集計実行時に `canonicalName` に「小計」または「合計」を含む既存 ProductMaster エントリを削除してから処理を行う。削除件数を結果ダイアログに表示。
+
+---
+
+#### 5. 商品名変更・統合時の ReceiptItem 一括書き換え
+
+**目的:** ProductMaster の名前変更・統合後も、伝票データ（ReceiptItem）の表示名を最新の状態に保つ。
+
+**追加 (`data/ReceiptDao.kt`):**
+```kotlin
+@Query("UPDATE receipt_items SET productName = :newName WHERE productName = :oldName")
+suspend fun updateProductNameInReceiptItems(oldName: String, newName: String)
+```
+
+**呼び出し箇所:**
+- 商品名編集保存時: `canonicalName` が変わった場合のみ実行
+- 商品統合時: 統合元 canonicalName → 統合先 canonicalName に書き換え
+
+---
+
+#### 6. クラッシュ修正：onSave コルーチン内の NPE
+
+**症状:** 購買品編集ダイアログで保存するとアプリがクラッシュ。
+
+**原因:** `scope.launch {}` は非同期スケジューリングのため、コルーチン本体が起動する前に `selectedProduct = null` が実行される。コルーチン内で `selectedProduct!!` を参照すると NPE。
+
+**修正 (`ui/ProductListScreen.kt`):**
+```kotlin
+// コルーチン外でキャプチャ
+val oldName = selectedProduct?.canonicalName
+scope.launch {
+    database.productMasterDao().update(updatedProduct)
+    if (oldName != null && oldName != updatedProduct.canonicalName) {
+        database.receiptDao().updateProductNameInReceiptItems(oldName, updatedProduct.canonicalName)
+    }
+    loadProducts()
+}
+showEditDialog = false
+selectedProduct = null
+```
 
 ---
 

@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.receiptorc"
+    namespace = "com.example.greenframeocr"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.receiptorc"
+        applicationId = "com.example.greenframeocr"
         minSdk = 24
         targetSdk = 34
         versionCode = 1

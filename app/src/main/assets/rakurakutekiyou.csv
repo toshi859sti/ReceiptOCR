@@ -67,23 +67,40 @@ index,摘要名,検索文字,科目,税率,事業割合,現金と共有
 預金-出金,,,,,,
 ,,,,,,
 index,摘要名,検索文字,科目,税率,事業割合,現金と共有
-1,水道料金,suidou,動力光熱費,10%,50,TRUE
-2,水稲共済,suitou,農業共済掛金,非,100,TRUE
-3,諸材料購入,syozairyou,諸材料費,10%,100,TRUE
-4,種苗費,syubyou,種苗費,10%,100,TRUE
-5,修理代,syuuri,修繕費,10%,100,TRUE
-6,種籾購入,tanemomi,種苗費,10%,100,TRUE
-7,建物・構築物購入,tatemono,建物・構築物 （資産）, ,,TRUE
-8,定期預金積立,teiki,定期預金, ,,TRUE
-9,地代,tidai,地代・賃借料,非,100,TRUE
-10,賃借料,tinsyaku,地代・賃借料,10%,100,TRUE
-11,土地改良費,toti,土地改良費,不,100,TRUE
-12,灯油代金,touyu,動力光熱費,10%,100,TRUE
-13,野菜の種・苗購入,yasai,種苗費,10%,100,TRUE
-14,雇人費,yatoi,雇人費,不,100,TRUE
-15,預金引出,yokin,現金, ,,FALSE
-16,雑費,zappi,雑費,10%,100,TRUE
-17,事業主分,zigyou,事業主貸, ,,TRUE
+1,電気料金,denki,動力光熱費,10%,40,TRUE
+2,電話料金,denwa,通信費,10%,40,TRUE
+3,花の種・苗購入,hana,種苗費,10%,100,TRUE
+4,肥料購入,hiryou,肥料費,10%,100,TRUE
+5,買掛支払,kaikake,買掛金, ,,TRUE
+6,家計費の支出,kakei,家計費, ,,TRUE
+7,借入金返済,kariire,借入金, ,,TRUE
+8,国民年金,kokumin,家計費, ,,TRUE
+9,共同施設利用,kyoudou,地代・賃借料, ,,TRUE
+10,荷造運賃手数料,nidukuri,荷造運賃手数料,10%,100,TRUE
+11,農具購入 （経費）,nougu,農具費,10%,100,TRUE
+12,農業共済,nougyou,農業共済掛金,非,100,TRUE
+13,農業者年金,nougyousya,家計費, ,,TRUE
+14,農薬購入,nouyaku,農薬衛生費,10%,100,TRUE
+15,作業着購入,sagyou,作業用衣料費,10%,100,TRUE
+16,専従者給与支払,senzyuu,専従者給与,不,100,TRUE
+17,租税公課,sozei,租税公課,不,100,TRUE
+18,水道料金,suidou,動力光熱費,10%,50,TRUE
+19,水稲共済,suitou,農業共済掛金,非,100,TRUE
+20,諸材料購入,syozairyou,諸材料費,10%,100,TRUE
+21,種苗費,syubyou,種苗費,10%,100,TRUE
+22,修理代,syuuri,修繕費,10%,100,TRUE
+23,種籾購入,tanemomi,種苗費,10%,100,TRUE
+24,建物・構築物購入,tatemono,建物・構築物 （資産）, ,,TRUE
+25,定期預金積立,teiki,定期預金, ,,TRUE
+26,地代,tidai,地代・賃借料,非,100,TRUE
+27,賃借料,tinsyaku,地代・賃借料,10%,100,TRUE
+28,土地改良費,toti,土地改良費,不,100,TRUE
+29,灯油代金,touyu,動力光熱費,10%,100,TRUE
+30,野菜の種・苗購入,yasai,種苗費,10%,100,TRUE
+31,雇人費,yatoi,雇人費,不,100,TRUE
+32,預金引出,yokin,現金, ,,FALSE
+33,雑費,zappi,雑費,10%,100,TRUE
+34,事業主分,zigyou,事業主貸, ,,TRUE
 ,,,,,,
 ,,,,,,
 売掛-販売,,,,,,
