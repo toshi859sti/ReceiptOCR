@@ -92,6 +92,7 @@ fun CameraScreen(
                 consecutiveGoodFrames = 0
                 isTorchOn = false
                 camera?.cameraControl?.enableTorch(false)
+                OcrQualityEvaluator.resetStability()
             }
             is CameraViewModel.CameraUiState.Processing,
             is CameraViewModel.CameraUiState.Success,
@@ -329,29 +330,49 @@ private fun analyzeFrame(
     onLatestBitmap: (android.graphics.Bitmap) -> Unit = {}
 ) {
     try {
-        val bitmap = imageProxyToBitmap(imageProxy) ?: return
-        onLatestBitmap(bitmap)
+        // フル解像度 Bitmap（processImage に渡す用）
+        val fullBitmap = imageProxyToBitmap(imageProxy) ?: return
+        onLatestBitmap(fullBitmap)
 
-        // 品質評価
-        val quality = if (DEBUG_SKIP_FOCUS_CHECK) {
-            OcrQualityEvaluator.OcrQuality(
-                score = 1.0, focus = 250.0, focusScore = 1.0,
-                charHeight = 15, charHeightScore = 1.0,
-                contrast = 0.8, contrastScore = 0.8, isGood = true
-            )
+        val isGood: Boolean
+        val focusScoreVal: Double
+
+        if (DEBUG_SKIP_FOCUS_CHECK) {
+            focusScoreVal = 1.0
+            isGood = true
         } else {
-            OcrQualityEvaluator.evaluateOcrQuality(bitmap)
+            // ── 軽量判定：960px 1枚で完結 ──────────────────────────────
+            val analysisScale = ANALYSIS_PX.toFloat() / maxOf(fullBitmap.width, fullBitmap.height)
+            val analysisW     = (fullBitmap.width  * analysisScale).toInt()
+            val analysisH     = (fullBitmap.height * analysisScale).toInt()
+            // bilinear=false で高速リサイズ
+            val analysisBitmap = android.graphics.Bitmap.createScaledBitmap(
+                fullBitmap, analysisW, analysisH, false)
+
+            // (1) フォーカス（Laplacian 分散）
+            val grayBitmap = com.example.greenframeocr.util.ImagePreprocessor.toGray(analysisBitmap)
+            val sharpness  = OcrQualityEvaluator.calculateSharpness(grayBitmap)
+            grayBitmap.recycle()
+            focusScoreVal = OcrQualityEvaluator.focusScore(sharpness)
+
+            // (2) 枠検出（640px 相当・GreenMask バウンディングボックス）
+            val corners = com.example.greenframeocr.util.GreenFrameDetector.detectCornersFast(analysisBitmap)
+            analysisBitmap.recycle()
+
+            // (3) 枠品質評価（面積比・アスペクト比・安定性）
+            val detectionScore = OcrQualityEvaluator.evaluateDetectionQuality(corners, analysisW, analysisH)
+
+            isGood = focusScoreVal >= MIN_FOCUS_SCORE && detectionScore >= MIN_DETECTION_SCORE
+            Log.d("CameraScreen", "focus=${"%.2f".format(focusScoreVal)} det=${"%.2f".format(detectionScore)} good=$isGood")
         }
 
-        onFocusScore(quality.focusScore)
-        onFocusChange(quality.isGood)
+        onFocusScore(focusScoreVal)
+        onFocusChange(isGood)
 
-        onQualityInfo("")
-
-        if (bitmap.isRecycled) return
+        if (fullBitmap.isRecycled) return
 
         // 安定フレームカウント + 自動撮影トリガー
-        if (quality.isGood && !isCaptureTriggered) {
+        if (isGood && !isCaptureTriggered) {
             val newCount = consecutiveGoodFrames + 1
             onConsecutiveChange(newCount)
 
@@ -360,10 +381,10 @@ private fun analyzeFrame(
                 camera?.cameraControl?.enableTorch(false)
                 onProcessingChange(true)
                 onCaptureTriggered(true)
-                viewModel.processImage(bitmap)
+                viewModel.processImage(fullBitmap)   // フル解像度で本番処理
                 onConsecutiveChange(0)
             }
-        } else if (!quality.isGood && consecutiveGoodFrames > 0) {
+        } else if (!isGood && consecutiveGoodFrames > 0) {
             onConsecutiveChange(0)
         }
 
@@ -377,8 +398,11 @@ private fun analyzeFrame(
 // ============================================================
 
 private const val DEBUG_SKIP_FOCUS_CHECK    = false
-private const val MIN_DETECTION_INTERVAL_MS = 500L
-private const val MIN_STABLE_FOCUS_FRAMES   = 3    // 3フレーム連続で品質OKなら撮影
+private const val MIN_DETECTION_INTERVAL_MS = 200L   // 500ms → 200ms（軽量化により短縮可能）
+private const val MIN_STABLE_FOCUS_FRAMES   = 3       // 3フレーム連続合格でトリガー
+private const val ANALYSIS_PX               = 960     // プレビュー評価用解像度
+private const val MIN_FOCUS_SCORE           = 0.50    // フォーカス最低スコア
+private const val MIN_DETECTION_SCORE       = 0.8     // 枠検出最低スコア
 
 // ============================================================
 // ImageProxy → Bitmap 変換

@@ -7,12 +7,21 @@ import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.core.MatOfPoint
+import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
+import org.opencv.core.Rect
 import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 
 private const val TAG = "GreenFrameDetector"
+
+// 透視変換出力の解像度（px/mm）
+// ReceiptOCR実績: 8.1px/mm（精度良好）
+// 15px/mm: 行高さ≈48px → ML Kit推奨100px近傍は数量列特化OCRで確保
+private const val WARP_PX_PER_MM = 15.0
+private const val RECEIPT_WIDTH_MM  = 203.0
+private const val RECEIPT_HEIGHT_MM = 148.0
 
 object GreenFrameDetector {
 
@@ -59,12 +68,15 @@ object GreenFrameDetector {
         val debugMat = src.clone()
 
         return try {
+            val totalStart = System.currentTimeMillis()
+            var t = totalStart
             val imgW = src.cols()
             val imgH = src.rows()
 
             // Step 1: 緑マスク生成
             val greenMask  = buildGreenMask(src)
             val maskBitmap = greenMask.toBitmap()
+            Log.d(TAG, "[PERF] Step1 緑マスク生成: ${System.currentTimeMillis() - t} ms")
 
             val greenPixels    = Core.countNonZero(greenMask)
             val minGreenPixels = (imgW * imgH * 0.005).toInt()
@@ -76,6 +88,7 @@ object GreenFrameDetector {
             }
 
             // Step 2: 外側輪郭を白線で描画
+            t = System.currentTimeMillis()
             val k = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
             val outerMask = Mat()
             Imgproc.dilate(greenMask, outerMask, k, Point(-1.0, -1.0), 5)
@@ -88,7 +101,7 @@ object GreenFrameDetector {
                 Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE
             )
             outerMask.release()
-
+            Log.d(TAG, "[PERF] Step2 外側輪郭: ${System.currentTimeMillis() - t} ms  (${outerContours.size}個)")
             Log.d(TAG, "外側輪郭: ${outerContours.size}個")
 
             val thick = (imgW * 0.002).toInt().coerceAtLeast(3)
@@ -113,7 +126,9 @@ object GreenFrameDetector {
             val bottomY = bounds?.let { (it.y + it.height).coerceAtMost(imgH - 1) } ?: (imgH - 1)
             val leftX   = bounds?.x ?: 0
             // Step 3: 中心枠モルフォロジー → マゼンタ
+            t = System.currentTimeMillis()
             val frameContours = detectCentralFrame(src, topY, bottomY, leftX, imgW, imgH)
+            Log.d(TAG, "[PERF] Step3 中心枠検出: ${System.currentTimeMillis() - t} ms  (${frameContours.size}個)")
             Log.d(TAG, "中心枠輪郭: ${frameContours.size}個")
             Imgproc.drawContours(debugMat, frameContours, -1, MAGENTA, thick)
 
@@ -124,12 +139,16 @@ object GreenFrameDetector {
             val projLeft      = (leftX + receiptW * 6 / 10).coerceAtMost(imgW - 1)
 
             // 枠右辺の線分（HoughLinesP で傾きも取得）
+            t = System.currentTimeMillis()
             val rightSeg = findFrameRightEdgeSegment(
                 src, topY, bottomY, leftX, projLeft, expectedRight, imgW, imgH)
+            Log.d(TAG, "[PERF] Step4a 右辺線分検出: ${System.currentTimeMillis() - t} ms")
             Log.d(TAG, "枠右辺線分: ${rightSeg?.let{"(%.0f,%.0f)-(%.0f,%.0f)".format(it.first.x,it.first.y,it.second.x,it.second.y)} ?: "null"}")
 
             // 緑線の方程式（HoughLines）
+            t = System.currentTimeMillis()
             val lineEqs = detectGreenLineEquations(src, imgW, imgH)
+            Log.d(TAG, "[PERF] Step4b 緑線方程式: ${System.currentTimeMillis() - t} ms")
 
             val tl: Point; val tr: Point; val br: Point; val bl: Point
 
@@ -186,14 +205,71 @@ object GreenFrameDetector {
                 Log.d(TAG, "${cornerLabels[idx]} angle=${"%.1f".format(angleDeg)}°")
             }
 
+            // Step 5: 透視変換（warpPerspective） ─ 4コーナー → 伝票実寸比率に正規化
+            // 伝票サイズ: 203mm × 148mm（A5横を途中で切った形状）
+            // WARP_PX_PER_MM px/mm で動的計算
+            t = System.currentTimeMillis()
+            val warpW  = (RECEIPT_WIDTH_MM  * WARP_PX_PER_MM).toInt()  // 3045px at 15px/mm
+            val warpH  = (RECEIPT_HEIGHT_MM * WARP_PX_PER_MM).toInt()  // 2220px at 15px/mm
+            val srcPts = MatOfPoint2f(tl, tr, br, bl)
+            val dstPts = MatOfPoint2f(
+                Point(0.0,              0.0),
+                Point(warpW.toDouble(), 0.0),
+                Point(warpW.toDouble(), warpH.toDouble()),
+                Point(0.0,              warpH.toDouble())
+            )
+            val perspM    = Imgproc.getPerspectiveTransform(srcPts, dstPts)
+            val warpedMat = Mat()
+            Imgproc.warpPerspective(src, warpedMat, perspM,
+                Size(warpW.toDouble(), warpH.toDouble()), Imgproc.INTER_LINEAR)
+            perspM.release(); srcPts.release(); dstPts.release()
+            Log.d(TAG, "[PERF] Step5 透視変換(${warpW}×${warpH}): ${System.currentTimeMillis() - t} ms")
+
+            // Step 6: 中央枠（明細エリア）検出 → シアン矩形でデバッグ描画
+            t = System.currentTimeMillis()
+            val centralRect = findCentralFrame(warpedMat)
+            Log.d(TAG, "[PERF] Step6 中央枠検出: ${System.currentTimeMillis() - t} ms")
+            Log.d(TAG, "中央枠: $centralRect")
+            if (centralRect != null) {
+                Imgproc.rectangle(
+                    warpedMat,
+                    Point(centralRect.x.toDouble(), centralRect.y.toDouble()),
+                    Point((centralRect.x + centralRect.width).toDouble(),
+                          (centralRect.y + centralRect.height).toDouble()),
+                    Scalar(0.0, 255.0, 255.0), 6
+                )
+            }
+            val dewarpedBitmap = warpedMat.toBitmap()
+
+            // Step 7: 明細行の検出・切り抜き
+            t = System.currentTimeMillis()
+            val rowBitmaps = detectDetailRows(warpedMat)
+            Log.d(TAG, "[PERF] Step7 行検出・切り抜き: ${System.currentTimeMillis() - t} ms  (${rowBitmaps.size}行)")
+            Log.d(TAG, "明細行数: ${rowBitmaps.size}")
+
+            // Step 8: 適応二値化（DebugCaptureScreen の ④ 表示用）
+            t = System.currentTimeMillis()
+            val grayWarp   = Mat()
+            val binaryWarp = Mat()
+            Imgproc.cvtColor(warpedMat, grayWarp, Imgproc.COLOR_BGR2GRAY)
+            Imgproc.adaptiveThreshold(grayWarp, binaryWarp, 255.0,
+                Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
+                Imgproc.THRESH_BINARY_INV, 15, 8.0)
+            grayWarp.release()
+            warpedMat.release()
+            val binaryBitmap = binaryWarp.toBitmap()
+            binaryWarp.release()
+            Log.d(TAG, "[PERF] Step8 二値化: ${System.currentTimeMillis() - t} ms")
+
+            Log.d(TAG, "[PERF] ===== GreenFrameDetector 合計: ${System.currentTimeMillis() - totalStart} ms =====")
             DetectionResult(
                 success        = true,
                 corners        = emptyList(),
                 debugBitmap    = debugMat.toBitmap(),
                 maskBitmap     = maskBitmap,
-                dewarpedBitmap = null,
-                binaryBitmap   = null,
-                rowBitmaps     = emptyList()
+                dewarpedBitmap = dewarpedBitmap,
+                binaryBitmap   = binaryBitmap,
+                rowBitmaps     = rowBitmaps
             )
 
         } catch (e: Exception) {
@@ -202,6 +278,76 @@ object GreenFrameDetector {
         } finally {
             src.release()
             debugMat.release()
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // トリガー判定用の軽量・高速枠検出（プレビューフレーム専用）
+    //
+    // 全処理を 640px 相当で実行し、4コーナーを最速で返す。
+    // ・2400pxリサイズなし・HoughLinesP なし・適応二値化なし
+    // ・緑マスクのバウンディングボックス + A5 比率で右辺を推定
+    // -----------------------------------------------------------------------
+
+    fun detectCornersFast(inputBitmap: Bitmap): List<Point>? {
+        val rgba = Mat()
+        Utils.bitmapToMat(inputBitmap, rgba)
+        val src = Mat()
+        Imgproc.cvtColor(rgba, src, Imgproc.COLOR_RGBA2BGR)
+        rgba.release()
+
+        // 640px にダウンスケール（処理量を 1/4 以下に削減）
+        val scale = 640.0 / maxOf(src.cols(), src.rows())
+        val small = Mat()
+        Imgproc.resize(src, small, Size(src.cols() * scale, src.rows() * scale))
+        src.release()
+
+        val smallW = small.cols()
+        val smallH = small.rows()
+
+        return try {
+            val greenMask = buildGreenMask(small)
+            small.release()
+
+            val greenPixels = Core.countNonZero(greenMask)
+            if (greenPixels < (smallW * smallH * 0.005).toInt()) {
+                greenMask.release()
+                return null
+            }
+
+            // 膨張して線セグメントを繋いでからバウンディングボックスを取得
+            val k = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
+            val dilated = Mat()
+            Imgproc.dilate(greenMask, dilated, k, Point(-1.0, -1.0), 3)
+            k.release(); greenMask.release()
+
+            val contours = ArrayList<MatOfPoint>()
+            Imgproc.findContours(
+                dilated, contours, Mat(),
+                Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE
+            )
+            dilated.release()
+
+            val largest = contours.maxByOrNull { Imgproc.contourArea(it) } ?: return null
+            val bounds = Imgproc.boundingRect(largest)
+
+            val topY    = bounds.y.toDouble()
+            val bottomY = (bounds.y + bounds.height).toDouble()
+            val leftX   = bounds.x.toDouble()
+            // 右辺はA5横比率(1.42)で推定（右辺に緑枠なし）
+            val rightX  = (leftX + (bottomY - topY) * 1.42).coerceAtMost(smallW - 1.0)
+
+            // 640px → 入力画像座標に戻す
+            val inv = 1.0 / scale
+            listOf(
+                Point(leftX  * inv, topY    * inv),  // TL
+                Point(rightX * inv, topY    * inv),  // TR
+                Point(rightX * inv, bottomY * inv),  // BR
+                Point(leftX  * inv, bottomY * inv)   // BL
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "detectCornersFast error", e)
+            null
         }
     }
 
@@ -715,6 +861,249 @@ object GreenFrameDetector {
         Log.d(TAG, "枠右辺フィット: a=${"%.4f".format(fitA)} b=${"%.1f".format(fitB)} " +
             "top=(%.0f,%.0f) bot=(%.0f,%.0f)".format(topPt.x, topPt.y, botPt.x, botPt.y))
         return Pair(topPt, botPt)
+    }
+
+    // -----------------------------------------------------------------------
+    // 透視変換後の画像から明細データ行を検出・切り抜き
+    //
+    // 1. imgW×50%以上の長い水平線でヘッダー行の下端を特定（15〜40% Y範囲）
+    // 2. ヘッダー下端〜85% Y の明細エリアで水平プロジェクション（行合計）
+    // 3. インク密度 0.5% 以上の連続区間を1行として切り出す
+    // 4. 高さフィルタ（30px〜roiH/4）で空行・小計行を除外
+    // -----------------------------------------------------------------------
+
+    private fun detectDetailRows(warpedFull: Mat): List<Bitmap> {
+        val imgW = warpedFull.cols()
+        val imgH = warpedFull.rows()
+
+        // 適応二値化（インク=白）
+        // OTSU は warped 画像コーナーの黒背景で閾値がずれるため adaptive を使用
+        val gray = Mat()
+        Imgproc.cvtColor(warpedFull, gray, Imgproc.COLOR_BGR2GRAY)
+        val binary = Mat()
+        Imgproc.adaptiveThreshold(gray, binary, 255.0,
+            Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 15, 8.0)
+        gray.release()
+
+        // ─── 1. 長い水平線でヘッダー行下端を特定 ──────────────────────────
+        // 30% カーネル（50% だと適応二値化の微小ギャップで検出失敗するため短縮）
+        val hKernelLen = (imgW * 0.30).toInt().coerceAtLeast(20).toDouble()
+        val hKernel    = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(hKernelLen, 1.0))
+        val hLinesMat  = Mat()
+        Imgproc.morphologyEx(binary, hLinesMat, Imgproc.MORPH_OPEN, hKernel)
+        hKernel.release()
+
+        val hLineSumMat = Mat()
+        Core.reduce(hLinesMat, hLineSumMat, 1, Core.REDUCE_SUM, org.opencv.core.CvType.CV_32S)
+        hLinesMat.release()
+
+        val hLineSums = IntArray(imgH)
+        val hBuf = IntArray(1)
+        for (y in 0 until imgH) { hLineSumMat.get(y, 0, hBuf); hLineSums[y] = hBuf[0] }
+        hLineSumMat.release()
+
+        // 連続ピクセルをクラスタリングして水平線の中心Y座標を収集
+        val hLineThresh = (imgW * 255 * 0.2).toInt()  // 0.3→0.2（短縮カーネル対応）
+        val hLineYs = mutableListOf<Int>()
+        var prevLine = false; var lineStart = 0
+        for (y in 0 until imgH) {
+            val isLine = hLineSums[y] > hLineThresh
+            if (isLine && !prevLine) lineStart = y
+            if (!isLine && prevLine) hLineYs.add((lineStart + y) / 2)
+            prevLine = isLine
+        }
+        Log.d(TAG, "長い水平線: ${hLineYs.size}本 @ $hLineYs")
+
+        // 画像高さ 10〜50% の範囲にある水平線（検索範囲を広げて確実に捕捉）
+        val searchStart = (imgH * 0.10).toInt()
+        val searchEnd   = (imgH * 0.50).toInt()
+        val headerLines = hLineYs.filter { it in searchStart..searchEnd }
+
+        // 上端: ヘッダー行下辺（10-50%範囲の最後の横線）の直下
+        val detailStartY = when {
+            headerLines.isNotEmpty() -> headerLines.last() + 5
+            else                     -> (imgH * 0.35).toInt()  // フォールバック（35%）
+        }
+
+        // 下端: フッター上端（60-90%範囲の最初の横線）の直上
+        // 「合計（税込）」行や「※以下の方法にて...」の上の線を使用
+        val footerLines = hLineYs.filter { it in (imgH * 0.60).toInt()..(imgH * 0.90).toInt() }
+        val detailEndY = when {
+            footerLines.isNotEmpty() -> footerLines.first() - 5
+            else                     -> (imgH * 0.82).toInt()  // フォールバック（82%）
+        }
+        Log.d(TAG, "明細エリア: y=$detailStartY..$detailEndY  header=$headerLines footer=$footerLines")
+
+        // ─── 2. 水平プロジェクション → 行分割 ────────────────────────────
+        val clampedStart = detailStartY.coerceIn(0, imgH - 1)
+        val clampedEnd   = detailEndY.coerceIn(clampedStart + 1, imgH)
+        val roiH         = clampedEnd - clampedStart
+
+        val detailBin = binary.submat(clampedStart, clampedEnd, 0, imgW)
+
+        // 縦罫線除去: roiH×30%以上の縦線を検出して差し引く
+        val vKernelLen = (roiH * 0.3).toInt().coerceAtLeast(20).toDouble()
+        val vKernel    = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(1.0, vKernelLen))
+        val vLinesMat  = Mat()
+        Imgproc.morphologyEx(detailBin, vLinesMat, Imgproc.MORPH_OPEN, vKernel)
+        vKernel.release()
+        val textBin0 = Mat()
+        Core.subtract(detailBin, vLinesMat, textBin0)
+        vLinesMat.release()
+        detailBin.release()
+        binary.release()
+
+        // 横罫線除去: imgW×20%以上の水平線を検出して差し引く
+        // 境界線が残ると max が膨らんで inkThresh が過大になる
+        val hKernelLen2 = (imgW * 0.20).toInt().coerceAtLeast(20).toDouble()
+        val hKernel2    = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(hKernelLen2, 1.0))
+        val hLinesMat2  = Mat()
+        Imgproc.morphologyEx(textBin0, hLinesMat2, Imgproc.MORPH_OPEN, hKernel2)
+        hKernel2.release()
+        val textBin = Mat()
+        Core.subtract(textBin0, hLinesMat2, textBin)
+        hLinesMat2.release()
+        textBin0.release()
+
+        val rowSumMat = Mat()
+        Core.reduce(textBin, rowSumMat, 1, Core.REDUCE_SUM, org.opencv.core.CvType.CV_32S)
+        textBin.release()
+
+        val rowSums = IntArray(roiH)
+        val buf = IntArray(1)
+        for (y in 0 until roiH) { rowSumMat.get(y, 0, buf); rowSums[y] = buf[0] }
+        rowSumMat.release()
+
+        // 行とノイズを分離するため P95 相対閾値を使用
+        // max だと残留ライン1本で inkThresh が過大になるため95パーセンタイルを使用
+        val maxRowSum = rowSums.maxOrNull() ?: 1
+        val minRowSum = rowSums.minOrNull() ?: 0
+        val sortedSums = rowSums.sorted()
+        val p95Index  = (sortedSums.size * 0.95).toInt().coerceAtMost(sortedSums.size - 1)
+        val p95Sum    = sortedSums[p95Index].coerceAtLeast(1)
+        val inkThresh = (p95Sum * 0.15).toInt().coerceAtLeast(1)
+        Log.d(TAG, "rowSum min=$minRowSum max=$maxRowSum p95=$p95Sum inkThresh=$inkThresh")
+
+        val groups    = mutableListOf<Pair<Int, Int>>()
+        var inContent = false; var groupStart = 0
+        for (y in 0 until roiH) {
+            val hasInk = rowSums[y] > inkThresh
+            if      ( hasInk && !inContent) { groupStart = y; inContent = true }
+            else if (!hasInk &&  inContent) { groups.add(groupStart to y - 1); inContent = false }
+        }
+        if (inContent) groups.add(groupStart to roiH - 1)
+        Log.d(TAG, "行グループ候補: ${groups.size}  heights=${groups.map { it.second - it.first }}")
+
+        // 高さフィルタ: 20px ≤ h ≤ roiH/3
+        val minH = 20
+        val maxH = roiH / 3
+        val validGroups = groups.filter { (s, e) -> (e - s) in minH..maxH }
+        Log.d(TAG, "有効行数: ${validGroups.size}  maxH=$maxH")
+
+        // 各行をクロップして Bitmap で返す
+        return validGroups.mapNotNull { (s, e) ->
+            val y1 = (clampedStart + s).coerceIn(0, imgH - 1)
+            val y2 = (clampedStart + e + 1).coerceIn(0, imgH)
+            if (y2 <= y1) return@mapNotNull null
+            val roi = warpedFull.submat(y1, y2, 0, imgW)
+            val bmp = roi.toBitmap()
+            roi.release()
+            bmp
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 透視変換後の画像から中央の明細枠を検出
+    //
+    // 適応二値化 → findContours(RETR_TREE) で全輪郭を取得し、
+    // 「全体面積の30〜70%」かつ「横長比率1.2〜2.5」の最大矩形を採用。
+    // 見つからない場合は水平・垂直プロジェクションでフォールバック。
+    // -----------------------------------------------------------------------
+
+    private fun findCentralFrame(warpedFull: Mat): Rect? {
+        val gray = Mat()
+        Imgproc.cvtColor(warpedFull, gray, Imgproc.COLOR_BGR2GRAY)
+        // ガウシアンフィルタでドット印刷の隙間を埋める
+        Imgproc.GaussianBlur(gray, gray, Size(5.0, 5.0), 0.0)
+        val binary = Mat()
+        Imgproc.adaptiveThreshold(gray, binary, 255.0,
+            Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
+            Imgproc.THRESH_BINARY_INV, 15, 8.0)
+        gray.release()
+
+        val contours = ArrayList<MatOfPoint>()
+        Imgproc.findContours(binary.clone(), contours, Mat(),
+            Imgproc.RETR_TREE, Imgproc.CHAIN_APPROX_SIMPLE)
+        binary.release()
+
+        val fullArea = warpedFull.size().area()
+        val best = contours
+            .map { Imgproc.boundingRect(it) }
+            .filter { r ->
+                val area = r.area()
+                val ratio = r.width.toDouble() / r.height
+                area > fullArea * 0.3 && area < fullArea * 0.8 && ratio in 1.2..2.5
+            }
+            .maxByOrNull { it.area() }
+
+        if (best != null) {
+            Log.d(TAG, "中央枠(輪郭法): $best ratio=${"%.2f".format(best.width.toDouble() / best.height)}")
+            return best
+        }
+
+        Log.w(TAG, "中央枠: 輪郭法で未検出、プロジェクション法でフォールバック")
+        return findCentralFrameByProjection(warpedFull)
+    }
+
+    // -----------------------------------------------------------------------
+    // プロジェクション法による明細枠検出（フォールバック）
+    //
+    // 垂直プロジェクション（列合計）で左右の壁を、
+    // 水平プロジェクション（行合計）で上下の壁を特定する。
+    // 枠線が途切れていてもピクセル密度の集合体として検出できる。
+    // -----------------------------------------------------------------------
+
+    private fun findCentralFrameByProjection(warpedFull: Mat): Rect? {
+        val imgW = warpedFull.cols()
+        val imgH = warpedFull.rows()
+
+        val binary = buildInkMask(warpedFull)
+
+        // 垂直プロジェクション（列合計）→ 1×imgW の行ベクトル
+        val colSumMat = Mat()
+        Core.reduce(binary, colSumMat, 0, Core.REDUCE_SUM, org.opencv.core.CvType.CV_32S)
+        val colSums = IntArray(imgW)
+        colSumMat.get(0, 0, colSums)
+        colSumMat.release()
+
+        // 水平プロジェクション（行合計）→ imgH×1 の列ベクトル
+        val rowSumMat = Mat()
+        Core.reduce(binary, rowSumMat, 1, Core.REDUCE_SUM, org.opencv.core.CvType.CV_32S)
+        val rowSums = IntArray(imgH)
+        val rowBuf  = IntArray(1)
+        for (y in 0 until imgH) { rowSumMat.get(y, 0, rowBuf); rowSums[y] = rowBuf[0] }
+        rowSumMat.release()
+        binary.release()
+
+        // 閾値: その行・列の 10% 以上にインクがあれば「壁」とみなす
+        val colThresh = (imgH * 255 * 0.1).toInt()
+        val rowThresh = (imgW * 255 * 0.1).toInt()
+
+        var left   = 0;       for (x in 0 until imgW)       { if (colSums[x] > colThresh) { left   = x; break } }
+        var right  = imgW - 1; for (x in imgW - 1 downTo 0) { if (colSums[x] > colThresh) { right  = x; break } }
+        var top    = 0;       for (y in 0 until imgH)       { if (rowSums[y] > rowThresh) { top    = y; break } }
+        var bottom = imgH - 1; for (y in imgH - 1 downTo 0) { if (rowSums[y] > rowThresh) { bottom = y; break } }
+
+        val w = right - left
+        val h = bottom - top
+        if (w < imgW * 0.2 || h < imgH * 0.2) {
+            Log.w(TAG, "プロジェクション法も失敗: L=$left R=$right T=$top B=$bottom")
+            return null
+        }
+
+        val rect = Rect(left, top, w, h)
+        Log.d(TAG, "中央枠(プロジェクション): $rect")
+        return rect
     }
 
     // -----------------------------------------------------------------------

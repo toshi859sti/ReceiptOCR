@@ -10,7 +10,7 @@ import com.example.greenframeocr.data.SheetData
 import com.example.greenframeocr.util.Category
 import com.example.greenframeocr.util.GreenFrameDetector
 import com.example.greenframeocr.util.OCRProcessor
-import com.example.greenframeocr.util.ValidationUtils
+import com.example.greenframeocr.util.UnderlyingBaseProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,7 +20,11 @@ import kotlinx.coroutines.withContext
 
 /**
  * OCR撮影画面の ViewModel
- * GreenFrame検出 → 行ごとROIクロップ → ML Kit OCR → DB保存 のフローを管理
+ *
+ * 処理フロー:
+ * GreenFrame検出 → 透視変換後画像(dewarpedBitmap) →
+ * OCRProcessor.processUnderlayingBase()（旧ArUco方式高精度パイプライン）→
+ * ParsedRow リスト → DB保存
  */
 class OcrCaptureViewModel(
     private val dao: ReceiptDao,
@@ -37,13 +41,16 @@ class OcrCaptureViewModel(
      */
     data class ParsedRow(
         val rowIndex: Int,
-        val date: String?,        // 取引日（生テキスト）
-        val productName: String?, // 商品名
-        val branch: String?,      // 取扱支店
-        val quantity: Int?,       // 数量
-        val unitPrice: Int?,      // 税込単価
-        val amount: Int?,         // 税込金額
-        val isAmountValid: Boolean // 単価×数量の検算OK?
+        val date: String?,
+        val productName: String?,
+        val branch: String?,       // 旧パイプラインでは非取得 → null
+        val quantity: Int?,
+        val unitPrice: Int?,       // 旧パイプラインでは非取得 → null
+        val amount: Int?,
+        val isAmountValid: Boolean,
+        val category: String = Category.UNCLASSIFIED,
+        val isSubtotal: Boolean = false,
+        val isMonthlyTotal: Boolean = false
     )
 
     // -------------------------------------------------------------------
@@ -61,13 +68,13 @@ class OcrCaptureViewModel(
     // State
     // -------------------------------------------------------------------
 
-    private val _currentStep = MutableStateFlow<CaptureStep>(CaptureStep.Initial)
+    private val _currentStep   = MutableStateFlow<CaptureStep>(CaptureStep.Initial)
     val currentStep: StateFlow<CaptureStep> = _currentStep.asStateFlow()
 
-    private val _parsedRows = MutableStateFlow<List<ParsedRow>>(emptyList())
+    private val _parsedRows    = MutableStateFlow<List<ParsedRow>>(emptyList())
     val parsedRows: StateFlow<List<ParsedRow>> = _parsedRows.asStateFlow()
 
-    private val _errorMessage = MutableStateFlow<String?>(null)
+    private val _errorMessage  = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
     private var sheetNumber: Int = 1
@@ -88,20 +95,33 @@ class OcrCaptureViewModel(
     }
 
     /**
-     * GreenFrameDetector の結果を受け取り、行ごとに OCR 処理する
+     * GreenFrameDetector の結果を受け取り、旧ArUco方式パイプラインで OCR 処理する。
+     * dewarpedBitmap（透視変換後の全体画像）を使用し、行分割は OCR 後に行う。
      */
     fun processDetectionResult(result: GreenFrameDetector.DetectionResult) {
         viewModelScope.launch {
             _currentStep.value = CaptureStep.Processing
             try {
-                val rows = withContext(Dispatchers.Default) {
-                    result.rowBitmaps.mapIndexed { index, rowBitmap ->
-                        parseRowBitmap(index, rowBitmap)
-                    }
+                val dewarpedBitmap = result.dewarpedBitmap
+                if (dewarpedBitmap == null) {
+                    _errorMessage.value = "透視変換に失敗しました: ${result.errorMessage}"
+                    _currentStep.value = CaptureStep.Initial
+                    return@launch
                 }
+
+                val rows = withContext(Dispatchers.Default) {
+                    // mm→px比率: 伝票幅 203mm に対するピクセル数
+                    val mmToPixelRatio = dewarpedBitmap.width / 203.0
+                    Log.d(TAG, "dewarpedBitmap: ${dewarpedBitmap.width}×${dewarpedBitmap.height}, mmRatio=${"%.2f".format(mmToPixelRatio)}")
+
+                    val ocrResult = OCRProcessor.processUnderlayingBase(dewarpedBitmap, mmToPixelRatio)
+                    mapToParsedRows(ocrResult)
+                }
+
                 Log.d(TAG, "OCR完了: ${rows.size}行")
                 _parsedRows.value = rows
                 _currentStep.value = CaptureStep.Complete(rows)
+
             } catch (e: Exception) {
                 Log.e(TAG, "OCR処理エラー", e)
                 _errorMessage.value = "OCR処理エラー: ${e.message}"
@@ -122,10 +142,22 @@ class OcrCaptureViewModel(
             }
 
             val receiptItems = mutableListOf<ReceiptItem>()
-            var totalAmount = 0
+            var totalAmount  = 0
 
             rows.forEachIndexed { index, row ->
+                // 小計・月合計行は ReceiptItem として保存しない
+                if (row.isSubtotal) {
+                    Log.d(TAG, "Row $index スキップ（小計行）: category=${row.category}")
+                    return@forEachIndexed
+                }
+
                 val (year, month, day) = parseDateText(row.date)
+                // 日付が読み取れない行はスキップ
+                if (year == 0 && (row.date?.filter { it.isDigit() }?.length ?: 0) < 4) {
+                    Log.d(TAG, "Row $index スキップ（日付なし）: date=${row.date}")
+                    return@forEachIndexed
+                }
+
                 val amount = row.amount ?: 0
                 totalAmount += amount
 
@@ -140,22 +172,33 @@ class OcrCaptureViewModel(
                         receiptDay   = day,
                         productName  = row.productName ?: "",
                         amount       = amount,
-                        category     = Category.UNCLASSIFIED,
+                        category     = row.category,
                         isOcrOverwriteTarget = false
                     )
                 )
             }
 
+            // 小計を SheetData に保存
+            val subtotalGeneral = rows.firstOrNull {
+                it.isSubtotal && it.category == Category.GENERAL
+            }?.amount
+            val subtotalGas = rows.firstOrNull {
+                it.isSubtotal && it.category == Category.GAS_STATION
+            }?.amount
+            val subtotalAgri = rows.firstOrNull {
+                it.isSubtotal && it.category == Category.AGRICULTURAL
+            }?.amount
+
             dao.insertReceiptItems(receiptItems)
             dao.insertSheetData(
                 SheetData(
-                    issueYear      = issueYear,
-                    issueMonth     = issueMonth,
-                    sheetNumber    = sheetNumber,
-                    totalFromInput = if (receiptItems.isNotEmpty()) totalAmount else null,
-                    subtotalGeneral = null,
-                    subtotalGas     = null,
-                    subtotalAgri    = null
+                    issueYear       = issueYear,
+                    issueMonth      = issueMonth,
+                    sheetNumber     = sheetNumber,
+                    totalFromInput  = if (receiptItems.isNotEmpty()) totalAmount else null,
+                    subtotalGeneral = subtotalGeneral,
+                    subtotalGas     = subtotalGas,
+                    subtotalAgri    = subtotalAgri
                 )
             )
             true
@@ -166,12 +209,12 @@ class OcrCaptureViewModel(
     }
 
     fun reset() {
-        _currentStep.value = CaptureStep.Initial
-        _parsedRows.value = emptyList()
+        _currentStep.value  = CaptureStep.Initial
+        _parsedRows.value   = emptyList()
         _errorMessage.value = null
     }
 
-    fun getIssueYear(): Int = issueYear
+    fun getIssueYear(): Int  = issueYear
     fun getIssueMonth(): Int = issueMonth
     fun getCurrentSheetNumber(): Int = sheetNumber
 
@@ -180,60 +223,38 @@ class OcrCaptureViewModel(
     // -------------------------------------------------------------------
 
     /**
-     * 1行ビットマップを ROI ごとにクロップして ML Kit OCR にかける。
-     * X比率は GreenFrameDetector.DETAIL_ROIS と同じ値を使用。
+     * OCRProcessor.ProcessUnderlayingBaseResult → ParsedRow リスト に変換
      */
-    private suspend fun parseRowBitmap(index: Int, rowBitmap: Bitmap): ParsedRow {
-        val w = rowBitmap.width
-        val h = rowBitmap.height
+    private fun mapToParsedRows(
+        ocrResult: OCRProcessor.ProcessUnderlayingBaseResult
+    ): List<ParsedRow> {
+        // rowsWithCategories は (ReceiptRow, categoryString) のペアリスト
+        return ocrResult.rowsWithCategories.mapIndexed { index, (row, category) ->
+            val isSubtotal = row.rowType == UnderlyingBaseProcessor.RowType.SUBTOTAL
+            val isMonthlyTotal = row.rowType == UnderlyingBaseProcessor.RowType.MONTHLY_TOTAL
 
-        fun crop(xStart: Float, xEnd: Float): Bitmap {
-            val x     = (xStart * w).toInt().coerceIn(0, w - 1)
-            val width = ((xEnd - xStart) * w).toInt().coerceIn(1, w - x)
-            return Bitmap.createBitmap(rowBitmap, x, 0, width, h)
+            // 小計行・月合計行の「金額」は categorySum から取得
+            val amount = if (isSubtotal || isMonthlyTotal) row.categorySum else row.amount
+
+            ParsedRow(
+                rowIndex      = index,
+                date          = row.date,
+                productName   = row.itemName,
+                branch        = null,
+                quantity      = row.quantity?.toIntOrNull(),
+                unitPrice     = null,
+                amount        = amount,
+                isAmountValid = amount != null,
+                category      = category,
+                isSubtotal    = isSubtotal,
+                isMonthlyTotal = isMonthlyTotal
+            )
         }
-
-        // DETAIL_ROIS と同じ X 範囲
-        val dateBmp   = crop(0.02f, 0.10f)  // 取引日
-        val nameBmp   = crop(0.10f, 0.46f)  // 商品名
-        val branchBmp = crop(0.46f, 0.55f)  // 取扱支店
-        val qtyBmp    = crop(0.55f, 0.62f)  // 数量
-        val priceBmp  = crop(0.62f, 0.72f)  // 税込単価
-        val amountBmp = crop(0.72f, 0.83f)  // 税込金額
-
-        // 数字フィールドは Latin モデル（数字認識精度が高い）
-        // 商品名は日本語モデル
-        val dateText   = OCRProcessor.recognizeTextLatin(dateBmp)?.text?.trim()
-        val nameText   = OCRProcessor.recognizeText(nameBmp)?.text?.trim()
-        val branchText = OCRProcessor.recognizeTextLatin(branchBmp)?.text?.trim()
-        val qtyText    = OCRProcessor.recognizeTextLatin(qtyBmp)?.text?.trim()
-        val priceText  = OCRProcessor.recognizeTextLatin(priceBmp)?.text?.trim()
-        val amountText = OCRProcessor.recognizeTextLatin(amountBmp)?.text?.trim()
-
-        val qty    = qtyText?.let    { ValidationUtils.sanitizeNumber(it) }
-        val price  = priceText?.let  { ValidationUtils.sanitizeNumber(it) }
-        val amount = amountText?.let { ValidationUtils.sanitizeNumber(it) }
-
-        val isValid = qty != null && price != null && amount != null &&
-                ValidationUtils.validateWithRounding(price, qty, amount)
-
-        Log.d(TAG, "Row $index: date=$dateText name=$nameText qty=$qty price=$price amount=$amount valid=$isValid")
-
-        return ParsedRow(
-            rowIndex      = index,
-            date          = dateText,
-            productName   = nameText,
-            branch        = branchText,
-            quantity      = qty,
-            unitPrice     = price,
-            amount        = amount,
-            isAmountValid = isValid
-        )
     }
 
     /**
-     * OCR取得の日付テキスト → (year, month, day) に変換。
-     * 入力例: "060130"（令和6年1月30日）or "0130"（月日のみ）
+     * OCR取得の日付テキスト → (year, month, day) に変換
+     * 入力例: "060130"（令和6年1月30日）
      */
     private fun parseDateText(dateText: String?): Triple<Int, Int, Int> {
         val digits = dateText?.filter { it.isDigit() } ?: ""

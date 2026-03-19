@@ -8,7 +8,9 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.greenframeocr.util.GreenFrameDetector
 import com.example.greenframeocr.util.OCRProcessor
+import com.example.greenframeocr.util.UnderlyingBaseProcessor
 import com.example.greenframeocr.viewmodel.CameraViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,26 +47,62 @@ fun DebugCaptureScreen(onBack: () -> Unit) {
     val cameraViewModel: CameraViewModel = viewModel()
     val uiState by cameraViewModel.uiState.collectAsState()
 
-    var ocrResults by remember { mutableStateOf<List<String>>(emptyList()) }
-    var isOcrRunning by remember { mutableStateOf(false) }
+    var ocrResults     by remember { mutableStateOf<List<String>>(emptyList()) }
+    var columnBitmap   by remember { mutableStateOf<Bitmap?>(null) }
+    var isOcrRunning   by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // 検出成功時に自動でOCRを実行する
+    // 検出成功時: 列範囲オーバーレイ生成 + 新パイプラインOCR
     LaunchedEffect(uiState) {
         if (uiState is CameraViewModel.CameraUiState.Success && ocrResults.isEmpty()) {
             val result = (uiState as CameraViewModel.CameraUiState.Success).detectionResult
-            if (result.rowBitmaps.isNotEmpty()) {
-                isOcrRunning = true
-                scope.launch {
-                    val texts = withContext(Dispatchers.Default) {
-                        result.rowBitmaps.mapIndexed { i, bmp ->
-                            val full = OCRProcessor.recognizeText(bmp)?.text?.trim()
-                            "Row $i: ${full ?: "(認識なし)"}"
-                        }
+            val dewarped = result.dewarpedBitmap ?: return@LaunchedEffect
+
+            isOcrRunning = true
+            scope.launch {
+                withContext(Dispatchers.Default) {
+                    // 列範囲オーバーレイ画像を生成
+                    val mmRatio = dewarped.width / 203.0
+                    UnderlyingBaseProcessor.initializeColumnRanges(mmRatio)
+                    val mat = org.opencv.core.Mat()
+                    org.opencv.android.Utils.bitmapToMat(dewarped, mat)
+                    val bgrMat = org.opencv.core.Mat()
+                    org.opencv.imgproc.Imgproc.cvtColor(mat, bgrMat, org.opencv.imgproc.Imgproc.COLOR_RGBA2BGR)
+                    mat.release()
+                    UnderlyingBaseProcessor.drawColumnRanges(bgrMat)
+                    val rgbaMat = org.opencv.core.Mat()
+                    org.opencv.imgproc.Imgproc.cvtColor(bgrMat, rgbaMat, org.opencv.imgproc.Imgproc.COLOR_BGR2RGBA)
+                    bgrMat.release()
+                    val overlayBmp = Bitmap.createBitmap(rgbaMat.cols(), rgbaMat.rows(), Bitmap.Config.ARGB_8888)
+                    org.opencv.android.Utils.matToBitmap(rgbaMat, overlayBmp)
+                    rgbaMat.release()
+                    columnBitmap = overlayBmp
+
+                    // 新パイプラインOCR
+                    val ocrResult = OCRProcessor.processUnderlayingBase(dewarped, mmRatio)
+
+                    // TextBoxの実際の分類をオーバーレイに重ねる
+                    val mat2 = org.opencv.core.Mat()
+                    org.opencv.android.Utils.bitmapToMat(columnBitmap!!, mat2)
+                    val bgrMat2 = org.opencv.core.Mat()
+                    org.opencv.imgproc.Imgproc.cvtColor(mat2, bgrMat2, org.opencv.imgproc.Imgproc.COLOR_RGBA2BGR)
+                    mat2.release()
+                    UnderlyingBaseProcessor.drawTextBoxes(bgrMat2, ocrResult.textBoxes)
+                    val rgbaMat2 = org.opencv.core.Mat()
+                    org.opencv.imgproc.Imgproc.cvtColor(bgrMat2, rgbaMat2, org.opencv.imgproc.Imgproc.COLOR_BGR2RGBA)
+                    bgrMat2.release()
+                    val overlayBmp2 = Bitmap.createBitmap(rgbaMat2.cols(), rgbaMat2.rows(), Bitmap.Config.ARGB_8888)
+                    org.opencv.android.Utils.matToBitmap(rgbaMat2, overlayBmp2)
+                    rgbaMat2.release()
+                    columnBitmap = overlayBmp2
+
+                    val texts = ocrResult.rowsWithCategories.mapIndexed { i, (row, cat) ->
+                        val catSum = if (row.categorySum != null) " catSum=${row.categorySum}" else ""
+                        "Row $i [$cat] date=${row.date} item=${row.itemName} qty=${row.quantity} amt=${row.amount}$catSum"
                     }
                     ocrResults = texts
-                    isOcrRunning = false
                 }
+                isOcrRunning = false
             }
         }
     }
@@ -99,6 +138,7 @@ fun DebugCaptureScreen(onBack: () -> Unit) {
                 DebugResultView(
                     result = state.detectionResult,
                     ocrResults = ocrResults,
+                    columnBitmap = columnBitmap,
                     isOcrRunning = isOcrRunning,
                     onRetry = {
                         ocrResults = emptyList()
@@ -182,6 +222,7 @@ fun DebugCaptureScreen(onBack: () -> Unit) {
 private fun DebugResultView(
     result: GreenFrameDetector.DetectionResult,
     ocrResults: List<String>,
+    columnBitmap: Bitmap?,
     isOcrRunning: Boolean,
     onRetry: () -> Unit,
     onBack: () -> Unit = {},
@@ -236,7 +277,7 @@ private fun DebugResultView(
         // ③ 透視変換後
         result.dewarpedBitmap?.let { bmp ->
             item {
-                DebugSection("③ 透視変換後（2100×840）") {
+                DebugSection("③ 透視変換後（2100×1531）") {
                     Image(
                         bitmap = bmp.asImageBitmap(),
                         contentDescription = null,
@@ -254,10 +295,44 @@ private fun DebugResultView(
             )
         }
 
-        // ④ 二値化
+        // ④ 列範囲オーバーレイ
+        item {
+            DebugSection("④ 列範囲オーバーレイ（赤=取引日 緑=商品名 青=金額 黄=分類計）") {
+                if (isOcrRunning) {
+                    Text("生成中...", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    columnBitmap?.let { bmp ->
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp)
+                        )
+                    } ?: Text("生成失敗", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+
+        // ⑤ 新パイプラインOCR結果
+        item {
+            DebugSection("⑤ OCR結果（新パイプライン）") {
+                if (isOcrRunning) {
+                    Text("OCR実行中...", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if (ocrResults.isEmpty()) {
+                    Text("結果なし", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        ocrResults.forEach { line ->
+                            Text(line, fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ⑥ 二値化
         result.binaryBitmap?.let { bmp ->
             item {
-                DebugSection("④ 二値化（グレースケール適応的）") {
+                DebugSection("⑥ 二値化（グレースケール適応的）") {
                     Image(
                         bitmap = bmp.asImageBitmap(),
                         contentDescription = null,
@@ -310,14 +385,22 @@ private fun DebugResultView(
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp
                         )
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = null,
+                        // 行画像は横長（2100×50px程度）なので横スクロールで表示
+                        val rowAspect = bmp.width.toFloat() / bmp.height.toFloat().coerceAtLeast(1f)
+                        Row(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 80.dp)
                                 .padding(top = 4.dp)
-                        )
+                                .horizontalScroll(rememberScrollState())
+                        ) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .height(120.dp)
+                                    .aspectRatio(rowAspect),
+                                contentScale = androidx.compose.ui.layout.ContentScale.FillBounds
+                            )
+                        }
                         when {
                             ocrResults.size > i -> Text(
                                 text = ocrResults[i],
@@ -360,7 +443,7 @@ private fun DebugResultView(
                     onClick = {
                         scope.launch {
                             val saved = withContext(Dispatchers.IO) {
-                                saveDebugImages(context, result)
+                                saveDebugImages(context, result, columnBitmap)
                             }
                             saveMessage = if (saved > 0) "✓ ${saved}枚をギャラリーに保存" else "保存失敗"
                         }
@@ -384,7 +467,8 @@ private const val SAVE_FOLDER = "OCRTest"
 
 private fun saveDebugImages(
     context: Context,
-    result: GreenFrameDetector.DetectionResult
+    result: GreenFrameDetector.DetectionResult,
+    columnBitmap: Bitmap? = null
 ): Int {
     // 古い画像を削除してから保存
     clearOCRTestFolder(context)
@@ -394,9 +478,10 @@ private fun saveDebugImages(
         add("debug_${timestamp}_1_overlay" to result.debugBitmap)
         result.maskBitmap?.let { add("debug_${timestamp}_2_mask" to it) }
         result.dewarpedBitmap?.let { add("debug_${timestamp}_3_dewarped" to it) }
-        result.binaryBitmap?.let { add("debug_${timestamp}_4_binary" to it) }
+        columnBitmap?.let { add("debug_${timestamp}_4_columns" to it) }
+        result.binaryBitmap?.let { add("debug_${timestamp}_5_binary" to it) }
         result.rowBitmaps.forEachIndexed { i, bmp ->
-            add("debug_${timestamp}_5_row${i}" to bmp)
+            add("debug_${timestamp}_6_row${i}" to bmp)
         }
     }
 

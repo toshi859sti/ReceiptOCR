@@ -19,6 +19,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.greenframeocr.util.GreenFrameDetector
 import com.example.greenframeocr.viewmodel.CameraViewModel
 import com.example.greenframeocr.viewmodel.OcrCaptureViewModel
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
 /**
@@ -148,17 +149,15 @@ fun CameraScreenForOcr(
     val cameraViewModel: CameraViewModel = viewModel()
     val uiState by cameraViewModel.uiState.collectAsState()
 
-    // 再撮影時に状態をリセット
+    // リセット後に Success を受け付ける（古い Success で即時終了するのを防ぐ）
     LaunchedEffect(Unit) {
         cameraViewModel.resetToPreview()
-    }
-
-    // 検出成功 → 自動で processDetectionResult に渡す
-    LaunchedEffect(uiState) {
-        if (uiState is CameraViewModel.CameraUiState.Success) {
-            val detectionResult = (uiState as CameraViewModel.CameraUiState.Success).detectionResult
-            onOcrComplete(detectionResult)
-        }
+        // reset 後の状態変化のみ監視
+        cameraViewModel.uiState
+            .filter { it is CameraViewModel.CameraUiState.Success }
+            .collect { state ->
+                onOcrComplete((state as CameraViewModel.CameraUiState.Success).detectionResult)
+            }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -175,7 +174,7 @@ fun CameraScreenForOcr(
                 }
             }
         } else {
-            CameraScreen(viewModel = cameraViewModel)
+            CameraScreen(viewModel = cameraViewModel, showForceCapture = true)
 
             OutlinedButton(
                 onClick = onCancel,
@@ -291,35 +290,25 @@ private fun CompleteScreen(
 
 @Composable
 private fun ParsedRowCard(row: OcrCaptureViewModel.ParsedRow) {
+    val bgColor = when {
+        row.isSubtotal -> androidx.compose.ui.graphics.Color(0xFFE8F5E9)
+        else           -> MaterialTheme.colorScheme.surfaceVariant
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (row.isAmountValid)
-                MaterialTheme.colorScheme.surfaceVariant
-            else
-                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
-        )
+        colors = CardDefaults.cardColors(containerColor = bgColor)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "日付: ${row.date ?: "---"}",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = if (row.isAmountValid) "✓ 検算OK" else "✗ 要確認",
-                    fontSize = 13.sp,
-                    color = if (row.isAmountValid) Color.Green else Color.Red,
-                    fontWeight = FontWeight.Bold
-                )
-            }
             Text(
-                text = "商品: ${row.productName ?: "---"}",
+                text = "日付: ${row.date ?: "---"}",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            val nameLabel = if (row.isSubtotal) "小計" else "商品"
+            Text(
+                text = "$nameLabel: ${row.productName ?: "---"}",
                 fontSize = 14.sp,
+                fontWeight = if (row.isSubtotal) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier.padding(top = 4.dp)
             )
             Row(
@@ -329,11 +318,12 @@ private fun ParsedRowCard(row: OcrCaptureViewModel.ParsedRow) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "数量: ${row.quantity ?: "---"}  単価: ${row.unitPrice?.let { "¥$it" } ?: "---"}",
-                    fontSize = 13.sp
+                    text = if (!row.isSubtotal) "カテゴリ: ${row.category}" else "",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "金額: ${row.amount?.let { "¥$it" } ?: "---"}",
+                    text = "金額: ${row.amount?.let { "¥%,d".format(it) } ?: "---"}",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )

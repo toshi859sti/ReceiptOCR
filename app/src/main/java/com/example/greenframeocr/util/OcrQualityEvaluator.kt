@@ -3,6 +3,7 @@ package com.example.greenframeocr.util
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.util.Log
+import org.opencv.core.Point
 import kotlin.math.sqrt
 
 /**
@@ -26,6 +27,61 @@ import kotlin.math.sqrt
  */
 object OcrQualityEvaluator {
     private const val TAG = "OcrQualityEvaluator"
+
+    // -----------------------------------------------------------------------
+    // 枠検出の安定性評価（軽量トリガー判定用）
+    // -----------------------------------------------------------------------
+
+    private data class FrameStability(val corners: List<Point>)
+    private var lastGoodFrame: FrameStability? = null
+
+    /** Preview → Preview 遷移時に安定性履歴をクリア */
+    fun resetStability() { lastGoodFrame = null }
+
+    /**
+     * detectCornersFast の結果を評価して 0.0〜1.0 のスコアを返す。
+     *
+     * 判定条件:
+     *   1. 面積比 0.30〜0.95（伝票が画面に適切に収まっているか）
+     *   2. アスペクト比が A5 横（1.42）に近いか（±25%）
+     *   3. 前フレームからの移動量が小さいか（手ブレ判定）
+     *
+     * @return 0.0=不合格 / 0.5=動いている / 1.0=合格・安定
+     */
+    fun evaluateDetectionQuality(corners: List<Point>?, imgW: Int, imgH: Int): Double {
+        if (corners == null || corners.size != 4) return 0.0
+
+        val tl = corners[0]; val tr = corners[1]; val br = corners[2]; val bl = corners[3]
+
+        // 1. 面積比チェック（台形近似：幅×高さ）
+        val w = Math.hypot(tr.x - tl.x, tr.y - tl.y)
+        val h = Math.hypot(bl.x - tl.x, bl.y - tl.y)
+        val areaRatio = (w * h) / (imgW * imgH)
+        if (areaRatio < 0.30 || areaRatio > 0.95) {
+            Log.d(TAG, "DetectionQuality: area=${"%.2f".format(areaRatio)} → NG")
+            return 0.0
+        }
+
+        // 2. アスペクト比チェック（A5横 = 1.42）
+        val ratio = if (h > 0.0) w / h else 0.0
+        val ratioError = Math.abs(ratio - 1.42) / 1.42
+        if (ratioError > 0.25) {
+            Log.d(TAG, "DetectionQuality: ratio=${"%.2f".format(ratio)} error=${"%.2f".format(ratioError)} → NG")
+            return 0.0
+        }
+
+        // 3. 安定性チェック（4角の移動合計 30px 未満なら安定）
+        val stabilityScore = lastGoodFrame?.let { last ->
+            val movement = corners.zip(last.corners).sumOf { (c1, c2) ->
+                Math.hypot(c1.x - c2.x, c1.y - c2.y)
+            }
+            if (movement > 30.0) 0.5 else 1.0
+        } ?: 1.0
+
+        lastGoodFrame = FrameStability(corners)
+        Log.d(TAG, "DetectionQuality: area=${"%.2f".format(areaRatio)} ratio=${"%.2f".format(ratio)} stability=$stabilityScore → OK")
+        return stabilityScore
+    }
 
     // 重み設定
     private const val WEIGHT_FOCUS = 0.3
@@ -339,7 +395,7 @@ object OcrQualityEvaluator {
      * @param gray グレースケール画像
      * @return シャープネス値
      */
-    private fun calculateSharpness(gray: Bitmap): Double {
+    fun calculateSharpness(gray: Bitmap): Double {
         val width = gray.width
         val height = gray.height
 

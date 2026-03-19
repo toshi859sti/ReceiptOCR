@@ -430,7 +430,7 @@ fun ReceiptInputScreen(
                             showCamera = true
                         },
                         modifier = Modifier.weight(1f),
-                        enabled = viewMode == ViewMode.EDIT && inputMode == InputMode.OCR && totalSheets > 0
+                        enabled = viewMode == ViewMode.EDIT && inputMode == InputMode.OCR
                     ) {
                         Icon(Icons.Default.CameraAlt, null, Modifier.size(20.dp))
                         Spacer(Modifier.width(4.dp))
@@ -1312,30 +1312,24 @@ private fun CameraView(
             onOcrComplete = { detectionResult ->
                 isProcessingOcr = true
                 ocrScope.launch {
-                    val parsed = detectionResult.rowBitmaps.mapIndexed { index, rowBitmap ->
-                        val w = rowBitmap.width
-                        val h = rowBitmap.height
-                        fun crop(xStart: Float, xEnd: Float): android.graphics.Bitmap {
-                            val x = (xStart * w).toInt().coerceIn(0, w - 1)
-                            val width = ((xEnd - xStart) * w).toInt().coerceIn(1, w - x)
-                            return android.graphics.Bitmap.createBitmap(rowBitmap, x, 0, width, h)
+                    val dewarped = detectionResult.dewarpedBitmap
+                    val parsed = if (dewarped != null) {
+                        val mmRatio = dewarped.width / 203.0
+                        val ocrResult = com.example.greenframeocr.util.OCRProcessor.processUnderlayingBase(dewarped, mmRatio)
+                        ocrResult.rowsWithCategories.mapIndexed { index, (row, category) ->
+                            val isSubtotal     = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.SUBTOTAL
+                            val isMonthlyTotal = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.MONTHLY_TOTAL
+                            val amount = if (isSubtotal || isMonthlyTotal) row.categorySum else row.amount
+                            com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow(
+                                rowIndex = index, date = row.date, productName = row.itemName,
+                                branch = null, quantity = row.quantity?.toIntOrNull(),
+                                unitPrice = null, amount = amount,
+                                isAmountValid = amount != null,
+                                category = category, isSubtotal = isSubtotal,
+                                isMonthlyTotal = isMonthlyTotal
+                            )
                         }
-                        val dateText   = com.example.greenframeocr.util.OCRProcessor.recognizeTextLatin(crop(0.02f, 0.10f))?.text?.trim()
-                        val nameText   = com.example.greenframeocr.util.OCRProcessor.recognizeText(crop(0.10f, 0.46f))?.text?.trim()
-                        val qtyText    = com.example.greenframeocr.util.OCRProcessor.recognizeTextLatin(crop(0.55f, 0.62f))?.text?.trim()
-                        val priceText  = com.example.greenframeocr.util.OCRProcessor.recognizeTextLatin(crop(0.62f, 0.72f))?.text?.trim()
-                        val amountText = com.example.greenframeocr.util.OCRProcessor.recognizeTextLatin(crop(0.72f, 0.83f))?.text?.trim()
-                        val qty    = qtyText?.let    { com.example.greenframeocr.util.ValidationUtils.sanitizeNumber(it) }
-                        val price  = priceText?.let  { com.example.greenframeocr.util.ValidationUtils.sanitizeNumber(it) }
-                        val amount = amountText?.let { com.example.greenframeocr.util.ValidationUtils.sanitizeNumber(it) }
-                        val isValid = qty != null && price != null && amount != null &&
-                                com.example.greenframeocr.util.ValidationUtils.validateWithRounding(price, qty, amount)
-                        com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow(
-                            rowIndex = index, date = dateText, productName = nameText,
-                            branch = null, quantity = qty, unitPrice = price,
-                            amount = amount, isAmountValid = isValid
-                        )
-                    }
+                    } else emptyList()
                     isProcessingOcr = false
                     onOcrComplete(parsed)
                 }
@@ -1918,8 +1912,9 @@ private fun convertParsedRowsToRowData(
     defaultYear: Int = 7,
     defaultMonth: Int = 1
 ): List<ReceiptRowData> {
-    val normalAndSubtotalRows = parsedRows
-    val monthlyTotalRow: com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow? = null
+    // 月合計行を分離（元の ReceiptOCR と同様に除外して処理）
+    val monthlyTotalRow = parsedRows.find { it.isMonthlyTotal }
+    val normalAndSubtotalRows = parsedRows.filter { !it.isMonthlyTotal }
 
     // 小計行の後に空白行を挿入する処理
     val rowsWithBlankAfterSubtotal = mutableListOf<ReceiptRowData>()
@@ -1941,20 +1936,53 @@ private fun convertParsedRowsToRowData(
         val productName = row.productName ?: ""
         val finalAmount = row.amount ?: 0
 
+        // 小計行判定: ParsedRow.isSubtotal を優先、フォールバックとして日付なし+金額ありを使用
+        val isSubtotalRow = row.isSubtotal || (digits.length < 4 && finalAmount > 0)
+
+        // カテゴリ文字列 → SubtotalCategory へのマッピング
+        val subtotalCat: SubtotalCategory? = if (isSubtotalRow) {
+            when (row.category) {
+                "一般購買" -> SubtotalCategory.GENERAL_PURCHASE
+                "給油所"   -> SubtotalCategory.GAS_STATION
+                "農業機械" -> SubtotalCategory.AGRICULTURAL_MACHINERY
+                else       -> null
+            }
+        } else null
+
+        // 通常行のカテゴリ文字列
+        val categoryStr = when (row.category) {
+            "一般購買" -> "一般購買"
+            "給油所"   -> "給油所"
+            "農業機械" -> "農業機械"
+            else       -> "未分類"
+        }
+
         rowsWithBlankAfterSubtotal.add(
             ReceiptRowData(
                 rowNumber = rowNumber++,
                 date = formattedDate,
                 productName = productName,
                 amount = finalAmount,
-                isSubtotal = false,
+                isSubtotal = isSubtotalRow,
                 isTotalRow = false,
                 selectedCells = emptySet(),
-                category = "未分類",
-                subtotalCategory = null,
+                category = categoryStr,
+                subtotalCategory = subtotalCat,
                 originalOcrName = if (productName.isNotBlank()) productName else null
             )
         )
+
+        // 小計行の後に空白行を1行挿入
+        if (isSubtotalRow && rowsWithBlankAfterSubtotal.size < 20) {
+            rowsWithBlankAfterSubtotal.add(
+                ReceiptRowData(
+                    rowNumber = rowNumber++,
+                    date = "", productName = "", amount = 0,
+                    isSubtotal = false, isTotalRow = false,
+                    selectedCells = emptySet()
+                )
+            )
+        }
 
         // 20行に達したら終了
         if (rowsWithBlankAfterSubtotal.size >= 20) break
@@ -1973,22 +2001,17 @@ private fun convertParsedRowsToRowData(
         )
     }
 
-    // 合計行は一枚目のみ追加
+    // 合計行は一枚目のみ常に追加（OCR値があれば使用、なければ0）
     return if (sheetNumber == 1) {
-        // OCRで読み取った月合計を使用（新フローでは常に0）
-        val totalAmount = 0
-
-        // 合計行を追加
         val totalRow = ReceiptRowData(
             rowNumber = 21,
             date = "",
             productName = "合計",
-            amount = totalAmount,
+            amount = monthlyTotalRow?.amount ?: 0,
             isSubtotal = false,
             isTotalRow = true,
             selectedCells = emptySet()
         )
-
         dataRows + totalRow
     } else {
         dataRows
