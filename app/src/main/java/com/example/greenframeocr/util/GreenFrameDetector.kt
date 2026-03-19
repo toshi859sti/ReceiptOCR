@@ -57,7 +57,7 @@ object GreenFrameDetector {
     // 2. 緑線のない右辺の黒枠を検出して白線で描画
     // -----------------------------------------------------------------------
 
-    fun process(inputBitmap: Bitmap): DetectionResult {
+    fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult {
         // bitmapToMat は RGBA 4ch を返すため BGR 3ch に変換してから使う
         // （そうしないと toBitmap() の COLOR_BGR2RGBA が正しく機能しない）
         val rgba = Mat()
@@ -241,11 +241,17 @@ object GreenFrameDetector {
             }
             val dewarpedBitmap = warpedMat.toBitmap()
 
-            // Step 7: 明細行の検出・切り抜き
+            // Step 7: 明細行の検出・切り抜き（デバッグ時のみ）
             t = System.currentTimeMillis()
-            val rowBitmaps = detectDetailRows(warpedMat)
-            Log.d(TAG, "[PERF] Step7 行検出・切り抜き: ${System.currentTimeMillis() - t} ms  (${rowBitmaps.size}行)")
-            Log.d(TAG, "明細行数: ${rowBitmaps.size}")
+            val rowBitmaps = if (debugMode) {
+                detectDetailRows(warpedMat).also {
+                    Log.d(TAG, "[PERF] Step7 行検出・切り抜き: ${System.currentTimeMillis() - t} ms  (${it.size}行)")
+                    Log.d(TAG, "明細行数: ${it.size}")
+                }
+            } else {
+                Log.d(TAG, "[PERF] Step7 行検出・切り抜き: スキップ（本番モード）")
+                emptyList()
+            }
 
             // Step 8: 適応二値化（DebugCaptureScreen の ④ 表示用）
             t = System.currentTimeMillis()

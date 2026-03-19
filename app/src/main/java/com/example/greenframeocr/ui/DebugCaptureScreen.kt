@@ -115,7 +115,8 @@ fun DebugCaptureScreen(onBack: () -> Unit) {
                     // 品質チェックあり・強制撮影ボタンあり
                     CameraScreen(
                         viewModel = cameraViewModel,
-                        showForceCapture = true
+                        showForceCapture = true,
+                        debugMode = true
                     )
                     // 戻るボタンだけオーバーレイ
                     IconButton(

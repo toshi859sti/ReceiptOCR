@@ -36,7 +36,8 @@ import java.util.concurrent.Executors
 @Composable
 fun CameraScreen(
     viewModel: CameraViewModel = viewModel(),
-    showForceCapture: Boolean = false
+    showForceCapture: Boolean = false,
+    debugMode: Boolean = false
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -156,7 +157,8 @@ fun CameraScreen(
                                                     onCaptureTriggered = { isCaptureTriggered = it },
                                                     onProcessingChange = { isProcessing = it },
                                                     onConsecutiveChange = { consecutiveGoodFrames = it },
-                                                    onLatestBitmap = { latestBitmap = it }
+                                                    onLatestBitmap = { latestBitmap = it },
+                                                    debugMode = debugMode
                                                 )
                                             }
                                             imageProxy.close()
@@ -236,7 +238,7 @@ fun CameraScreen(
                                     camera?.cameraControl?.enableTorch(false)
                                     isProcessing = true
                                     isCaptureTriggered = true
-                                    viewModel.processImage(bmp)
+                                    viewModel.processImage(bmp, debugMode)
                                 }
                             },
                             modifier = Modifier
@@ -327,7 +329,8 @@ private fun analyzeFrame(
     onCaptureTriggered: (Boolean) -> Unit,
     onProcessingChange: (Boolean) -> Unit,
     onConsecutiveChange: (Int) -> Unit,
-    onLatestBitmap: (android.graphics.Bitmap) -> Unit = {}
+    onLatestBitmap: (android.graphics.Bitmap) -> Unit = {},
+    debugMode: Boolean = false
 ) {
     try {
         // フル解像度 Bitmap（processImage に渡す用）
@@ -381,7 +384,7 @@ private fun analyzeFrame(
                 camera?.cameraControl?.enableTorch(false)
                 onProcessingChange(true)
                 onCaptureTriggered(true)
-                viewModel.processImage(fullBitmap)   // フル解像度で本番処理
+                viewModel.processImage(fullBitmap, debugMode)   // フル解像度で本番処理
                 onConsecutiveChange(0)
             }
         } else if (!isGood && consecutiveGoodFrames > 0) {
