@@ -34,5 +34,8 @@ data class DepositMeisai(
     val memo: String = "",
 
     /** マッチングルールID（nullならマッチなし） */
-    val matchingRuleId: Int? = null
+    val matchingRuleId: Int? = null,
+
+    /** 個別オーバーライド摘要ID（nullならグループのデフォルトを使用） */
+    val overrideTekiyouId: Int? = null
 )

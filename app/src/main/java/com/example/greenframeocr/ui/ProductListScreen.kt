@@ -15,9 +15,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,7 +36,8 @@ enum class SortOrder(val label: String) {
 /** フィルタ種別 */
 enum class TekiyouFilter(val label: String) {
     ALL("全て"),
-    MISSING("摘要未設定")
+    MISSING("摘要未設定"),
+    CERTIFIED("確定済み")
 }
 
 /**
@@ -94,6 +98,7 @@ fun ProductListScreen(
         filtered = when (tekiyouFilter) {
             TekiyouFilter.ALL -> filtered
             TekiyouFilter.MISSING -> filtered.filter { it.kaikakeTekiyouId == null }
+            TekiyouFilter.CERTIFIED -> filtered.filter { it.isCertified }
         }
 
         // 並び替え
@@ -532,7 +537,7 @@ private fun ProductListItem(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // カテゴリ & 使用頻度
+            // カテゴリ & 使用頻度 & 確定バッジ
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -543,6 +548,17 @@ private fun ProductListItem(
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (product.isCertified) {
+                    Text(
+                        text = "確定",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1565C0),
+                        modifier = Modifier
+                            .background(Color(0xFFE3F2FD), MaterialTheme.shapes.small)
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -619,6 +635,14 @@ private fun ProductEditDialog(
     val isNew = product == null
     val title = if (isNew) "購買品追加" else "購買品編集"
 
+    val fwCount = fullWidthCount(name)
+    val fwMax = 20.0
+    val counterColor = when {
+        fwCount >= fwMax -> MaterialTheme.colorScheme.error
+        fwCount >= fwMax * 0.9 -> Color(0xFFF57C00)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -626,14 +650,33 @@ private fun ProductEditDialog(
             Column(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // 商品名
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("商品名") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
+                // 商品名（全角20文字制限・数字/スペースは自動全角変換）
+                Column {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { newVal ->
+                            val converted = toFullWidthProductName(newVal)
+                            if (fullWidthCount(converted) <= fwMax) name = converted
+                        },
+                        label = { Text("商品名（全角20文字）") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Text,
+                            imeAction = ImeAction.Next
+                        ),
+                        textStyle = LocalTextStyle.current.copy(
+                            fontFamily = FontFamily.Monospace
+                        ),
+                        supportingText = {
+                            Text(
+                                text = "${"%.1f".format(fwCount)} / ${"%.0f".format(fwMax)} 文字",
+                                color = counterColor,
+                                fontSize = 11.sp
+                            )
+                        }
+                    )
+                }
 
                 // カテゴリ選択
                 ExposedDropdownMenuBox(
@@ -699,14 +742,15 @@ private fun ProductEditDialog(
                             canonicalName = name.trim(),
                             category = category,
                             frequencyCount = product?.frequencyCount ?: 0,
-                            kaikakeTekiyouId = selectedTekiyouId
+                            kaikakeTekiyouId = selectedTekiyouId,
+                            isCertified = true  // 手動入力・訂正は常に確定
                         )
                         onSave(newProduct)
                     }
                 },
                 enabled = name.isNotBlank()
             ) {
-                Text("保存")
+                Text("確定保存")
             }
         },
         dismissButton = {
@@ -951,3 +995,33 @@ private fun ProductMergeDialog(
 
 /** スペース正規化（半角・全角スペースを1つの半角スペースに統一し前後をトリム） */
 private fun String.normalizeSpaces() = trim().replace(Regex("[\\s\u3000]+"), " ")
+
+/**
+ * 全角換算文字数を計算する。
+ * 全角（漢字・かな・全角記号）= 1.0、半角（ASCII・半角カナ等）= 0.5
+ */
+private fun fullWidthCount(text: String): Double =
+    text.sumOf { c ->
+        when {
+            c.code in 0x3000..0x9FFF -> 1.0  // CJK全般（かな・漢字）
+            c.code in 0xF900..0xFAFF -> 1.0  // CJK互換漢字
+            c.code in 0xFF01..0xFF60 -> 1.0  // 全角英数記号
+            c.code in 0xFFE0..0xFFE6 -> 1.0  // 全角通貨記号等
+            else -> 0.5                        // 半角（ASCII・kg/cc/cm等）
+        }
+    }
+
+/**
+ * 商品名入力用の自動全角変換。
+ * - 半角数字 → 全角数字
+ * - 半角スペース → 全角スペース
+ * - 半角英字・kg/cc/cm などの単位はそのまま（半角許容）
+ */
+private fun toFullWidthProductName(text: String): String =
+    text.map { c ->
+        when {
+            c in '0'..'9' -> '０' + (c - '0')
+            c == ' ' -> '\u3000'
+            else -> c
+        }
+    }.joinToString("")

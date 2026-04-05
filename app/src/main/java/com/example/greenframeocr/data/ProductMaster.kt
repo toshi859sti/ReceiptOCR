@@ -39,5 +39,8 @@ data class ProductMaster(
     val frequencyCount: Int = 0,
 
     /** 買掛摘要辞書ID（RakurakuTekiyouのID） */
-    val kaikakeTekiyouId: Int? = null
+    val kaikakeTekiyouId: Int? = null,
+
+    /** 確定フラグ: 手動入力・訂正済みアイテムはtrue */
+    val isCertified: Boolean = false
 )
