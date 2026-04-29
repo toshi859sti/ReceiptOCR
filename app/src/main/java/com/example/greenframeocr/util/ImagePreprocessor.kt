@@ -796,6 +796,108 @@ object ImagePreprocessor {
     }
 
     /**
+     * Greenチャンネル抽出
+     *
+     * RGBA Mat の G チャンネル（index=1）を単チャンネル Mat として取り出す。
+     * 黒インクの印刷文字は G チャンネルのコントラストが高く、
+     * 緑枠の影響を最も受けにくい。
+     *
+     * @param rgbaMat bitmapToMat で得た RGBA 4ch Mat
+     * @return グレースケール相当の単チャンネル Mat
+     */
+    fun extractGreenChannel(rgbaMat: org.opencv.core.Mat): org.opencv.core.Mat {
+        val green = org.opencv.core.Mat()
+        org.opencv.core.Core.extractChannel(rgbaMat, green, 1)
+        return green
+    }
+
+    /**
+     * CLAHE（コントラスト制限付き適応ヒストグラム均等化）
+     *
+     * 局所的な影・照明ムラを抑制し、文字の太さを均一化する。
+     * clipLimit が高いほど強くかかるが、ノイズも増えるため 2.0 が推奨値。
+     *
+     * @param grayMat 単チャンネルグレースケール Mat
+     * @param clipLimit コントラスト制限値（デフォルト 2.0）
+     * @param tileGridSize タイル分割数（デフォルト 8×8）
+     * @return CLAHE 適用後の Mat
+     */
+    fun applyClahe(
+        grayMat: org.opencv.core.Mat,
+        clipLimit: Double = 2.0,
+        tileGridSize: Int = 8
+    ): org.opencv.core.Mat {
+        val clahe = org.opencv.imgproc.Imgproc.createCLAHE(
+            clipLimit,
+            org.opencv.core.Size(tileGridSize.toDouble(), tileGridSize.toDouble())
+        )
+        val result = org.opencv.core.Mat()
+        clahe.apply(grayMat, result)
+        Log.d(TAG, "applyClahe: clipLimit=$clipLimit, tileGridSize=$tileGridSize")
+        return result
+    }
+
+    /**
+     * アンシャープマスク（シャープネス強調）
+     *
+     * 透視変換の補間によって生じるエッジのボケを補正する。
+     * 式: dest = src × (1 + α) - blurred × α
+     *
+     * @param grayMat 単チャンネルグレースケール Mat
+     * @param sigma ガウスぼかしの標準偏差（デフォルト 1.0）
+     * @param alpha シャープネス強度（デフォルト 0.5）
+     * @return シャープネス強調後の Mat
+     */
+    fun sharpenUnsharpMask(
+        grayMat: org.opencv.core.Mat,
+        sigma: Double = 1.0,
+        alpha: Double = 0.5
+    ): org.opencv.core.Mat {
+        val blurred = org.opencv.core.Mat()
+        org.opencv.imgproc.Imgproc.GaussianBlur(grayMat, blurred, org.opencv.core.Size(0.0, 0.0), sigma)
+        val result = org.opencv.core.Mat()
+        org.opencv.core.Core.addWeighted(grayMat, 1.0 + alpha, blurred, -alpha, 0.0, result)
+        blurred.release()
+        Log.d(TAG, "sharpenUnsharpMask: sigma=$sigma, alpha=$alpha")
+        return result
+    }
+
+    /**
+     * 商品名列の OCR 前処理パイプライン（統合関数）
+     *
+     * 1. Green チャンネル抽出（緑枠の影響を排除・コントラスト最大化）
+     * 2. CLAHE（局所的な影・照明ムラを解消）
+     * 3. Unsharp Mask（透視変換のボケを補正）
+     * 4. Morphology Open（ゴマ塩ノイズ除去）
+     *
+     * @param bitmap 商品名列 ROI の Bitmap（RGBA）
+     * @param charPx 推定文字高さ（safeMorphOpen のカーネルサイズ計算に使用）
+     * @return 前処理済み単チャンネル Mat（呼び出し元で release すること）
+     */
+    fun prepareItemColumnMat(bitmap: Bitmap, charPx: Float): org.opencv.core.Mat {
+        var rgbaMat: org.opencv.core.Mat? = null
+        var greenMat: org.opencv.core.Mat? = null
+        var claheMat: org.opencv.core.Mat? = null
+        var sharpenedMat: org.opencv.core.Mat? = null
+
+        try {
+            rgbaMat = org.opencv.core.Mat()
+            org.opencv.android.Utils.bitmapToMat(bitmap, rgbaMat)
+
+            greenMat    = extractGreenChannel(rgbaMat!!)
+            claheMat    = applyClahe(greenMat!!)
+            sharpenedMat = sharpenUnsharpMask(claheMat!!)
+
+            return safeMorphOpen(sharpenedMat!!, charPx)
+        } finally {
+            rgbaMat?.release()
+            greenMat?.release()
+            claheMat?.release()
+            sharpenedMat?.release()
+        }
+    }
+
+    /**
      * Double値を指定桁数でフォーマット
      */
     private fun Double.format(digits: Int) = "%.${digits}f".format(this)

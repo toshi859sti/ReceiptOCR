@@ -250,7 +250,7 @@ object OCRProcessor {
         val updatedRows = filteredRows.mapIndexed { index, row ->
             val newQuantity = quantityMap[index] ?: row.quantity
             val doubleResult = productNameDoubleOcrMap[index]
-            val newItemName  = doubleResult?.grayText ?: doubleResult?.binaryText ?: row.itemName
+            val newItemName  = doubleResult?.grayText ?: row.itemName
 
             val finalQuantity = if (newItemName?.contains("返品") == true && newQuantity != null) {
                 val qty = newQuantity.toIntOrNull()
@@ -373,24 +373,12 @@ object OCRProcessor {
         Log.d(TAG, "[PRODUCT] ===== Start =====")
 
         var itemColumnBitmap: Bitmap? = null
-        var grayBitmap: Bitmap? = null
-        var enhancedBitmap: Bitmap? = null
-        var grayMat: org.opencv.core.Mat? = null
-        var grayMatGray: org.opencv.core.Mat? = null
-        var openedMat: org.opencv.core.Mat? = null
-        var grayMatForOcr: org.opencv.core.Mat? = null
-        var grayBitmapForOcr: Bitmap? = null
-        var scaledGrayBitmap: Bitmap? = null
-        var binaryMat: org.opencv.core.Mat? = null
-        var binaryBitmapForOcr: Bitmap? = null
-        var scaledBinaryBitmap: Bitmap? = null
-
-        var grayOcrText: com.google.mlkit.vision.text.Text? = null
-        var binaryOcrText: com.google.mlkit.vision.text.Text? = null
-        var scaleFactor = 1f
+        var processedMat: org.opencv.core.Mat? = null
+        var rgbaForOcr: org.opencv.core.Mat? = null
+        var bitmapForOcr: Bitmap? = null
+        var ocrText: com.google.mlkit.vision.text.Text? = null
         var itemX = 0
         var itemY = 0
-        var binaryCandidateScore = 0.0
 
         try {
             val itemRange = UnderlyingBaseProcessor.getItemRange()
@@ -407,81 +395,43 @@ object OCRProcessor {
                 itemHeight.coerceAtMost(warpedBitmap.height - itemY)
             )
 
-            grayBitmap     = ImagePreprocessor.toGray(itemColumnBitmap!!)
-            enhancedBitmap = ImagePreprocessor.adjustContrast(grayBitmap!!, 1.2f)
-
-            grayMat = org.opencv.core.Mat()
-            org.opencv.android.Utils.bitmapToMat(enhancedBitmap, grayMat)
-            grayMatGray = org.opencv.core.Mat()
-            org.opencv.imgproc.Imgproc.cvtColor(grayMat, grayMatGray, org.opencv.imgproc.Imgproc.COLOR_RGBA2GRAY)
-            grayMat!!.release(); grayMat = null
-
-            val charPx         = ImagePreprocessor.estimateCharHeightPx(enhancedBitmap!!)
+            // 文字高さ推定
+            val charPx = ImagePreprocessor.estimateCharHeightPx(itemColumnBitmap!!)
             Log.d(TAG, "[PRODUCT] charPx=$charPx")
 
-            val edgeDensity    = ImagePreprocessor.calcEdgeDensity(grayMatGray!!)
-            val blackRatio     = ImagePreprocessor.calcBlackRatio(grayMatGray!!)
-            val strokeWidthVar = ImagePreprocessor.calcStrokeWidthVariance(grayMatGray!!)
+            // 前処理パイプライン:
+            //   Green チャンネル抽出 → CLAHE → Unsharp Mask → Morphology Open
+            processedMat = ImagePreprocessor.prepareItemColumnMat(itemColumnBitmap!!, charPx)
 
-            binaryCandidateScore = ImagePreprocessor.calcBinaryCandidateScore(
-                charPx, edgeDensity, blackRatio, strokeWidthVar
+            // 単チャンネル → RGBA 変換して ML Kit へ渡す（1回のみ）
+            rgbaForOcr = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.cvtColor(
+                processedMat!!, rgbaForOcr,
+                org.opencv.imgproc.Imgproc.COLOR_GRAY2RGBA
             )
-
-            openedMat = ImagePreprocessor.safeMorphOpen(grayMatGray!!, charPx)
-
-            val canTryBinary  = charPx >= 18f && blackRatio <= 0.45 && edgeDensity >= 0.02
-            val shouldUseBinary = canTryBinary && binaryCandidateScore >= 0.5
-            Log.d(TAG, "[PRODUCT] binaryScore=${"%.3f".format(binaryCandidateScore)}, useBinary=$shouldUseBinary")
-
-            // アップスケーリング無し（scaleFactor=1.0f）
-            scaleFactor = 1.0f
-
-            grayMatForOcr    = openedMat!!.clone()
-            grayBitmapForOcr = matToBitmap(grayMatForOcr!!)
-            grayOcrText      = recognizeText(grayBitmapForOcr!!)
-
-            if (shouldUseBinary) {
-                binaryMat          = ImagePreprocessor.safeAdaptiveThreshold(openedMat!!, charPx)
-                binaryBitmapForOcr = matToBitmap(binaryMat!!)
-                binaryOcrText      = recognizeText(binaryBitmapForOcr!!)
-            }
+            bitmapForOcr = matToBitmap(rgbaForOcr!!)
+            ocrText = recognizeText(bitmapForOcr!!)
 
         } finally {
             itemColumnBitmap?.recycle()
-            grayBitmap?.recycle()
-            enhancedBitmap?.recycle()
-            grayMat?.release()
-            grayMatGray?.release()
-            openedMat?.release()
-            grayMatForOcr?.release()
-            grayBitmapForOcr?.recycle()
-            binaryMat?.release()
-            binaryBitmapForOcr?.recycle()
+            processedMat?.release()
+            rgbaForOcr?.release()
+            bitmapForOcr?.recycle()
         }
 
-        if (grayOcrText == null && binaryOcrText == null) {
-            Log.w(TAG, "[PRODUCT] Both OCRs failed")
+        if (ocrText == null) {
+            Log.w(TAG, "[PRODUCT] OCR failed")
             return emptyMap()
         }
 
-        val grayProductBoxes   = extractTextBoxesFromOcrResult(grayOcrText,   scaleFactor, itemX, itemY).sortedBy { it.centerY }
-        val binaryProductBoxes = extractTextBoxesFromOcrResult(binaryOcrText, scaleFactor, itemX, itemY).sortedBy { it.centerY }
-
-        val grayProductMap   = mapTextBoxesToRows(grayProductBoxes,   rows, rowYCoordinates)
-        val binaryProductMap = mapTextBoxesToRows(binaryProductBoxes, rows, rowYCoordinates)
+        val productBoxes = extractTextBoxesFromOcrResult(ocrText, 1f, itemX, itemY)
+            .sortedBy { it.centerY }
+        val productMap = mapTextBoxesToRows(productBoxes, rows, rowYCoordinates)
 
         val doubleOcrMap = mutableMapOf<Int, DoubleOcrResult>()
-        (grayProductMap.keys + binaryProductMap.keys).toSet().forEach { index ->
-            val grayText   = grayProductMap[index]
-            val binaryText = binaryProductMap[index]
-            if (grayText != null || binaryText != null) {
-                doubleOcrMap[index] = DoubleOcrResult(
-                    grayText             = grayText,
-                    binaryText           = binaryText,
-                    binaryCandidateScore = binaryCandidateScore
-                )
-                Log.d(TAG, "[PRODUCT] Row $index: gray='$grayText', binary='$binaryText'")
-            }
+        productMap.forEach { (index, text) ->
+            doubleOcrMap[index] = DoubleOcrResult(grayText = text, binaryText = null)
+            Log.d(TAG, "[PRODUCT] Row $index: '$text'")
         }
 
         Log.d(TAG, "[PRODUCT] ===== Complete: ${doubleOcrMap.size} =====")
