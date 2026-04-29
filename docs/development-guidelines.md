@@ -33,9 +33,25 @@
 - エンティティの変更は DAO・マイグレーション・`@Database(entities=[...])` をセットで更新する
 
 ### OpenCV ガイドライン
-- `Utils.bitmapToMat` は RGBA 4ch を返す → **必ず `Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2BGR)` でBGR変換してから処理する**
+
+**変換フロー（必ず守ること）:**
+
+```
+Bitmap（RGBA）
+  ↓ Utils.bitmapToMat
+Mat（RGBA 4ch）
+  ↓ Imgproc.cvtColor(rgbaMat, bgrMat, COLOR_RGBA2BGR)
+Mat（BGR 3ch）← OpenCV 処理はここで行う
+  ↓ Imgproc.cvtColor(bgrMat, rgbaMat, COLOR_BGR2RGBA)  ← ML Kit に渡す場合のみ必要
+Mat（RGBA 4ch）
+  ↓ Utils.matToBitmap(rgbaMat, bitmap)
+Bitmap（RGBA）→ InputImage.fromBitmap で ML Kit へ
+```
+
+- `Utils.bitmapToMat` は RGBA 4ch を返す → **必ず `COLOR_RGBA2BGR` で変換してから OpenCV 処理する**
+- OpenCV で加工した Mat を ML Kit に渡す場合は **`COLOR_BGR2RGBA` で戻してから `matToBitmap` を呼ぶ**。逆順のまま渡すと色チャンネルが反転し OCR 精度に悪影響が出る
+- `toBitmap()` 拡張関数は BGR→RGBA 変換を内包しているため、src は常に BGR 3ch のまま扱う
 - `Mat` と `Bitmap` は try-finally でリリースする（`mat.release()` / `bitmap.recycle()`）
-- `toBitmap()` は内部で BGR→RGBA 変換するため、src は常に BGR 3ch のまま扱う
 
 ### 非同期処理
 - ViewModel の処理は `viewModelScope.launch` で実行

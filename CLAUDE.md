@@ -99,7 +99,23 @@ GreenFrameOCR/
 
 ### RGBA→BGR 変換（必須）
 `Utils.bitmapToMat` は RGBA 4ch を返す。OpenCV 処理前に必ず BGR 変換すること。
-`toBitmap()` は BGR→RGBA を内包しているため、src は常に BGR 3ch のまま扱う。
+
+```kotlin
+// RGBA → BGR（OpenCV 処理前）
+Imgproc.cvtColor(rgbaMat, bgrMat, Imgproc.COLOR_RGBA2BGR)
+```
+
+ML Kit へ渡す場合は `InputImage.fromBitmap` または `InputImage.fromMediaImage` を使う。
+OpenCV で加工した Mat を Bitmap に戻して ML Kit に渡すときは、**必ず BGR→RGBA に戻してから** `Utils.matToBitmap` を呼ぶこと。逆順のまま渡すと色チャンネルが反転し OCR 精度に悪影響が出る。
+
+```kotlin
+// BGR → RGBA（matToBitmap の前）
+Imgproc.cvtColor(bgrMat, rgbaMat, Imgproc.COLOR_BGR2RGBA)
+Utils.matToBitmap(rgbaMat, bitmap)
+// → InputImage.fromBitmap(bitmap, 0) で ML Kit へ渡す
+```
+
+`toBitmap()` 拡張関数は BGR→RGBA 変換を内包しているため、src は常に BGR 3ch のまま扱う。
 
 ### GreenFrameDetector の debugMode
 ```kotlin
