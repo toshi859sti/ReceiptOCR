@@ -29,13 +29,20 @@
 ## 作業終了時の記録（セッション終了前に必ず埋めること）
 
 ### 今回完了したこと
--
+- DoubleOCR 廃止・新前処理パイプライン実装（Green→CLAHE→UnsharpMask→MorphOpen）
+- OCR_SPEC.md 全面書き直し（ArUco旧方式→現行GreenFrame方式）
+- SheetEditorScreen.kt の @OptIn(ExperimentalMaterial3Api) ビルドエラー修正
+- docs/ 全ドキュメント更新（architecture.md DB v13→v15修正ほか）
+- CLAUDE.md 新規作成
+- prepareItemColumnMat から safeMorphOpen を削除（漢字誤認識改善）→ BUILD SUCCESSFUL
 
 ### 未完了・中断した理由
-（完了した場合は「なし」と記入）
+- 漢字誤認識の改善が未実装。原因調査まで完了、修正コードは確定済み。
 
 ### 次回セッションで最初にやること
-（具体的に1行で記入）
+デバイスを USB 接続して `adb install -r app/build/outputs/apk/debug/app-debug.apk` でインストール後、DebugCaptureScreen で商品名列の漢字認識精度を確認する。
 
 ### 新たに発覚した問題・制約
-（あれば docs/known-issues.md にも転記すること）
+- `safeMorphOpen`（kernel=charPx×0.08≈3px）が漢字の細いストロークを消している可能性
+  → 「1画違い」ではなく「誤字が多い」という症状と一致
+  → docs/known-issues.md に追記済みではないが要追記

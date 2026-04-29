@@ -868,32 +868,30 @@ object ImagePreprocessor {
      * 1. Green チャンネル抽出（緑枠の影響を排除・コントラスト最大化）
      * 2. CLAHE（局所的な影・照明ムラを解消）
      * 3. Unsharp Mask（透視変換のボケを補正）
-     * 4. Morphology Open（ゴマ塩ノイズ除去）
+     *
+     * Note: MorphologyOpen は削除済み。charPx×0.08≈3px のカーネルが
+     * 漢字の細いストロークを消して誤字が増える原因だった。
      *
      * @param bitmap 商品名列 ROI の Bitmap（RGBA）
-     * @param charPx 推定文字高さ（safeMorphOpen のカーネルサイズ計算に使用）
+     * @param charPx 未使用（シグネチャ互換のため残存）
      * @return 前処理済み単チャンネル Mat（呼び出し元で release すること）
      */
     fun prepareItemColumnMat(bitmap: Bitmap, charPx: Float): org.opencv.core.Mat {
         var rgbaMat: org.opencv.core.Mat? = null
         var greenMat: org.opencv.core.Mat? = null
         var claheMat: org.opencv.core.Mat? = null
-        var sharpenedMat: org.opencv.core.Mat? = null
 
         try {
             rgbaMat = org.opencv.core.Mat()
             org.opencv.android.Utils.bitmapToMat(bitmap, rgbaMat)
 
-            greenMat    = extractGreenChannel(rgbaMat!!)
-            claheMat    = applyClahe(greenMat!!)
-            sharpenedMat = sharpenUnsharpMask(claheMat!!)
-
-            return safeMorphOpen(sharpenedMat!!, charPx)
+            greenMat = extractGreenChannel(rgbaMat!!)
+            claheMat = applyClahe(greenMat!!)
+            return sharpenUnsharpMask(claheMat!!)
         } finally {
             rgbaMat?.release()
             greenMat?.release()
             claheMat?.release()
-            sharpenedMat?.release()
         }
     }
 
