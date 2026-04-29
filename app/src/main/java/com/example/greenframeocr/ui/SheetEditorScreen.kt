@@ -628,8 +628,57 @@ private fun SubtotalEditDialog(
 }
 
 /**
+ * 新規入力部分のみ文字幅変換：数字は常に全角、アルファベットはフラグに従い変換
+ * oldText と newText の差分（挿入箇所）だけを変換し、既存テキストは触らない。
+ */
+/**
+ * テキスト全体の半角英数字を全角に一括変換
+ */
+private fun convertAllToFullWidth(text: String): String {
+    return text.map { c ->
+        when {
+            c in '0'..'9' -> (c.code + 0xFEE0).toChar()
+            c in 'A'..'Z' -> (c.code + 0xFEE0).toChar()
+            c in 'a'..'z' -> (c.code + 0xFEE0).toChar()
+            else -> c
+        }
+    }.joinToString("")
+}
+
+private fun applyConversionToNewInput(oldText: String, newText: String, alphaFullWidth: Boolean): String {
+    if (newText.length <= oldText.length) return newText // 削除・同長の場合は変換しない
+
+    // 共通プレフィックスの長さ
+    var prefixLen = 0
+    while (prefixLen < oldText.length && prefixLen < newText.length &&
+           oldText[prefixLen] == newText[prefixLen]) prefixLen++
+
+    // 共通サフィックスの長さ
+    var suffixLen = 0
+    while (suffixLen < oldText.length - prefixLen &&
+           suffixLen < newText.length - prefixLen &&
+           oldText[oldText.length - 1 - suffixLen] == newText[newText.length - 1 - suffixLen]) suffixLen++
+
+    val inserted = newText.substring(prefixLen, newText.length - suffixLen)
+    val converted = inserted.map { c ->
+        when {
+            c in '0'..'9' -> (c.code + 0xFEE0).toChar()           // 半角数字 → 全角（常時）
+            c in 'A'..'Z' -> if (alphaFullWidth) (c.code + 0xFEE0).toChar() else c
+            c in 'a'..'z' -> if (alphaFullWidth) (c.code + 0xFEE0).toChar() else c
+            c in 'Ａ'..'Ｚ' -> if (alphaFullWidth) c else (c.code - 0xFEE0).toChar()
+            c in 'ａ'..'ｚ' -> if (alphaFullWidth) c else (c.code - 0xFEE0).toChar()
+            else -> c
+        }
+    }.joinToString("")
+
+    return newText.substring(0, prefixLen) + converted +
+           (if (suffixLen > 0) newText.substring(newText.length - suffixLen) else "")
+}
+
+/**
  * アイテム編集ダイアログ
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ItemEditDialog(
     item: ReceiptItem,
@@ -639,6 +688,7 @@ private fun ItemEditDialog(
     var month by remember { mutableIntStateOf(item.receiptMonth) }
     var day by remember { mutableIntStateOf(item.receiptDay) }
     var productName by remember { mutableStateOf(item.productName) }
+    var isAlphaFullWidth by remember { mutableStateOf(true) }
     var amount by remember { mutableStateOf(item.amount.toString()) }
     var category by remember { mutableStateOf(item.category) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -681,16 +731,49 @@ private fun ItemEditDialog(
                 }
 
                 // 商品名
-                OutlinedTextField(
-                    value = productName,
-                    onValueChange = {
-                        productName = it
-                        errorMessage = null
-                    },
-                    label = { Text("商品名") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column {
+                    OutlinedTextField(
+                        value = productName,
+                        onValueChange = {
+                            productName = applyConversionToNewInput(productName, it, isAlphaFullWidth)
+                            errorMessage = null
+                        },
+                        label = { Text("商品名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text(
+                            text = "英字：",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        FilterChip(
+                            selected = isAlphaFullWidth,
+                            onClick = { isAlphaFullWidth = true },
+                            label = { Text("全角 Ａ", fontSize = 12.sp) },
+                            modifier = Modifier.height(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        FilterChip(
+                            selected = !isAlphaFullWidth,
+                            onClick = { isAlphaFullWidth = false },
+                            label = { Text("半角 A", fontSize = 12.sp) },
+                            modifier = Modifier.height(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = { productName = convertAllToFullWidth(productName) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("全て全角", fontSize = 12.sp)
+                        }
+                    }
+                }
 
                 // 金額
                 OutlinedTextField(
