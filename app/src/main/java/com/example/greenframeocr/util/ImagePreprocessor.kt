@@ -876,22 +876,44 @@ object ImagePreprocessor {
      * @param charPx 未使用（シグネチャ互換のため残存）
      * @return 前処理済み単チャンネル Mat（呼び出し元で release すること）
      */
-    fun prepareItemColumnMat(bitmap: Bitmap, charPx: Float): org.opencv.core.Mat {
+    fun prepareItemColumnMat(bitmap: Bitmap, charPx: Float, scale: Float = 1f, preprocess: Boolean = true): org.opencv.core.Mat {
         var rgbaMat: org.opencv.core.Mat? = null
+        var resizedMat: org.opencv.core.Mat? = null
         var greenMat: org.opencv.core.Mat? = null
         var claheMat: org.opencv.core.Mat? = null
+        var grayMat: org.opencv.core.Mat? = null
 
         try {
             rgbaMat = org.opencv.core.Mat()
             org.opencv.android.Utils.bitmapToMat(bitmap, rgbaMat)
 
-            greenMat = extractGreenChannel(rgbaMat!!)
-            claheMat = applyClahe(greenMat!!)
-            return sharpenUnsharpMask(claheMat!!)
+            val srcMat = if (scale != 1f) {
+                resizedMat = org.opencv.core.Mat()
+                org.opencv.imgproc.Imgproc.resize(
+                    rgbaMat!!, resizedMat,
+                    org.opencv.core.Size(rgbaMat!!.cols() * scale.toDouble(), rgbaMat!!.rows() * scale.toDouble()),
+                    0.0, 0.0, org.opencv.imgproc.Imgproc.INTER_LINEAR
+                )
+                resizedMat!!
+            } else {
+                rgbaMat!!
+            }
+
+            return if (preprocess) {
+                greenMat = extractGreenChannel(srcMat)
+                claheMat = applyClahe(greenMat!!)
+                sharpenUnsharpMask(claheMat!!)
+            } else {
+                grayMat = org.opencv.core.Mat()
+                org.opencv.imgproc.Imgproc.cvtColor(srcMat, grayMat, org.opencv.imgproc.Imgproc.COLOR_RGBA2GRAY)
+                grayMat!!
+            }
         } finally {
             rgbaMat?.release()
+            resizedMat?.release()
             greenMat?.release()
             claheMat?.release()
+            if (preprocess) grayMat?.release()
         }
     }
 

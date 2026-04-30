@@ -379,6 +379,8 @@ object OCRProcessor {
         var ocrText: com.google.mlkit.vision.text.Text? = null
         var itemX = 0
         var itemY = 0
+        // 15px/mm → 文字高さ約52px。ML Kit最適(100px+)に近づけるため2倍拡大
+        val PRODUCT_OCR_SCALE = 2f
 
         try {
             val itemRange = UnderlyingBaseProcessor.getItemRange()
@@ -395,13 +397,12 @@ object OCRProcessor {
                 itemHeight.coerceAtMost(warpedBitmap.height - itemY)
             )
 
-            // 文字高さ推定
+            // 文字高さ推定（元スケールで実施）
             val charPx = ImagePreprocessor.estimateCharHeightPx(itemColumnBitmap!!)
-            Log.d(TAG, "[PRODUCT] charPx=$charPx")
+            Log.d(TAG, "[PRODUCT] charPx=$charPx (scale=${PRODUCT_OCR_SCALE}x)")
 
-            // 前処理パイプライン:
-            //   Green チャンネル抽出 → CLAHE → Unsharp Mask → Morphology Open
-            processedMat = ImagePreprocessor.prepareItemColumnMat(itemColumnBitmap!!, charPx)
+            // 前処理パイプライン: Imgproc.resize → Green抽出 → CLAHE → Unsharp Mask
+            processedMat = ImagePreprocessor.prepareItemColumnMat(itemColumnBitmap!!, charPx, PRODUCT_OCR_SCALE, preprocess = false)
 
             // 単チャンネル → RGBA 変換して ML Kit へ渡す（1回のみ）
             rgbaForOcr = org.opencv.core.Mat()
@@ -424,7 +425,8 @@ object OCRProcessor {
             return emptyMap()
         }
 
-        val productBoxes = extractTextBoxesFromOcrResult(ocrText, 1f, itemX, itemY)
+        // ML Kit 座標は2倍世界なので PRODUCT_OCR_SCALE で割り戻す
+        val productBoxes = extractTextBoxesFromOcrResult(ocrText, PRODUCT_OCR_SCALE, itemX, itemY)
             .sortedBy { it.centerY }
         val productMap = mapTextBoxesToRows(productBoxes, rows, rowYCoordinates)
 

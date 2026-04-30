@@ -76,8 +76,10 @@ fun CameraScreen(
     var isProcessing by remember { mutableStateOf(false) }
     var isFocused by remember { mutableStateOf(false) }
     var focusScore by remember { mutableStateOf(0.0) }
+    var sharpness by remember { mutableStateOf(0.0) }
     var isCaptureTriggered by remember { mutableStateOf(false) }
     var consecutiveGoodFrames by remember { mutableStateOf(0) }
+    var badFrameCount by remember { mutableStateOf(0) }
     var lastDetectionTime by remember { mutableStateOf(0L) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var isTorchOn by remember { mutableStateOf(false) }
@@ -91,6 +93,7 @@ fun CameraScreen(
                 isCaptureTriggered = false
                 isProcessing = false
                 consecutiveGoodFrames = 0
+                badFrameCount = 0
                 isTorchOn = false
                 camera?.cameraControl?.enableTorch(false)
                 OcrQualityEvaluator.resetStability()
@@ -151,12 +154,16 @@ fun CameraScreen(
                                                     camera = camera,
                                                     isCaptureTriggered = isCaptureTriggered,
                                                     consecutiveGoodFrames = consecutiveGoodFrames,
+                                                    badFrameCount = badFrameCount,
                                                     onFocusChange = { isFocused = it },
                                                     onQualityInfo = {},
                                                     onFocusScore = { focusScore = it },
+                                                    onSharpnessChange = { sharpness = it },
+                                                    minSharpness = appPreferences.minSharpness,
                                                     onCaptureTriggered = { isCaptureTriggered = it },
                                                     onProcessingChange = { isProcessing = it },
                                                     onConsecutiveChange = { consecutiveGoodFrames = it },
+                                                    onBadFrameCountChange = { badFrameCount = it },
                                                     onLatestBitmap = { latestBitmap = it },
                                                     debugMode = debugMode
                                                 )
@@ -185,6 +192,17 @@ fun CameraScreen(
                             previewView
                         },
                         modifier = Modifier.fillMaxSize()
+                    )
+
+                    // sharp 値（大きく中央表示）
+                    Text(
+                        text = "${"%.0f".format(sharpness)}",
+                        fontSize = 48.sp,
+                        color = if (sharpness >= appPreferences.minSharpness.toDouble()) Color.Green else Color.Yellow,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 24.dp)
                     )
 
                     // 品質ステータス（画面下部に1行表示）
@@ -323,12 +341,16 @@ private fun analyzeFrame(
     camera: Camera?,
     isCaptureTriggered: Boolean,
     consecutiveGoodFrames: Int,
+    badFrameCount: Int,
     onFocusChange: (Boolean) -> Unit,
     onQualityInfo: (String) -> Unit,
     onFocusScore: (Double) -> Unit = {},
+    onSharpnessChange: (Double) -> Unit = {},
+    minSharpness: Int = com.example.greenframeocr.data.AppPreferences.DEFAULT_MIN_SHARPNESS,
     onCaptureTriggered: (Boolean) -> Unit,
     onProcessingChange: (Boolean) -> Unit,
     onConsecutiveChange: (Int) -> Unit,
+    onBadFrameCountChange: (Int) -> Unit,
     onLatestBitmap: (android.graphics.Bitmap) -> Unit = {},
     debugMode: Boolean = false
 ) {
@@ -339,6 +361,7 @@ private fun analyzeFrame(
 
         val isGood: Boolean
         val focusScoreVal: Double
+        var sharpness = 0.0
 
         if (DEBUG_SKIP_FOCUS_CHECK) {
             focusScoreVal = 1.0
@@ -354,7 +377,7 @@ private fun analyzeFrame(
 
             // (1) フォーカス（Laplacian 分散）
             val grayBitmap = com.example.greenframeocr.util.ImagePreprocessor.toGray(analysisBitmap)
-            val sharpness  = OcrQualityEvaluator.calculateSharpness(grayBitmap)
+            sharpness = OcrQualityEvaluator.calculateSharpness(grayBitmap)
             grayBitmap.recycle()
             focusScoreVal = OcrQualityEvaluator.focusScore(sharpness)
 
@@ -365,8 +388,9 @@ private fun analyzeFrame(
             // (3) 枠品質評価（面積比・アスペクト比・安定性）
             val detectionScore = OcrQualityEvaluator.evaluateDetectionQuality(corners, analysisW, analysisH)
 
-            isGood = focusScoreVal >= MIN_FOCUS_SCORE && detectionScore >= MIN_DETECTION_SCORE
-            Log.d("CameraScreen", "focus=${"%.2f".format(focusScoreVal)} det=${"%.2f".format(detectionScore)} good=$isGood")
+            isGood = focusScoreVal >= MIN_FOCUS_SCORE && detectionScore >= MIN_DETECTION_SCORE && sharpness >= minSharpness
+            Log.d("CameraScreen", "sharp=${"%.1f".format(sharpness)} focus=${"%.2f".format(focusScoreVal)} det=${"%.2f".format(detectionScore)} good=$isGood")
+            onSharpnessChange(sharpness)
         }
 
         onFocusScore(focusScoreVal)
@@ -376,6 +400,7 @@ private fun analyzeFrame(
 
         // 安定フレームカウント + 自動撮影トリガー
         if (isGood && !isCaptureTriggered) {
+            onBadFrameCountChange(0)
             val newCount = consecutiveGoodFrames + 1
             onConsecutiveChange(newCount)
 
@@ -384,11 +409,21 @@ private fun analyzeFrame(
                 camera?.cameraControl?.enableTorch(false)
                 onProcessingChange(true)
                 onCaptureTriggered(true)
-                viewModel.processImage(fullBitmap, debugMode)   // フル解像度で本番処理
+                viewModel.processImage(fullBitmap, debugMode, sharpness)   // フル解像度で本番処理
                 onConsecutiveChange(0)
             }
         } else if (!isGood && consecutiveGoodFrames > 0) {
-            onConsecutiveChange(0)
+            // 2フレーム連続でbadのときのみリセット（自動露出の瞬間変動を無視）
+            val newBadCount = badFrameCount + 1
+            if (newBadCount >= MAX_BAD_FRAMES_BEFORE_RESET) {
+                Log.d("CameraScreen", "Reset consecutive count after $newBadCount bad frames")
+                onConsecutiveChange(0)
+                onBadFrameCountChange(0)
+            } else {
+                onBadFrameCountChange(newBadCount)
+            }
+        } else {
+            onBadFrameCountChange(0)
         }
 
     } catch (e: Exception) {
@@ -400,12 +435,14 @@ private fun analyzeFrame(
 // 定数
 // ============================================================
 
-private const val DEBUG_SKIP_FOCUS_CHECK    = false
-private const val MIN_DETECTION_INTERVAL_MS = 200L   // 500ms → 200ms（軽量化により短縮可能）
-private const val MIN_STABLE_FOCUS_FRAMES   = 3       // 3フレーム連続合格でトリガー
-private const val ANALYSIS_PX               = 960     // プレビュー評価用解像度
-private const val MIN_FOCUS_SCORE           = 0.50    // フォーカス最低スコア
-private const val MIN_DETECTION_SCORE       = 0.8     // 枠検出最低スコア
+private const val DEBUG_SKIP_FOCUS_CHECK      = false
+private const val MIN_DETECTION_INTERVAL_MS   = 200L   // 500ms → 200ms（軽量化により短縮可能）
+private const val MIN_STABLE_FOCUS_FRAMES     = 3       // 3フレーム連続合格でトリガー
+private const val MAX_BAD_FRAMES_BEFORE_RESET = 2       // 2フレーム連続badでカウントリセット
+private const val ANALYSIS_PX                 = 960     // プレビュー評価用解像度
+private const val MIN_FOCUS_SCORE             = 0.50    // フォーカス最低スコア
+private const val MIN_DETECTION_SCORE         = 0.8     // 枠検出最低スコア
+private const val MIN_SHARPNESS_FOR_KANJI     = 1000.0  // 複雑な漢字（雲・灌など）に必要な最低鮮鋭度
 
 // ============================================================
 // ImageProxy → Bitmap 変換

@@ -25,8 +25,17 @@ private const val RECEIPT_HEIGHT_MM = 148.0
 
 object GreenFrameDetector {
 
-    private val LOWER_GREEN = Scalar(35.0, 30.0, 80.0)
+    private val LOWER_GREEN = Scalar(35.0, 30.0, 60.0)
     private val UPPER_GREEN = Scalar(85.0, 255.0, 255.0)
+
+    data class CaptureInfo(
+        val inputWidth: Int = 0,
+        val inputHeight: Int = 0,
+        val warpWidth: Int = 0,
+        val warpHeight: Int = 0,
+        val sharpness: Double = 0.0,
+        val capturedAt: String = ""
+    )
 
     data class DetectionResult(
         val success: Boolean,
@@ -34,7 +43,7 @@ object GreenFrameDetector {
         val debugBitmap: Bitmap,
         val maskBitmap: Bitmap?,
         val dewarpedBitmap: Bitmap?,
-        val binaryBitmap: Bitmap?,
+        val captureInfo: CaptureInfo = CaptureInfo(),
         val rowBitmaps: List<Bitmap>,
         val errorMessage: String = ""
     )
@@ -57,7 +66,7 @@ object GreenFrameDetector {
     // 2. 緑線のない右辺の黒枠を検出して白線で描画
     // -----------------------------------------------------------------------
 
-    fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult {
+    fun process(inputBitmap: Bitmap, debugMode: Boolean = false, sharpness: Double = 0.0): DetectionResult {
         // bitmapToMat は RGBA 4ch を返すため BGR 3ch に変換してから使う
         // （そうしないと toBitmap() の COLOR_BGR2RGBA が正しく機能しない）
         val rgba = Mat()
@@ -79,7 +88,7 @@ object GreenFrameDetector {
             Log.d(TAG, "[PERF] Step1 緑マスク生成: ${System.currentTimeMillis() - t} ms")
 
             val greenPixels    = Core.countNonZero(greenMask)
-            val minGreenPixels = (imgW * imgH * 0.005).toInt()
+            val minGreenPixels = (imgW * imgH * 0.002).toInt()
             Log.d(TAG, "緑ピクセル数: $greenPixels (最小: $minGreenPixels)")
 
             if (greenPixels < minGreenPixels) {
@@ -253,19 +262,17 @@ object GreenFrameDetector {
                 emptyList()
             }
 
-            // Step 8: 適応二値化（DebugCaptureScreen の ④ 表示用）
-            t = System.currentTimeMillis()
-            val grayWarp   = Mat()
-            val binaryWarp = Mat()
-            Imgproc.cvtColor(warpedMat, grayWarp, Imgproc.COLOR_BGR2GRAY)
-            Imgproc.adaptiveThreshold(grayWarp, binaryWarp, 255.0,
-                Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
-                Imgproc.THRESH_BINARY_INV, 15, 8.0)
-            grayWarp.release()
             warpedMat.release()
-            val binaryBitmap = binaryWarp.toBitmap()
-            binaryWarp.release()
-            Log.d(TAG, "[PERF] Step8 二値化: ${System.currentTimeMillis() - t} ms")
+
+            val captureInfo = CaptureInfo(
+                inputWidth  = inputBitmap.width,
+                inputHeight = inputBitmap.height,
+                warpWidth   = (RECEIPT_WIDTH_MM  * WARP_PX_PER_MM).toInt(),
+                warpHeight  = (RECEIPT_HEIGHT_MM * WARP_PX_PER_MM).toInt(),
+                sharpness   = sharpness,
+                capturedAt  = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                                  .format(java.util.Date())
+            )
 
             Log.d(TAG, "[PERF] ===== GreenFrameDetector 合計: ${System.currentTimeMillis() - totalStart} ms =====")
             DetectionResult(
@@ -274,7 +281,7 @@ object GreenFrameDetector {
                 debugBitmap    = debugMat.toBitmap(),
                 maskBitmap     = maskBitmap,
                 dewarpedBitmap = dewarpedBitmap,
-                binaryBitmap   = binaryBitmap,
+                captureInfo    = captureInfo,
                 rowBitmaps     = rowBitmaps
             )
 
@@ -316,7 +323,7 @@ object GreenFrameDetector {
             small.release()
 
             val greenPixels = Core.countNonZero(greenMask)
-            if (greenPixels < (smallW * smallH * 0.005).toInt()) {
+            if (greenPixels < (smallW * smallH * 0.002).toInt()) {
                 greenMask.release()
                 return null
             }
@@ -1231,7 +1238,6 @@ object GreenFrameDetector {
             debugBitmap    = debugMat.toBitmap(),
             maskBitmap     = maskBitmap,
             dewarpedBitmap = null,
-            binaryBitmap   = null,
             rowBitmaps     = emptyList(),
             errorMessage   = message
         )

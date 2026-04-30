@@ -25,6 +25,10 @@ class AppPreferences(context: Context) {
         private const val KEY_FIX_YEAR_MONTH = "fix_year_month"
         private const val DEFAULT_FIX_YEAR_MONTH = false
 
+        // 撮影品質設定
+        private const val KEY_MIN_SHARPNESS = "min_sharpness"
+        const val DEFAULT_MIN_SHARPNESS = 1000
+
         // カメラ設定
         private const val KEY_CAMERA_RESOLUTION = "camera_resolution"
         private const val DEFAULT_CAMERA_RESOLUTION = "3840x2160"  // 4K UHD (固定)
@@ -56,6 +60,11 @@ class AppPreferences(context: Context) {
     var fixYearMonth: Boolean
         get() = prefs.getBoolean(KEY_FIX_YEAR_MONTH, DEFAULT_FIX_YEAR_MONTH)
         set(value) = prefs.edit().putBoolean(KEY_FIX_YEAR_MONTH, value).apply()
+
+    // 最低鮮鋭度（OCR撮影トリガーの閾値）
+    var minSharpness: Int
+        get() = prefs.getInt(KEY_MIN_SHARPNESS, DEFAULT_MIN_SHARPNESS)
+        set(value) = prefs.edit().putInt(KEY_MIN_SHARPNESS, value.coerceIn(500, 3000)).apply()
 
     // カメラ解像度
     var cameraResolution: String

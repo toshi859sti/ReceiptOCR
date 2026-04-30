@@ -330,25 +330,22 @@ private fun DebugResultView(
             }
         }
 
-        // ⑥ 二値化
-        result.binaryBitmap?.let { bmp ->
-            item {
-                DebugSection("⑥ 二値化（グレースケール適応的）") {
-                    Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 260.dp)
+        // ⑥ 撮影情報
+        item {
+            val info = result.captureInfo
+            DebugSection("⑥ 撮影情報") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("撮影時刻：${info.capturedAt}", fontSize = 13.sp)
+                    Text("入力解像度（カメラ全体）：${info.inputWidth} × ${info.inputHeight} px  （${info.inputWidth * info.inputHeight / 1_000_000}MP）", fontSize = 13.sp)
+                    Text("透視変換後：${info.warpWidth} × ${info.warpHeight} px", fontSize = 13.sp)
+                    Text(
+                        "鮮鋭度：${"%.1f".format(info.sharpness)}",
+                        fontSize = 13.sp,
+                        color = if (info.sharpness >= 1000) androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                else androidx.compose.ui.graphics.Color(0xFFE65100)
                     )
                 }
             }
-        } ?: item {
-            Text(
-                "③ 二値化: なし",
-                color = MaterialTheme.colorScheme.error,
-                fontSize = 14.sp
-            )
         }
 
         // ⑤ 検出行数サマリー
@@ -480,9 +477,8 @@ private fun saveDebugImages(
         result.maskBitmap?.let { add("debug_${timestamp}_2_mask" to it) }
         result.dewarpedBitmap?.let { add("debug_${timestamp}_3_dewarped" to it) }
         columnBitmap?.let { add("debug_${timestamp}_4_columns" to it) }
-        result.binaryBitmap?.let { add("debug_${timestamp}_5_binary" to it) }
         result.rowBitmaps.forEachIndexed { i, bmp ->
-            add("debug_${timestamp}_6_row${i}" to bmp)
+            add("debug_${timestamp}_5_row${i}" to bmp)
         }
     }
 

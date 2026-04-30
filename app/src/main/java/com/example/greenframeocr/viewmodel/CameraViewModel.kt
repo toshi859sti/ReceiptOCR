@@ -33,13 +33,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 撮影した Bitmap を GreenFrameDetector に通して処理する
      */
-    fun processImage(bitmap: Bitmap, debugMode: Boolean = false) {
+    fun processImage(bitmap: Bitmap, debugMode: Boolean = false, sharpness: Double = 0.0) {
         viewModelScope.launch {
             try {
                 _uiState.value = CameraUiState.Processing
 
                 val result = withContext(Dispatchers.Default) {
-                    GreenFrameDetector.process(bitmap, debugMode)
+                    GreenFrameDetector.process(bitmap, debugMode, sharpness)
                 }
 
                 if (result.success) {

@@ -46,6 +46,7 @@ fun SettingsScreen(
 
     var eraYear by remember { mutableIntStateOf(appPreferences.eraYear) }
     var cameraFlash by remember { mutableStateOf(appPreferences.cameraFlash) }
+    var minSharpness by remember { mutableIntStateOf(appPreferences.minSharpness) }
     var depositHideAmount by remember { mutableStateOf(appPreferences.depositHideAmount) }
     var showCameraInfo by remember { mutableStateOf(false) }
 
@@ -224,6 +225,43 @@ fun SettingsScreen(
                         onClick = {
                             eraYear++
                             appPreferences.eraYear = eraYear
+                        }
+                    ) {
+                        Text("+", fontSize = 24.sp)
+                    }
+                }
+            }
+
+            SettingItem(
+                title = "最低鮮鋭度",
+                subtitle = "撮影トリガーの鮮鋭度閾値（現在: $minSharpness）"
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (minSharpness > 500) {
+                                minSharpness -= 100
+                                appPreferences.minSharpness = minSharpness
+                            }
+                        }
+                    ) {
+                        Text("-", fontSize = 24.sp)
+                    }
+                    Text(
+                        text = "$minSharpness",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.width(60.dp)
+                    )
+                    IconButton(
+                        onClick = {
+                            if (minSharpness < 3000) {
+                                minSharpness += 100
+                                appPreferences.minSharpness = minSharpness
+                            }
                         }
                     ) {
                         Text("+", fontSize = 24.sp)
