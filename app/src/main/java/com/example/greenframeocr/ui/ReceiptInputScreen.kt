@@ -1952,6 +1952,7 @@ private fun convertParsedRowsToRowData(
     // 小計行の後に空白行を挿入する処理
     val rowsWithBlankAfterSubtotal = mutableListOf<ReceiptRowData>()
     var rowNumber = 1
+    val seenSubtotalCategories = mutableSetOf<String>()
 
     for (row in normalAndSubtotalRows) {
         // 取引日テキスト → フォーマット変換
@@ -1971,6 +1972,14 @@ private fun convertParsedRowsToRowData(
 
         // 小計行判定: ParsedRow.isSubtotal を優先、フォールバックとして日付なし+金額ありを使用
         val isSubtotalRow = row.isSubtotal || (digits.length < 4 && finalAmount > 0)
+
+        // 同カテゴリの小計が既に追加済みなら重複をスキップ
+        if (isSubtotalRow && !row.category.isNullOrBlank()) {
+            if (!seenSubtotalCategories.add(row.category)) {
+                android.util.Log.w("ReceiptInputScreen", "Duplicate subtotal skipped: ${row.category}")
+                continue
+            }
+        }
 
         // カテゴリ文字列 → SubtotalCategory へのマッピング
         val subtotalCat: SubtotalCategory? = if (isSubtotalRow) {
