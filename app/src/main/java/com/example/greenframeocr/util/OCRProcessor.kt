@@ -495,9 +495,7 @@ object OCRProcessor {
     private fun toFullWidthText(text: String): String = text.map { c ->
         when {
             c == ' ' -> '　'
-            c in '0'..'9' -> (c.code + 0xFEE0).toChar()
-            c in 'A'..'Z' -> (c.code + 0xFEE0).toChar()
-            c in 'a'..'z' -> (c.code + 0xFEE0).toChar()
+            c.code in 0x21..0x7E -> (c.code + 0xFEE0).toChar()
             else -> c
         }
     }.joinToString("")
