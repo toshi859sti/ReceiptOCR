@@ -35,6 +35,7 @@ import com.example.greenframeocr.ui.ReceiptInputScreen
 import com.example.greenframeocr.ui.SettingsScreen
 import com.example.greenframeocr.ui.SheetEditorScreen
 import com.example.greenframeocr.ui.TekiyouMatchingScreen
+import com.example.greenframeocr.ui.AccountSettingsScreen
 import com.example.greenframeocr.ui.YearSummaryScreen
 import com.example.greenframeocr.ui.YokinTekiyouScreen
 import com.example.greenframeocr.viewmodel.OcrCaptureViewModel
@@ -61,6 +62,7 @@ sealed class Screen(val route: String) {
     object RakurakuTekiyou : Screen("rakuraku_tekiyou")
     object DebugCapture : Screen("debug_capture")
     object YearSummary : Screen("year_summary")
+    object AccountSettings : Screen("account_settings")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
         fun createRoute(year: Int, month: Int): String {
             return "monthly_summary/$year/$month"
@@ -291,7 +293,18 @@ fun ReceiptNavGraph(
                 onBack = { navController.popBackStack() },
                 onNavigateToOcrLearningStatus = {
                     navController.navigate(Screen.OcrLearningStatus.route)
+                },
+                onNavigateToAccountSettings = {
+                    navController.navigate(Screen.AccountSettings.route)
                 }
+            )
+        }
+
+        // 勘定科目設定画面
+        composable(Screen.AccountSettings.route) {
+            AccountSettingsScreen(
+                database = database,
+                onBack = { navController.popBackStack() }
             )
         }
 

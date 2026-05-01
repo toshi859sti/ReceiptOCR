@@ -56,7 +56,8 @@
 
 ### Phase 3：その他の継続タスク（優先度：低）
 
-- [ ] AccountSettingsScreen を Navigation.kt の NavHost に登録
+- [x] AccountSettingsScreen を Navigation.kt の NavHost に登録（2026-05-01）
+  - SettingsScreen → 「勘定科目設定」→ AccountSettingsScreen
 - [ ] 実機テストで小計カテゴリ認識精度の最終確認
 - [ ] 表示ルール（小計後空行・合計行）の動作確認
 
@@ -84,8 +85,7 @@
 - Phase 1〜3 は次回セッション以降に実装
 
 ### 次回セッションで最初にやること
-Phase 1 の年別サマリー画面（YearSummaryScreen）実装から開始する。
-まず `ReceiptDao` に `getAvailableYears()` クエリを追加し、画面を新設する。
+実機で小計カテゴリ認識精度と表示ルールを確認する（Phase 3 残タスク）。
 
 ### 新たに発覚した問題・制約
 - 複雑な漢字（雲・灌など）はsharpness≥1000でも完全な認識は難しい。機種依存が大きい。

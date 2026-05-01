@@ -38,7 +38,8 @@ import java.util.Locale
 fun SettingsScreen(
     appPreferences: AppPreferences,
     onBack: () -> Unit,
-    onNavigateToOcrLearningStatus: () -> Unit = {}
+    onNavigateToOcrLearningStatus: () -> Unit = {},
+    onNavigateToAccountSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -296,6 +297,15 @@ fun SettingsScreen(
                 subtitle = "誤認識パターンの学習データベースを表示"
             ) {
                 TextButton(onClick = onNavigateToOcrLearningStatus) {
+                    Text("表示")
+                }
+            }
+
+            SettingItem(
+                title = "勘定科目設定",
+                subtitle = "らくらく青色申告・弥生会計の勘定科目を管理"
+            ) {
+                TextButton(onClick = onNavigateToAccountSettings) {
                     Text("表示")
                 }
             }
