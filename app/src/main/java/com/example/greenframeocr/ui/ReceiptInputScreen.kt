@@ -83,6 +83,7 @@ fun ReceiptInputScreen(
     var fontSize by remember { mutableFloatStateOf(12f) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showRowActionsBottomSheet by remember { mutableStateOf(false) }
+    var halfWidthOddRows by remember { mutableStateOf<List<String>>(emptyList()) }
 
     // カメラ表示状態
     var showCamera by remember { mutableStateOf(false) }
@@ -110,6 +111,27 @@ fun ReceiptInputScreen(
     }
 
     // 伝票削除確認ダイアログ
+    if (halfWidthOddRows.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { halfWidthOddRows = emptyList() },
+            title = { Text("半角文字エラー") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("以下の商品名に半角文字が奇数含まれています。\n2文字ひとまとまり（kg・cm等）になるよう修正してください。")
+                    Spacer(modifier = Modifier.height(4.dp))
+                    halfWidthOddRows.forEach { name ->
+                        Text("・$name", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { halfWidthOddRows = emptyList() }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
     if (showDeleteConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = false },
@@ -742,6 +764,14 @@ fun ReceiptInputScreen(
 
                         Button(
                             onClick = {
+                                val invalidNames = allSheetsData.values.flatten()
+                                    .filter { !it.isSubtotal && !it.isTotalRow && it.productName.isNotBlank() }
+                                    .filter { countFullWidthEquivalent(it.productName) % 1.0 != 0.0 }
+                                    .map { it.productName }
+                                if (invalidNames.isNotEmpty()) {
+                                    halfWidthOddRows = invalidNames
+                                    return@Button
+                                }
                                 scope.launch {
                                     saveMonthData(
                                         database = database,
