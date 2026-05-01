@@ -99,13 +99,14 @@
 ## 作業終了時の記録
 
 ### 今回完了したこと
-- 鮮鋭度ベースの撮影品質管理（リアルタイム表示・設定化・閾値1000）
-- 商品名列OCR 2倍拡大・グレースケール簡略化
-- Step8 二値化削除 → CaptureInfo 表示に変更
-- 複数年対応と預金CSV重複防止の設計方針確定
+- Phase 1：YearSummaryScreen 新設、OutputConfirmScreen 年セレクター追加、ReceiptDao クエリ追加
+- Phase 2：DB v16・deposit_meisai UNIQUE制約・一括 INSERT OR IGNORE（N+1廃止）
+- Phase 3：AccountSettingsScreen を Navigation に登録（設定画面から遷移可能に）
+- ドキュメント更新：development-guidelines・CSV_SPEC・glossary に Phase 4 設計決定を反映
 
 ### 未完了・中断した理由
-- Phase 1〜3 は次回セッション以降に実装
+- Phase 3 実機テスト（小計カテゴリ精度・表示ルール）は未実施
+- Phase 4（全角化・学習データ共有）は設計決定のみ、実装は次回以降
 
 ### 次回セッションで最初にやること
 Phase 4 の商品名エディタ全角化ロジック実装から開始する。
