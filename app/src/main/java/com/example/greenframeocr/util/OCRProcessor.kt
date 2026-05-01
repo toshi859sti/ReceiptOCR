@@ -250,7 +250,7 @@ object OCRProcessor {
         val updatedRows = filteredRows.mapIndexed { index, row ->
             val newQuantity = quantityMap[index] ?: row.quantity
             val doubleResult = productNameDoubleOcrMap[index]
-            val newItemName  = doubleResult?.grayText ?: row.itemName
+            val newItemName  = (doubleResult?.grayText ?: row.itemName)?.let { toFullWidthText(it) }
 
             val finalQuantity = if (newItemName?.contains("返品") == true && newQuantity != null) {
                 val qty = newQuantity.toIntOrNull()
@@ -491,6 +491,16 @@ object OCRProcessor {
         }
         return s.trim()
     }
+
+    private fun toFullWidthText(text: String): String = text.map { c ->
+        when {
+            c == ' ' -> '　'
+            c in '0'..'9' -> (c.code + 0xFEE0).toChar()
+            c in 'A'..'Z' -> (c.code + 0xFEE0).toChar()
+            c in 'a'..'z' -> (c.code + 0xFEE0).toChar()
+            else -> c
+        }
+    }.joinToString("")
 
     private fun mapTextBoxesToRows(
         productBoxes: List<UnderlyingBaseProcessor.TextBox>,

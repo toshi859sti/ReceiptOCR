@@ -627,16 +627,28 @@ private fun SubtotalEditDialog(
     )
 }
 
-/**
- * 新規入力部分のみ文字幅変換：数字は常に全角、アルファベットはフラグに従い変換
- * oldText と newText の差分（挿入箇所）だけを変換し、既存テキストは触らない。
- */
-/**
- * テキスト全体の半角英数字を全角に一括変換
- */
+private fun charFullWidthWeight(c: Char): Double =
+    if (c.code in 0x20..0x7E || c.code in 0xFF61..0xFF9F) 0.5 else 1.0
+
+private fun countFullWidthEquivalent(text: String): Double =
+    text.sumOf { charFullWidthWeight(it) }
+
+private fun truncateToFullWidthLimit(text: String, limit: Double = 20.0): String {
+    var count = 0.0
+    val result = StringBuilder()
+    for (c in text) {
+        val w = charFullWidthWeight(c)
+        if (count + w > limit) break
+        result.append(c)
+        count += w
+    }
+    return result.toString()
+}
+
 private fun convertAllToFullWidth(text: String): String {
     return text.map { c ->
         when {
+            c == ' ' -> '　'
             c in '0'..'9' -> (c.code + 0xFEE0).toChar()
             c in 'A'..'Z' -> (c.code + 0xFEE0).toChar()
             c in 'a'..'z' -> (c.code + 0xFEE0).toChar()
@@ -646,14 +658,12 @@ private fun convertAllToFullWidth(text: String): String {
 }
 
 private fun applyConversionToNewInput(oldText: String, newText: String, alphaFullWidth: Boolean): String {
-    if (newText.length <= oldText.length) return newText // 削除・同長の場合は変換しない
+    if (newText.length <= oldText.length) return newText
 
-    // 共通プレフィックスの長さ
     var prefixLen = 0
     while (prefixLen < oldText.length && prefixLen < newText.length &&
            oldText[prefixLen] == newText[prefixLen]) prefixLen++
 
-    // 共通サフィックスの長さ
     var suffixLen = 0
     while (suffixLen < oldText.length - prefixLen &&
            suffixLen < newText.length - prefixLen &&
@@ -662,7 +672,8 @@ private fun applyConversionToNewInput(oldText: String, newText: String, alphaFul
     val inserted = newText.substring(prefixLen, newText.length - suffixLen)
     val converted = inserted.map { c ->
         when {
-            c in '0'..'9' -> (c.code + 0xFEE0).toChar()           // 半角数字 → 全角（常時）
+            c == ' ' -> '　'
+            c in '0'..'9' -> (c.code + 0xFEE0).toChar()
             c in 'A'..'Z' -> if (alphaFullWidth) (c.code + 0xFEE0).toChar() else c
             c in 'a'..'z' -> if (alphaFullWidth) (c.code + 0xFEE0).toChar() else c
             c in 'Ａ'..'Ｚ' -> if (alphaFullWidth) c else (c.code - 0xFEE0).toChar()
@@ -671,8 +682,9 @@ private fun applyConversionToNewInput(oldText: String, newText: String, alphaFul
         }
     }.joinToString("")
 
-    return newText.substring(0, prefixLen) + converted +
+    val combined = newText.substring(0, prefixLen) + converted +
            (if (suffixLen > 0) newText.substring(newText.length - suffixLen) else "")
+    return truncateToFullWidthLimit(combined)
 }
 
 /**
@@ -743,35 +755,48 @@ private fun ItemEditDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 4.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "英字：",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        FilterChip(
-                            selected = isAlphaFullWidth,
-                            onClick = { isAlphaFullWidth = true },
-                            label = { Text("全角 Ａ", fontSize = 12.sp) },
-                            modifier = Modifier.height(32.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        FilterChip(
-                            selected = !isAlphaFullWidth,
-                            onClick = { isAlphaFullWidth = false },
-                            label = { Text("半角 A", fontSize = 12.sp) },
-                            modifier = Modifier.height(32.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        OutlinedButton(
-                            onClick = { productName = convertAllToFullWidth(productName) },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text("全て全角", fontSize = 12.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "英字：",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            FilterChip(
+                                selected = isAlphaFullWidth,
+                                onClick = { isAlphaFullWidth = true },
+                                label = { Text("全角 Ａ", fontSize = 12.sp) },
+                                modifier = Modifier.height(32.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            FilterChip(
+                                selected = !isAlphaFullWidth,
+                                onClick = { isAlphaFullWidth = false },
+                                label = { Text("半角 A", fontSize = 12.sp) },
+                                modifier = Modifier.height(32.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            OutlinedButton(
+                                onClick = { productName = convertAllToFullWidth(productName) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("一括全角", fontSize = 12.sp)
+                            }
                         }
+                        val charCount = countFullWidthEquivalent(productName)
+                        val countText = if (charCount % 1.0 == 0.0) "${charCount.toInt()}" else "${"%.1f".format(charCount)}"
+                        Text(
+                            text = "$countText/20",
+                            fontSize = 11.sp,
+                            color = if (charCount >= 20.0) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
