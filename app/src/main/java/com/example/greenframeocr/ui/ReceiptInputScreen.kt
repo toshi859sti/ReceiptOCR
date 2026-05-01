@@ -35,6 +35,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
+import com.example.greenframeocr.util.applyConversionToNewInput
+import com.example.greenframeocr.util.convertAllToFullWidth
+import com.example.greenframeocr.util.countFullWidthEquivalent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -2363,6 +2366,7 @@ private suspend fun deleteSheet(
 /**
  * セル編集ダイアログ（小計フラグ追加版）
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CellEditDialog(
     cellType: CellType,
@@ -2396,6 +2400,7 @@ private fun CellEditDialog(
         )
     }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isAlphaFullWidth by remember { mutableStateOf(true) }
     var isNegative by remember { mutableStateOf(currentRow.amount < 0) }
     var isSubtotal by remember { mutableStateOf(currentRow.isSubtotal) }
     var selectedSubtotalCategory by remember { mutableStateOf(currentRow.subtotalCategory ?: SubtotalCategory.GENERAL_PURCHASE) }
@@ -2474,7 +2479,9 @@ private fun CellEditDialog(
                     OutlinedTextField(
                         value = inputValue,
                         onValueChange = {
-                            inputValue = it
+                            inputValue = if (cellType == CellType.PRODUCT_NAME)
+                                applyConversionToNewInput(inputValue, it, isAlphaFullWidth)
+                            else it
                             errorMessage = null
                         },
                         label = {
@@ -2540,6 +2547,49 @@ private fun CellEditDialog(
 
                 // 商品名入力時のボタン（合計行は除外）
                 if (cellType == CellType.PRODUCT_NAME && !currentRow.isTotalRow) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "英字：",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            FilterChip(
+                                selected = isAlphaFullWidth,
+                                onClick = { isAlphaFullWidth = true },
+                                label = { Text("全角 Ａ", fontSize = 12.sp) },
+                                modifier = Modifier.height(32.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            FilterChip(
+                                selected = !isAlphaFullWidth,
+                                onClick = { isAlphaFullWidth = false },
+                                label = { Text("半角 A", fontSize = 12.sp) },
+                                modifier = Modifier.height(32.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            OutlinedButton(
+                                onClick = { inputValue = convertAllToFullWidth(inputValue) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("一括全角", fontSize = 12.sp)
+                            }
+                        }
+                        val charCount = countFullWidthEquivalent(inputValue)
+                        val countText = if (charCount % 1.0 == 0.0) "${charCount.toInt()}" else "${"%.1f".format(charCount)}"
+                        Text(
+                            text = "$countText/20",
+                            fontSize = 11.sp,
+                            color = if (charCount >= 20.0) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
