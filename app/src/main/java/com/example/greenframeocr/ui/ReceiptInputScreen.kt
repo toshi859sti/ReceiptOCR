@@ -84,6 +84,7 @@ fun ReceiptInputScreen(
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showRowActionsBottomSheet by remember { mutableStateOf(false) }
     var halfWidthOddRows by remember { mutableStateOf<List<String>>(emptyList()) }
+    var ocrDuplicateSubtotalCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     // カメラ表示状態
     var showCamera by remember { mutableStateOf(false) }
@@ -111,6 +112,35 @@ fun ReceiptInputScreen(
     }
 
     // 伝票削除確認ダイアログ
+    if (ocrDuplicateSubtotalCategories.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { ocrDuplicateSubtotalCategories = emptySet() },
+            title = { Text("OCR読み取りエラー") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("以下の小計カテゴリが複数検出されました。\n撮影条件を確認して再撮影してください。")
+                    Spacer(modifier = Modifier.height(4.dp))
+                    ocrDuplicateSubtotalCategories.forEach { cat ->
+                        Text("・$cat", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    ocrDuplicateSubtotalCategories = emptySet()
+                    showCamera = true
+                }) {
+                    Text("再撮影")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { ocrDuplicateSubtotalCategories = emptySet() }) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
+
     if (halfWidthOddRows.isNotEmpty()) {
         AlertDialog(
             onDismissRequest = { halfWidthOddRows = emptyList() },
@@ -182,13 +212,18 @@ fun ReceiptInputScreen(
     if (showCamera) {
         CameraView(
             onOcrComplete = { parsedRows ->
-                val ocrRows = convertParsedRowsToRowData(
+                val result = convertParsedRowsToRowData(
                     parsedRows = parsedRows,
                     sheetNumber = currentSheetNumber,
                     fixYearMonth = fixYearMonth,
                     defaultYear = eraYear,
                     defaultMonth = selectedMonth
                 )
+                if (result.duplicatedSubtotalCategories.isNotEmpty()) {
+                    ocrDuplicateSubtotalCategories = result.duplicatedSubtotalCategories
+                    return@CameraView
+                }
+                val ocrRows = result.rows
                 val currentRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
 
                 // 選択されたセルがあるかチェック
@@ -1938,13 +1973,18 @@ private fun recalculateCategoriesInMemory(
     return updatedSheetsData
 }
 
+private data class ParsedRowResult(
+    val rows: List<ReceiptRowData>,
+    val duplicatedSubtotalCategories: Set<String>
+)
+
 private fun convertParsedRowsToRowData(
     parsedRows: List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>,
     sheetNumber: Int = 1,
     fixYearMonth: Boolean = false,
     defaultYear: Int = 7,
     defaultMonth: Int = 1
-): List<ReceiptRowData> {
+): ParsedRowResult {
     // 月合計行を分離（元の ReceiptOCR と同様に除外して処理）
     val monthlyTotalRow = parsedRows.find { it.isMonthlyTotal }
     val normalAndSubtotalRows = parsedRows.filter { !it.isMonthlyTotal }
@@ -1953,6 +1993,7 @@ private fun convertParsedRowsToRowData(
     val rowsWithBlankAfterSubtotal = mutableListOf<ReceiptRowData>()
     var rowNumber = 1
     val seenSubtotalCategories = mutableSetOf<String>()
+    val duplicatedCategories = mutableSetOf<String>()
 
     for (row in normalAndSubtotalRows) {
         // 取引日テキスト → フォーマット変換
@@ -1973,10 +2014,11 @@ private fun convertParsedRowsToRowData(
         // 小計行判定: ParsedRow.isSubtotal を優先、フォールバックとして日付なし+金額ありを使用
         val isSubtotalRow = row.isSubtotal || (digits.length < 4 && finalAmount > 0)
 
-        // 同カテゴリの小計が既に追加済みなら重複をスキップ
+        // 同カテゴリの小計が既に追加済みなら重複を記録してスキップ
         if (isSubtotalRow && !row.category.isNullOrBlank()) {
             if (!seenSubtotalCategories.add(row.category)) {
-                android.util.Log.w("ReceiptInputScreen", "Duplicate subtotal skipped: ${row.category}")
+                android.util.Log.w("ReceiptInputScreen", "Duplicate subtotal detected: ${row.category}")
+                duplicatedCategories.add(row.category)
                 continue
             }
         }
@@ -2044,7 +2086,7 @@ private fun convertParsedRowsToRowData(
     }
 
     // 合計行は一枚目のみ常に追加（OCR値があれば使用、なければ0）
-    return if (sheetNumber == 1) {
+    val finalRows = if (sheetNumber == 1) {
         val totalRow = ReceiptRowData(
             rowNumber = 21,
             date = "",
@@ -2058,6 +2100,7 @@ private fun convertParsedRowsToRowData(
     } else {
         dataRows
     }
+    return ParsedRowResult(rows = finalRows, duplicatedSubtotalCategories = duplicatedCategories)
 }
 
 /**
