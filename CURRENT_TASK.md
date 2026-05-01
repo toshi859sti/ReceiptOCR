@@ -98,19 +98,29 @@
 
 ## 作業終了時の記録
 
-### 今回完了したこと
-- Phase 1：YearSummaryScreen 新設、OutputConfirmScreen 年セレクター追加、ReceiptDao クエリ追加
-- Phase 2：DB v16・deposit_meisai UNIQUE制約・一括 INSERT OR IGNORE（N+1廃止）
-- Phase 3：AccountSettingsScreen を Navigation に登録（設定画面から遷移可能に）
-- ドキュメント更新：development-guidelines・CSV_SPEC・glossary に Phase 4 設計決定を反映
+### 今回完了したこと（2026-05-02）
+- Phase 4-a：商品名エディタ全角化ロジック実装
+  - `util/ProductNameInputUtils.kt` 新設（共有ユーティリティ）
+  - スペース→全角スペース、数字→全角、英字トグル、記号→全角（一括全角）
+  - 20文字制限（半角0.5換算）・文字カウンターをテキストボックス上に表示
+  - 半角奇数（x.5）時はエラー表示＋保存ブロック
+  - トグルボタン「全角」「半角」に変更
+  - SheetEditorScreen・ReceiptInputScreen 両方に適用
+- Phase 4-b：OCRProcessor 全角化前処理（記号含む 0x21〜0x7E 全対象）
+- 伝票決定時（決定ボタン）の半角奇数バリデーション追加
+- 小計重複検出時に OCR エラーダイアログ表示・再撮影促進
+  - `convertParsedRowsToRowData` → `ParsedRowResult` に変更（重複カテゴリセット返却）
+  - 重複あり → OCR 結果不適用 → ダイアログ（再撮影 / キャンセル）
 
 ### 未完了・中断した理由
-- Phase 3 実機テスト（小計カテゴリ精度・表示ルール）は未実施
-- Phase 4（全角化・学習データ共有）は設計決定のみ、実装は次回以降
+- Phase 4-c：学習データ共有（エクスポート・インポート）未実装
+- Phase 4-d：信頼度表示「承認済み」「学習中」統一未実装
+- Phase 3 実機テスト（小計カテゴリ精度・表示ルール）未実施
 
 ### 次回セッションで最初にやること
-Phase 4 の商品名エディタ全角化ロジック実装から開始する。
+Phase 4-d 信頼度レベルのユーザー向け表示「承認済み」「学習中」統一（UI のみ）から開始する。
 
 ### 新たに発覚した問題・制約
+- OCR が同カテゴリの小計を2回検出することがある（一般購買等）→ 今回の重複検出ダイアログで対応
 - 複雑な漢字（雲・灌など）はsharpness≥1000でも完全な認識は難しい。機種依存が大きい。
 - 商品名列の前処理（CLAHE・UnsharpMask）は現状では改善よりも悪化の傾向 → グレースケールのみで運用
