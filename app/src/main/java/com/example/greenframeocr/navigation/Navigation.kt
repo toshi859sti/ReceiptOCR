@@ -35,6 +35,7 @@ import com.example.greenframeocr.ui.ReceiptInputScreen
 import com.example.greenframeocr.ui.SettingsScreen
 import com.example.greenframeocr.ui.SheetEditorScreen
 import com.example.greenframeocr.ui.TekiyouMatchingScreen
+import com.example.greenframeocr.ui.YearSummaryScreen
 import com.example.greenframeocr.ui.YokinTekiyouScreen
 import com.example.greenframeocr.viewmodel.OcrCaptureViewModel
 import com.example.greenframeocr.viewmodel.SheetEditorViewModel
@@ -59,6 +60,7 @@ sealed class Screen(val route: String) {
     object DepositOutputConfirm : Screen("deposit_output_confirm")
     object RakurakuTekiyou : Screen("rakuraku_tekiyou")
     object DebugCapture : Screen("debug_capture")
+    object YearSummary : Screen("year_summary")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
         fun createRoute(year: Int, month: Int): String {
             return "monthly_summary/$year/$month"
@@ -121,6 +123,9 @@ fun ReceiptNavGraph(
                 onNavigateToReceiptInput = {
                     navController.navigate(Screen.ReceiptInput.route)
                 },
+                onNavigateToYearSummary = {
+                    navController.navigate(Screen.YearSummary.route)
+                },
                 onNavigateToProductList = {
                     navController.navigate(Screen.ProductList.route)
                 },
@@ -130,6 +135,17 @@ fun ReceiptNavGraph(
                 onNavigateToOutputConfirm = {
                     navController.navigate(Screen.PurchaseOutputConfirm.route)
                 }
+            )
+        }
+
+        // 年次サマリー画面
+        composable(Screen.YearSummary.route) {
+            YearSummaryScreen(
+                database = database,
+                onNavigateToMonth = { year, month ->
+                    navController.navigate(Screen.MonthlySummary.createRoute(year, month))
+                },
+                onBack = { navController.popBackStack() }
             )
         }
 

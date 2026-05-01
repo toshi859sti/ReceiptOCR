@@ -102,6 +102,7 @@ private fun PurchaseOutputConfirmContent(
     var allItems by remember { mutableStateOf<List<PurchaseOutputItem>>(emptyList()) }
     var outputItems by remember { mutableStateOf<List<PurchaseOutputItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var selectedYear by remember { mutableStateOf<Int?>(null) }
 
     // 期間選択用のState
     var startDate by remember { mutableStateOf<Calendar?>(null) }
@@ -126,12 +127,19 @@ private fun PurchaseOutputConfirmContent(
         isLoading = false
     }
 
-    // 期間フィルタリング
-    LaunchedEffect(startDate, endDate, allItems) {
-        outputItems = filterPurchaseItemsByDateRange(allItems, startDate, endDate)
+    // フィルタリング（年・期間）
+    LaunchedEffect(startDate, endDate, allItems, selectedYear) {
+        var filtered = filterPurchaseItemsByDateRange(allItems, startDate, endDate)
+        if (selectedYear != null) {
+            filtered = filtered.filter { it.date.take(4).toIntOrNull() == selectedYear }
+        }
+        outputItems = filtered
     }
 
     val selectedCount = outputItems.count { it.isSelected }
+    val availablePurchaseYears = remember(allItems) {
+        allItems.mapNotNull { it.date.take(4).toIntOrNull() }.distinct().sorted()
+    }
 
     Scaffold(
         topBar = {
@@ -161,6 +169,13 @@ private fun PurchaseOutputConfirmContent(
                     CircularProgressIndicator()
                 }
             } else {
+                // 年選択UI
+                YearSelector(
+                    availableYears = availablePurchaseYears,
+                    selectedYear = selectedYear,
+                    onYearSelect = { selectedYear = it }
+                )
+
                 // 期間選択UI
                 DateRangeSelector(
                     context = context,
@@ -386,6 +401,7 @@ private fun DepositOutputConfirmContent(
     var allItems by remember { mutableStateOf<List<DepositOutputItem>>(emptyList()) }
     var outputItems by remember { mutableStateOf<List<DepositOutputItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var selectedYear by remember { mutableStateOf<Int?>(null) }
 
     // 期間選択用のState
     var startDate by remember { mutableStateOf<Calendar?>(null) }
@@ -410,12 +426,19 @@ private fun DepositOutputConfirmContent(
         isLoading = false
     }
 
-    // 期間フィルタリング
-    LaunchedEffect(startDate, endDate, allItems) {
-        outputItems = filterDepositItemsByDateRange(allItems, startDate, endDate)
+    // フィルタリング（年・期間）
+    LaunchedEffect(startDate, endDate, allItems, selectedYear) {
+        var filtered = filterDepositItemsByDateRange(allItems, startDate, endDate)
+        if (selectedYear != null) {
+            filtered = filtered.filter { it.date.take(4).toIntOrNull() == selectedYear }
+        }
+        outputItems = filtered
     }
 
     val selectedCount = outputItems.count { it.isSelected }
+    val availableDepositYears = remember(allItems) {
+        allItems.mapNotNull { it.date.take(4).toIntOrNull() }.distinct().sorted()
+    }
 
     Scaffold(
         topBar = {
@@ -445,6 +468,13 @@ private fun DepositOutputConfirmContent(
                     CircularProgressIndicator()
                 }
             } else {
+                // 年選択UI
+                YearSelector(
+                    availableYears = availableDepositYears,
+                    selectedYear = selectedYear,
+                    onYearSelect = { selectedYear = it }
+                )
+
                 // 期間選択UI
                 DateRangeSelector(
                     context = context,
@@ -852,6 +882,41 @@ private fun escapeCsvField(field: String): String {
         "\"${field.replace("\"", "\"\"")}\""
     } else {
         field
+    }
+}
+
+/**
+ * 年選択チップUI（データがある年のみ表示。データが1年分以下なら非表示）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun YearSelector(
+    availableYears: List<Int>,
+    selectedYear: Int?,
+    onYearSelect: (Int?) -> Unit
+) {
+    if (availableYears.size <= 1) return
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text("年:", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        FilterChip(
+            selected = selectedYear == null,
+            onClick = { onYearSelect(null) },
+            label = { Text("全年") }
+        )
+        availableYears.forEach { year ->
+            FilterChip(
+                selected = selectedYear == year,
+                onClick = { onYearSelect(if (selectedYear == year) null else year) },
+                label = { Text("${year}年") }
+            )
+        }
     }
 }
 

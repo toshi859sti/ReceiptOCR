@@ -85,6 +85,13 @@ interface ReceiptDao {
     @Query("UPDATE receipt_items SET productName = :newName WHERE productName = :oldName")
     suspend fun updateProductNameInReceiptItems(oldName: String, newName: String)
 
+    // 年別集計用
+    @Query("SELECT DISTINCT issueYear FROM sheet_data ORDER BY issueYear DESC")
+    suspend fun getAvailableYears(): List<Int>
+
+    @Query("SELECT DISTINCT issueMonth FROM sheet_data WHERE issueYear = :year ORDER BY issueMonth")
+    suspend fun getAvailableMonthsForYear(year: Int): List<Int>
+
     // 全データ削除
     @Query("DELETE FROM receipt_items")
     suspend fun deleteAllReceiptItems()

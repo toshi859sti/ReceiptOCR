@@ -76,21 +76,9 @@ fun PassbookDataScreen(
                 }
 
                 if (parsedList.isNotEmpty()) {
-                    // 重複チェック：取引日+通番で既存データをフィルタ
-                    var newCount = 0
-                    var skipCount = 0
-                    for (meisai in parsedList) {
-                        val existing = database.depositMeisaiDao().findByDateAndNumber(
-                            meisai.transactionDate,
-                            meisai.transactionNumber
-                        )
-                        if (existing == null) {
-                            database.depositMeisaiDao().insert(meisai)
-                            newCount++
-                        } else {
-                            skipCount++
-                        }
-                    }
+                    val results = database.depositMeisaiDao().insertAllIgnoreDuplicates(parsedList)
+                    val newCount = results.count { it != -1L }
+                    val skipCount = results.count { it == -1L }
                     importResultMessage = if (skipCount > 0) {
                         "${newCount}件追加（${skipCount}件は既存のためスキップ）"
                     } else {

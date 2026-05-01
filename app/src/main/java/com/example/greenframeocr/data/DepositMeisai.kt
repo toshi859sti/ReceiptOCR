@@ -11,7 +11,8 @@ import androidx.room.PrimaryKey
     tableName = "deposit_meisai",
     indices = [
         Index(value = ["transactionDate"]),
-        Index(value = ["tekiyou"])
+        Index(value = ["tekiyou"]),
+        Index(value = ["transactionDate", "transactionNumber"], unique = true)
     ]
 )
 data class DepositMeisai(

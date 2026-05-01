@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 fun PurchaseMenuScreen(
     onBack: () -> Unit,
     onNavigateToReceiptInput: () -> Unit,
+    onNavigateToYearSummary: () -> Unit,
     onNavigateToProductList: () -> Unit,
     onNavigateToKaikakeTekiyou: () -> Unit,
     onNavigateToOutputConfirm: () -> Unit
@@ -63,6 +64,13 @@ fun PurchaseMenuScreen(
             SubMenuButton(
                 text = "伝票データ",
                 onClick = onNavigateToReceiptInput
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            SubMenuButton(
+                text = "購買データ確認",
+                onClick = onNavigateToYearSummary
             )
 
             Spacer(modifier = Modifier.height(16.dp))

@@ -26,6 +26,10 @@ interface DepositMeisaiDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(meisaiList: List<DepositMeisai>)
 
+    /** 重複（transactionDate+transactionNumber）はスキップして一括挿入。戻り値は挿入行IDリスト（スキップは -1L）。 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAllIgnoreDuplicates(meisaiList: List<DepositMeisai>): List<Long>
+
     @Update
     suspend fun update(meisai: DepositMeisai)
 

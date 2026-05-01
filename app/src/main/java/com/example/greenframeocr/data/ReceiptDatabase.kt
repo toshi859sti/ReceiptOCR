@@ -24,7 +24,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OcrFallbackLog::class,
         OcrExplicitJoin::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -638,6 +638,49 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 15 → 16（deposit_meisai に UNIQUE 制約追加）
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // SQLite は ALTER TABLE ADD CONSTRAINT 非対応のためテーブル再作成
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS deposit_meisai_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        transactionDate TEXT NOT NULL,
+                        transactionNumber TEXT NOT NULL,
+                        tekiyou TEXT NOT NULL,
+                        amount INTEGER NOT NULL,
+                        memo TEXT NOT NULL DEFAULT '',
+                        matchingRuleId INTEGER,
+                        overrideTekiyouId INTEGER
+                    )
+                """.trimIndent())
+                // 既存データをコピー（重複がある場合は最小IDの行のみ保持）
+                database.execSQL("""
+                    INSERT INTO deposit_meisai_new
+                    SELECT * FROM deposit_meisai
+                    WHERE id IN (
+                        SELECT MIN(id) FROM deposit_meisai
+                        GROUP BY transactionDate, transactionNumber
+                    )
+                """.trimIndent())
+                database.execSQL("DROP TABLE deposit_meisai")
+                database.execSQL("ALTER TABLE deposit_meisai_new RENAME TO deposit_meisai")
+                // インデックス再作成
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_deposit_meisai_transactionDate
+                    ON deposit_meisai (transactionDate)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_deposit_meisai_tekiyou
+                    ON deposit_meisai (tekiyou)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_deposit_meisai_transactionDate_transactionNumber
+                    ON deposit_meisai (transactionDate, transactionNumber)
+                """.trimIndent())
+            }
+        }
+
         fun getDatabase(context: Context): ReceiptDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -645,7 +688,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance
