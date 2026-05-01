@@ -21,9 +21,7 @@ fun truncateToFullWidthLimit(text: String, limit: Double = 20.0): String {
 fun convertAllToFullWidth(text: String): String = text.map { c ->
     when {
         c == ' ' -> '　'
-        c in '0'..'9' -> (c.code + 0xFEE0).toChar()
-        c in 'A'..'Z' -> (c.code + 0xFEE0).toChar()
-        c in 'a'..'z' -> (c.code + 0xFEE0).toChar()
+        c.code in 0x21..0x7E -> (c.code + 0xFEE0).toChar()  // 記号・数字・英字すべて全角化
         else -> c
     }
 }.joinToString("")
