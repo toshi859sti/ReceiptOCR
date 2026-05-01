@@ -36,11 +36,11 @@
 
 | 用語 | 定義 |
 |---|---|
-| **OcrVariant** | 商品名の OCR 誤認識パターン1件。`variantText` → `productId` のマッピング |
-| **confidenceLevel** | バリアントの信頼度。`LOCKED` > `CONFIRMED` > `AUTO` の3段階 |
-| **LOCKED** | 手動または十分な実績により固定化されたバリアント。無条件に補正に使う |
-| **CONFIRMED** | 一定実績を満たしたバリアント。スコア検証後に補正に使う |
-| **AUTO** | 学習中のバリアント。補正には使わず学習素材のみ |
+| **OcrVariant** | 商品名の OCR 誤認識パターン1件。`variantText`（全角化済み）→ `productId` のマッピング |
+| **confidenceLevel** | バリアントの信頼度。`LOCKED` > `CONFIRMED` > `AUTO` の3段階。ユーザー向け表示は「承認済み」（LOCKED/CONFIRMED）・「学習中」（AUTO）に統一する（コード内定数名は変更しない） |
+| **LOCKED** | **承認済み（上位）**。手動または十分な実績により固定化されたバリアント。Layer1 として無条件に補正に使う。共有CSVエクスポート時は `承認済み` として出力 |
+| **CONFIRMED** | **承認済み（下位）**。一定実績を満たしたバリアント。Layer2 としてスコア検証後に補正に使う |
+| **AUTO** | **学習中**。学習中のバリアント。補正には使わず学習素材のみ（Layer3） |
 | **hitCount** | バリアントが OCR 結果と一致した累計回数 |
 | **highScoreHits** | スコア 0.90 以上で一致した回数 |
 | **autoFailCount** | 自動補正が失敗した（後で手動修正された）回数 |
