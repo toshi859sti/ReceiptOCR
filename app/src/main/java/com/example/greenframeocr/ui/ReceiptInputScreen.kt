@@ -2408,6 +2408,8 @@ private fun CellEditDialog(
     var showDropdown by remember { mutableStateOf(false) }
     var selectedProductId by remember { mutableStateOf<Long?>(currentRow.productMasterId) }
     val coroutineScope = rememberCoroutineScope()
+    val productCharCount = if (cellType == CellType.PRODUCT_NAME) countFullWidthEquivalent(inputValue) else 0.0
+    val productHalfWidthOdd = cellType == CellType.PRODUCT_NAME && productCharCount % 1.0 != 0.0
 
     LaunchedEffect(cellType) {
         if (cellType == CellType.PRODUCT_NAME) {
@@ -2475,6 +2477,30 @@ private fun CellEditDialog(
                     }
                 }
 
+                if (cellType == CellType.PRODUCT_NAME) {
+                    val countText = if (!productHalfWidthOdd) "${productCharCount.toInt()}" else "${"%.1f".format(productCharCount)}"
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "商品名",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "$countText/20",
+                            fontSize = 11.sp,
+                            color = when {
+                                productHalfWidthOdd -> MaterialTheme.colorScheme.error
+                                productCharCount >= 20.0 -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                }
+
                 Box {
                     OutlinedTextField(
                         value = inputValue,
@@ -2489,7 +2515,7 @@ private fun CellEditDialog(
                                 when {
                                     cellType == CellType.DATE && fixYearMonth -> "日を入力（1〜${maxDayInMonth}）"
                                     cellType == CellType.DATE -> "数字のみ（1〜6桁）"
-                                    cellType == CellType.PRODUCT_NAME -> "商品名"
+                                    cellType == CellType.PRODUCT_NAME -> ""
                                     cellType == CellType.AMOUNT -> "金額（半角数字）"
                                     else -> ""
                                 }
@@ -2506,7 +2532,7 @@ private fun CellEditDialog(
                                 }
                             )
                         },
-                        isError = errorMessage != null,
+                        isError = errorMessage != null || productHalfWidthOdd,
                         singleLine = cellType != CellType.PRODUCT_NAME,
                         maxLines = if (cellType == CellType.PRODUCT_NAME) 2 else 1,
                         keyboardOptions = KeyboardOptions(
@@ -2547,47 +2573,44 @@ private fun CellEditDialog(
 
                 // 商品名入力時のボタン（合計行は除外）
                 if (cellType == CellType.PRODUCT_NAME && !currentRow.isTotalRow) {
+                    if (productHalfWidthOdd) {
+                        Text(
+                            text = "半角は2文字ひとまとまりで入力してください（kg・cm等）",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.Start,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "英字：",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            FilterChip(
-                                selected = isAlphaFullWidth,
-                                onClick = { isAlphaFullWidth = true },
-                                label = { Text("全角 Ａ", fontSize = 12.sp) },
-                                modifier = Modifier.height(32.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            FilterChip(
-                                selected = !isAlphaFullWidth,
-                                onClick = { isAlphaFullWidth = false },
-                                label = { Text("半角 A", fontSize = 12.sp) },
-                                modifier = Modifier.height(32.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            OutlinedButton(
-                                onClick = { inputValue = convertAllToFullWidth(inputValue) },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Text("一括全角", fontSize = 12.sp)
-                            }
-                        }
-                        val charCount = countFullWidthEquivalent(inputValue)
-                        val countText = if (charCount % 1.0 == 0.0) "${charCount.toInt()}" else "${"%.1f".format(charCount)}"
                         Text(
-                            text = "$countText/20",
-                            fontSize = 11.sp,
-                            color = if (charCount >= 20.0) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "英字：",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        FilterChip(
+                            selected = isAlphaFullWidth,
+                            onClick = { isAlphaFullWidth = true },
+                            label = { Text("全角", fontSize = 12.sp) },
+                            modifier = Modifier.height(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        FilterChip(
+                            selected = !isAlphaFullWidth,
+                            onClick = { isAlphaFullWidth = false },
+                            label = { Text("半角", fontSize = 12.sp) },
+                            modifier = Modifier.height(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        OutlinedButton(
+                            onClick = { inputValue = convertAllToFullWidth(inputValue) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("一括全角", fontSize = 12.sp)
+                        }
                     }
 
                     Row(
@@ -2770,6 +2793,10 @@ private fun CellEditDialog(
                             }
                         }
                         CellType.PRODUCT_NAME -> {
+                            if (productHalfWidthOdd) {
+                                errorMessage = "半角文字が奇数です。2文字ひとまとまりにしてください"
+                                return@TextButton
+                            }
                             // 商品マスタIDを解決（ドロップダウン選択時は既にセット済み、手動入力時は検索）
                             coroutineScope.launch {
                                 val resolvedProductId = if (selectedProductId != null) {
