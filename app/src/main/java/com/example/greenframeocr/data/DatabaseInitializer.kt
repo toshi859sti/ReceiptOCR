@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.example.greenframeocr.util.withComputedKey
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -181,12 +182,12 @@ object DatabaseInitializer {
                     if (parts.size >= 3) {
                         products.add(
                             ProductMaster(
-                                id = 0, // AutoGenerate
+                                id = 0,
                                 canonicalName = parts[1].trim(),
                                 category = parts[2].trim(),
                                 frequencyCount = parts.getOrNull(3)?.trim()?.toIntOrNull() ?: 0,
                                 kaikakeTekiyouId = parts.getOrNull(4)?.trim()?.toIntOrNull()
-                            )
+                            ).withComputedKey()
                         )
                     }
                 }

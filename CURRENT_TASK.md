@@ -125,6 +125,14 @@
 
 ### 次回セッションで最初にやること
 Phase 3 実機テスト（小計カテゴリ認識精度・表示ルール動作確認）から開始する。
+その後、canonicalKey による既存重複データの整理が必要か確認する（購買品リスト画面で重複商品が見えるかチェック）。
+
+### 今回完了（追加: 2026-05-03）
+- product_master に canonicalKey 列追加 + UNIQUE(canonicalKey, category) 制約（DB v17）
+  - toCanonicalKey(): スペース除去・半角カタカナ全角化・全角英数半角化
+  - ProductMaster.withComputedKey() 拡張関数：INSERT 前に自動計算
+  - MIGRATION_16_17: 既存データの重複を MAX(id) 優先で解消してからテーブル再作成
+  - 全 INSERT 箇所（DatabaseInitializer / ProductListScreen / SettingsScreen / LearningDataImporter）に適用
 
 ### 新たに発覚した問題・制約
 - OCR が同カテゴリの小計を2回検出することがある（一般購買等）→ 今回の重複検出ダイアログで対応

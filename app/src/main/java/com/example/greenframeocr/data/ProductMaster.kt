@@ -14,7 +14,8 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "product_master",
     indices = [
-        Index(value = ["kaikakeTekiyouId"])
+        Index(value = ["kaikakeTekiyouId"]),
+        Index(value = ["canonicalKey", "category"], unique = true)
     ],
     foreignKeys = [
         ForeignKey(
@@ -29,8 +30,14 @@ data class ProductMaster(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
 
-    /** 正規化された商品名 (例: "フェニックス顆粒水和剤250g") */
+    /** 表示用商品名。スペース・表記ゆれを保持 (例: "フェニックス顆粒水和剤　250g") */
     val canonicalName: String,
+
+    /**
+     * 一意性チェック用キー。canonicalName からスペース除去・文字種統一した形。
+     * INSERT 前に必ず withComputedKey() で設定すること。
+     */
+    val canonicalKey: String = "",
 
     /** カテゴリ: "一般購買", "給油所", "農業機械" */
     val category: String,

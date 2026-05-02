@@ -7,6 +7,8 @@ import com.example.greenframeocr.data.OcrVariantDao
 import com.example.greenframeocr.data.ProductMaster
 import com.example.greenframeocr.data.ProductMasterDao
 import com.example.greenframeocr.data.VariantSource
+import com.example.greenframeocr.util.toCanonicalKey
+import com.example.greenframeocr.util.withComputedKey
 import com.google.gson.Gson
 import java.io.InputStreamReader
 
@@ -37,7 +39,8 @@ object LearningDataImporter {
         val canonicalToId = mutableMapOf<Pair<String, String>, Long>()
 
         for (ep in data.products) {
-            val existing = productMasterDao.getByName(ep.canonicalName)
+            val key = toCanonicalKey(ep.canonicalName)
+            val existing = productMasterDao.getByCanonicalKey(key, ep.category)
             if (existing != null) {
                 canonicalToId[Pair(ep.canonicalName, ep.category)] = existing.id
                 skippedProducts++
@@ -47,7 +50,7 @@ object LearningDataImporter {
                         canonicalName = ep.canonicalName,
                         category = ep.category,
                         isCertified = ep.isCertified
-                    )
+                    ).withComputedKey()
                 )
                 canonicalToId[Pair(ep.canonicalName, ep.category)] = newId
                 addedProducts++

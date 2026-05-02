@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.*
+import com.example.greenframeocr.util.withComputedKey
 import kotlinx.coroutines.launch
 
 /** 並び替え順 */
@@ -157,8 +158,8 @@ fun ProductListScreen(
                         canonicalName = name,
                         category = "一般購買",
                         frequencyCount = 1
-                    )
-                    database.productMasterDao().insert(product)
+                    ).withComputedKey()
+                    database.productMasterDao().insertIgnore(product)
                     addedCount++
                 }
 
@@ -367,7 +368,7 @@ fun ProductListScreen(
             onDismiss = { showAddDialog = false },
             onSave = { newProduct ->
                 scope.launch {
-                    database.productMasterDao().insert(newProduct)
+                    database.productMasterDao().insertIgnore(newProduct.withComputedKey())
                     loadProducts()
                 }
                 showAddDialog = false

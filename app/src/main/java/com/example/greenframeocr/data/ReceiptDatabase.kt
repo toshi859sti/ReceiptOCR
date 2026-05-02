@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.greenframeocr.util.toCanonicalKey
 
 @Database(
     entities = [
@@ -24,7 +25,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OcrFallbackLog::class,
         OcrExplicitJoin::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -638,6 +639,73 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 16 → 17（product_master に canonicalKey 列追加 + UNIQUE 制約）
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // 1. canonicalKey 列を追加
+                database.execSQL(
+                    "ALTER TABLE product_master ADD COLUMN canonicalKey TEXT NOT NULL DEFAULT ''"
+                )
+
+                // 2. 既存行の canonicalKey を Kotlin 側で計算して更新
+                val cursor = database.query("SELECT id, canonicalName FROM product_master")
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    val name = cursor.getString(1)
+                    val key = toCanonicalKey(name)
+                    database.execSQL(
+                        "UPDATE product_master SET canonicalKey = ? WHERE id = ?",
+                        arrayOf(key, id)
+                    )
+                }
+                cursor.close()
+
+                // 3. 同じ (canonicalKey, category) の重複を解消（id の大きい方 = 新しい方を残す）
+                database.execSQL("""
+                    DELETE FROM product_master
+                    WHERE id NOT IN (
+                        SELECT MAX(id) FROM product_master GROUP BY canonicalKey, category
+                    )
+                """.trimIndent())
+
+                // 4. UNIQUE 制約付き新テーブルを作成
+                database.execSQL("""
+                    CREATE TABLE product_master_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        canonicalName TEXT NOT NULL,
+                        canonicalKey TEXT NOT NULL DEFAULT '',
+                        category TEXT NOT NULL,
+                        frequencyCount INTEGER NOT NULL DEFAULT 0,
+                        kaikakeTekiyouId INTEGER,
+                        isCertified INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY (kaikakeTekiyouId) REFERENCES rakuraku_tekiyou(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+
+                // 5. データをコピー
+                database.execSQL("""
+                    INSERT INTO product_master_new
+                        (id, canonicalName, canonicalKey, category, frequencyCount, kaikakeTekiyouId, isCertified)
+                    SELECT id, canonicalName, canonicalKey, category, frequencyCount, kaikakeTekiyouId, isCertified
+                    FROM product_master
+                """.trimIndent())
+
+                // 6. 旧テーブル削除・リネーム
+                database.execSQL("DROP TABLE product_master")
+                database.execSQL("ALTER TABLE product_master_new RENAME TO product_master")
+
+                // 7. インデックス再作成
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_product_master_kaikakeTekiyouId
+                    ON product_master (kaikakeTekiyouId)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_product_master_canonicalKey_category
+                    ON product_master (canonicalKey, category)
+                """.trimIndent())
+            }
+        }
+
         // マイグレーション: version 15 → 16（deposit_meisai に UNIQUE 制約追加）
         private val MIGRATION_15_16 = object : Migration(15, 16) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -688,7 +756,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance

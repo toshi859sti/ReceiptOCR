@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.CameraResolution
 import com.example.greenframeocr.data.ReceiptDatabase
+import com.example.greenframeocr.util.withComputedKey
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.Dispatchers
@@ -820,7 +821,7 @@ private suspend fun importAllData(
         db.depositMeisaiDao().insertAll(importData.depositMeisai)
 
         // マスタデータ
-        importData.productMasters.forEach { db.productMasterDao().insertIgnore(it) }
+        importData.productMasters.forEach { db.productMasterDao().insertIgnore(it.withComputedKey()) }
         importData.ocrVariants.forEach { db.ocrVariantDao().insertIgnore(it) }
         importData.rakurakuTekiyou.forEach { db.rakurakuTekiyouDao().insertIgnore(it) }
         importData.tekiyouMatchingRules.forEach { db.tekiyouMatchingRuleDao().insertIgnore(it) }
@@ -1020,7 +1021,7 @@ private suspend fun importMasterData(
                 productSkipped++
             } else {
                 // 新規追加（IDは自動採番されるため、新しいIDを記録）
-                val newId = db.productMasterDao().insert(product.copy(id = 0))
+                val newId = db.productMasterDao().insert(product.copy(id = 0).withComputedKey())
                 productIdMap[product.id] = newId
                 productAdded++
             }

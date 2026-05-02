@@ -31,6 +31,10 @@ interface ProductMasterDao {
     @Query("SELECT * FROM product_master WHERE canonicalName = :name")
     suspend fun getByName(name: String): ProductMaster?
 
+    /** canonicalKey + category で一意検索（重複チェック用） */
+    @Query("SELECT * FROM product_master WHERE canonicalKey = :key AND category = :category LIMIT 1")
+    suspend fun getByCanonicalKey(key: String, category: String): ProductMaster?
+
     /**
      * 使用頻度をインクリメント
      */
