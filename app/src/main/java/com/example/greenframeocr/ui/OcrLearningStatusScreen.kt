@@ -1,11 +1,14 @@
 package com.example.greenframeocr.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,6 +20,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.*
+import com.example.greenframeocr.util.LearningDataExporter
+import com.example.greenframeocr.util.LearningDataImporter
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -39,6 +44,7 @@ fun OcrLearningStatusScreen(
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val ocrVariantDao = database.ocrVariantDao()
     val productMasterDao = database.productMasterDao()
     val fallbackLogDao = database.ocrFallbackLogDao()
@@ -97,37 +103,58 @@ fun OcrLearningStatusScreen(
         }
     }
 
-    // データ読み込み
-    LaunchedEffect(Unit) {
-        scope.launch {
-            totalCount = ocrVariantDao.getTotalCount()
-            confidenceCounts = ocrVariantDao.getCountByConfidenceLevel()
-            sourceCounts = ocrVariantDao.getCountBySource()
-            recentPatterns = ocrVariantDao.getRecentPatterns(20)
-            mostUsedPatterns = ocrVariantDao.getMostUsedPatterns(20)
-            nearPromotionPatterns = ocrVariantDao.getNearPromotionPatterns(10)
+    // エクスポート・インポート
+    var showMenu by remember { mutableStateOf(false) }
+    var isBusy by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
-            // フォールバック統計
-            fallbackTotalCount = fallbackLogDao.getTotalCount()
-            fallbackAvgHeight = fallbackLogDao.getAverageTextHeight()
-            fallbackHeightBuckets = fallbackLogDao.getCountByTextHeightBucket()
-            recentFallbackLogs = fallbackLogDao.getRecent(20)
-
-            // 商品名キャッシュを構築
-            val productIds = (recentPatterns + mostUsedPatterns + nearPromotionPatterns)
-                .map { it.productId }
-                .distinct()
-            val cache = mutableMapOf<Long, String>()
-            for (id in productIds) {
-                productMasterDao.getById(id)?.let {
-                    cache[id] = it.canonicalName
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri?.let {
+            isBusy = true
+            scope.launch {
+                try {
+                    LearningDataExporter.export(context, productMasterDao, ocrVariantDao, it)
+                    snackbarHostState.showSnackbar("エクスポート完了")
+                } catch (e: Exception) {
+                    snackbarHostState.showSnackbar("エクスポート失敗: ${e.message}")
+                } finally {
+                    isBusy = false
                 }
             }
-            productNameCache = cache
         }
     }
 
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            isBusy = true
+            scope.launch {
+                try {
+                    val result = LearningDataImporter.import(context, productMasterDao, ocrVariantDao, it)
+                    snackbarHostState.showSnackbar(
+                        "インポート完了: 商品 +${result.addedProducts} / バリアント +${result.addedVariants}" +
+                        " (スキップ: 商品 ${result.skippedProducts} / バリアント ${result.skippedVariants})"
+                    )
+                    reloadData()
+                } catch (e: Exception) {
+                    snackbarHostState.showSnackbar("インポート失敗: ${e.message}")
+                } finally {
+                    isBusy = false
+                }
+            }
+        }
+    }
+
+    // データ読み込み
+    LaunchedEffect(Unit) {
+        reloadData()
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("OCR学習状況") },
@@ -137,6 +164,41 @@ fun OcrLearningStatusScreen(
                             imageVector = Icons.Default.ArrowBack,
                             contentDescription = "戻る"
                         )
+                    }
+                },
+                actions = {
+                    if (isBusy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .padding(end = 4.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "メニュー")
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("学習データをエクスポート") },
+                                onClick = {
+                                    showMenu = false
+                                    val dateStr = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+                                        .format(Date())
+                                    exportLauncher.launch("ocr_learning_$dateStr.json")
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("学習データをインポート") },
+                                onClick = {
+                                    showMenu = false
+                                    importLauncher.launch(arrayOf("application/json", "*/*"))
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -336,9 +398,9 @@ private fun StatisticsSummary(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                ConfidenceBadge("自動", autoCount, Color(0xFFFF9800))
-                ConfidenceBadge("確定", confirmedCount, Color(0xFF4CAF50))
-                ConfidenceBadge("固定", lockedCount, Color(0xFF2196F3))
+                ConfidenceBadge("学習中", autoCount, Color(0xFFFF9800))
+                ConfidenceBadge("承認済み", confirmedCount, Color(0xFF4CAF50))
+                ConfidenceBadge("承認済み", lockedCount, Color(0xFF2196F3))
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -524,9 +586,9 @@ private fun PatternCard(
                     else -> Color(0xFFFF9800)
                 }
                 val levelLabel = when (pattern.confidenceLevel) {
-                    "LOCKED" -> "固定"
-                    "CONFIRMED" -> "確定"
-                    else -> "自動"
+                    "LOCKED" -> "承認済み"
+                    "CONFIRMED" -> "承認済み"
+                    else -> "学習中"
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(

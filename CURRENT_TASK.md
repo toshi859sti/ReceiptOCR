@@ -73,11 +73,11 @@
   - OCR結果をエディタへ渡す前に全文字全角化（toFullWidthText）
   - 全角化済みテキストを DB に保存
   - ocr_variants.variantText は全角化済みで統一（生テキストをそのまま入れない）
-- [ ] 学習データ共有機能（エクスポート・インポート）の実装
-  - product_master・ocr_variants を CSV エクスポート
-  - 他ユーザーの CSV をインポート（canonicalName+category 一致でスキップ）
-  - 信頼度レベルをそのまま引き継ぐ
-- [ ] 信頼度レベルのユーザー向け表示を「承認済み」「学習中」に統一（UI のみ）
+- [x] 学習データ共有機能（エクスポート・インポート）の実装（2026-05-02）
+  - product_master・ocr_variants を JSON エクスポート（1ファイル）
+  - 他ユーザーの JSON をインポート（canonicalName+category 一致でスキップ）
+  - 信頼度レベルをそのまま引き継ぐ、source は IMPORT に設定
+- [x] 信頼度レベルのユーザー向け表示を「承認済み」「学習中」に統一（UI のみ）（2026-05-02）
 
 ## 完了条件
 - 年別サマリー画面で過去の年データが閲覧・出力できる
@@ -99,6 +99,12 @@
 ## 作業終了時の記録
 
 ### 今回完了したこと（2026-05-02）
+- Phase 4-c：学習データ共有（JSON エクスポート・インポート）
+  - `util/LearningDataExporter.kt` 新設（Gson で product_master + ocr_variants を1JSON）
+  - `util/LearningDataImporter.kt` 新設（canonicalName+category 重複スキップ、source=IMPORT）
+  - `OcrLearningStatusScreen` TopAppBar に「⋮」メニュー追加（エクスポート・インポート）
+  - Snackbar でインポート結果（追加数・スキップ数）表示
+- Phase 4-d：信頼度表示 LOCKED/CONFIRMED → 「承認済み」、AUTO → 「学習中」に統一
 - Phase 4-a：商品名エディタ全角化ロジック実装
   - `util/ProductNameInputUtils.kt` 新設（共有ユーティリティ）
   - スペース→全角スペース、数字→全角、英字トグル、記号→全角（一括全角）
@@ -118,7 +124,7 @@
 - Phase 3 実機テスト（小計カテゴリ精度・表示ルール）未実施
 
 ### 次回セッションで最初にやること
-Phase 4-d 信頼度レベルのユーザー向け表示「承認済み」「学習中」統一（UI のみ）から開始する。
+Phase 3 実機テスト（小計カテゴリ認識精度・表示ルール動作確認）から開始する。
 
 ### 新たに発覚した問題・制約
 - OCR が同カテゴリの小計を2回検出することがある（一般購買等）→ 今回の重複検出ダイアログで対応
