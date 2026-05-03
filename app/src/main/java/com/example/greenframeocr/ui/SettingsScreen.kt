@@ -198,8 +198,8 @@ fun SettingsScreen(
             SettingSection(title = "🌾 購買部門")
 
             SettingItem(
-                title = "入力年",
-                subtitle = "令和${eraYear}年 / 西暦${2018 + eraYear}年"
+                title = "撮影・入力のデフォルト年",
+                subtitle = "令和${eraYear}年 / 西暦${2018 + eraYear}年　（年月固定・新規伝票に適用）"
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
