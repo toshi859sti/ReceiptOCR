@@ -223,8 +223,12 @@ object UnderlyingBaseProcessor {
         val rowText = rowBoxes.joinToString(" ") { it.text }
         val rowY    = rowBoxes.firstOrNull()?.centerY ?: 0
 
+        // ITEM列のテキストのみで小計判定（分類計列などの部門名テキストによる誤検知防止）
+        val itemText = rowBoxes
+            .filter { detectColumn(it.centerX) == ColumnType.ITEM }
+            .joinToString(" ") { it.text }
         val subtotalKeywords = listOf("小計", "一般購買", "給油所", "農業機械")
-        if (subtotalKeywords.any { rowText.contains(it) } && rowY in SUBTOTAL_Y_RANGE) {
+        if (subtotalKeywords.any { itemText.contains(it) } && rowY in SUBTOTAL_Y_RANGE) {
             Log.d(TAG, "  RowType: SUBTOTAL (Y=$rowY, text='$rowText')")
             return RowType.SUBTOTAL
         }
@@ -332,8 +336,13 @@ object UnderlyingBaseProcessor {
 
             when (finalCol) {
                 ColumnType.DATE -> {
-                    date = box.text
-                    Log.d(TAG, "  DATE: ${box.text}")
+                    val normalized = normalizeToDigits(box.text).take(6)
+                    if (normalized.length == 6) {
+                        date = normalized
+                        Log.d(TAG, "  DATE: $normalized (raw: ${box.text})")
+                    } else {
+                        Log.d(TAG, "  DATE skipped (not 6 digits): ${box.text}")
+                    }
                 }
                 ColumnType.ITEM -> {
                     // 商品名列は列特化OCR（extractProductNamesFromColumn）で取得
