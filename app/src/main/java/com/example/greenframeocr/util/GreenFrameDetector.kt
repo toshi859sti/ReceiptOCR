@@ -25,7 +25,7 @@ private const val RECEIPT_HEIGHT_MM = 148.0
 
 object GreenFrameDetector {
 
-    private val LOWER_GREEN = Scalar(35.0, 30.0, 60.0)
+    private val LOWER_GREEN = Scalar(35.0, 50.0, 60.0)
     private val UPPER_GREEN = Scalar(85.0, 255.0, 255.0)
 
     data class CaptureInfo(
@@ -156,7 +156,7 @@ object GreenFrameDetector {
 
             // 緑線の方程式（HoughLines）
             t = System.currentTimeMillis()
-            val lineEqs = detectGreenLineEquations(src, imgW, imgH)
+            val lineEqs = detectGreenLineEquations(src, imgW, imgH, leftX)
             Log.d(TAG, "[PERF] Step4b 緑線方程式: ${System.currentTimeMillis() - t} ms")
 
             val tl: Point; val tr: Point; val br: Point; val bl: Point
@@ -341,12 +341,19 @@ object GreenFrameDetector {
             )
             dilated.release()
 
-            val largest = contours.maxByOrNull { Imgproc.contourArea(it) } ?: return null
+            // 横長（幅>高さ×0.8）かつ画像左端3%より右にある最大輪郭を採用
+            // 背景の偽検知（縦長の細いノイズ）を除外するため
+            val minLeftX = smallW * 0.03
+            val validContours = contours.filter { c ->
+                val b = Imgproc.boundingRect(c)
+                b.x > minLeftX || b.width > b.height * 0.5
+            }
+            val largest = (validContours.ifEmpty { contours }).maxByOrNull { Imgproc.contourArea(it) } ?: return null
             val bounds = Imgproc.boundingRect(largest)
 
             val topY    = bounds.y.toDouble()
             val bottomY = (bounds.y + bounds.height).toDouble()
-            val leftX   = bounds.x.toDouble()
+            val leftX   = bounds.x.toDouble().coerceAtLeast(minLeftX)
             // 右辺はA5横比率(1.42)で推定（右辺に緑枠なし）
             val rightX  = (leftX + (bottomY - topY) * 1.42).coerceAtMost(smallW - 1.0)
 
@@ -392,7 +399,7 @@ object GreenFrameDetector {
 
     data class LineEqs(val top: FittedLine, val bot: FittedLine, val left: FittedLine)
 
-    private fun detectGreenLineEquations(src: Mat, imgW: Int, imgH: Int): LineEqs? {
+    private fun detectGreenLineEquations(src: Mat, imgW: Int, imgH: Int, approxLeftX: Int = 0): LineEqs? {
         val greenMask = buildGreenMask(src)
         val minLen    = (maxOf(imgW, imgH) * 0.05).toDouble()
         val minVotes  = (maxOf(imgW, imgH) * 0.05).toInt().coerceAtLeast(40)
@@ -553,12 +560,27 @@ object GreenFrameDetector {
         val topBot = hClusters.take(2)
             .sortedBy { grp -> grp.sumOf { s -> s.midY * s.len } / grp.sumOf { s -> s.len } }
 
-        // 垂直クラスタ: 最も左（最小x）で長いクラスタを左辺として採用
+        // 垂直クラスタ: 左辺として採用するクラスタを選択
+        // approxLeftX が有効な場合はそれに最も近いクラスタを選ぶ（背景の偽緑による誤検知を排除）
+        // approxLeftX が不明（0）の場合は画像幅の3%以上にある最左クラスタを採用
         val vClusters = clusterByMidX(vSegs)
             .filter { it.sumOf { s -> s.len } >= minLen * 0.5 }
         if (vClusters.isEmpty()) { Log.w(TAG, "垂直クラスタなし"); greenMask.release(); return null }
-        val leftCluster = vClusters.minByOrNull { grp ->
-            grp.sumOf { s -> s.midX * s.len } / grp.sumOf { s -> s.len } }!!
+        val minEdgeX = imgW * 0.03  // 画像左端3%以内は背景ノイズとみなして除外
+        val candidateClusters = vClusters.filter { grp ->
+            grp.sumOf { s -> s.midX * s.len } / grp.sumOf { s -> s.len } > minEdgeX
+        }.ifEmpty { vClusters }
+        val leftCluster = if (approxLeftX > 0) {
+            candidateClusters.minByOrNull { grp ->
+                val midX = grp.sumOf { s -> s.midX * s.len } / grp.sumOf { s -> s.len }
+                Math.abs(midX - approxLeftX)
+            }!!
+        } else {
+            candidateClusters.minByOrNull { grp ->
+                grp.sumOf { s -> s.midX * s.len } / grp.sumOf { s -> s.len }
+            }!!
+        }
+        Log.d(TAG, "leftCluster midX=${(leftCluster.sumOf { it.midX * it.len } / leftCluster.sumOf { it.len }).toInt()} approxLeftX=$approxLeftX")
 
         // 緑帯の外縁でフィット（セグメント中心フィットより正確）
         val topLine  = fitHOuter(topBot[0], useMaxY = false)  // 上辺外縁 = min y
