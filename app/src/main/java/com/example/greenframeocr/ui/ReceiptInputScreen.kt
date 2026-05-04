@@ -221,6 +221,7 @@ fun ReceiptInputScreen(
                 )
                 if (result.duplicatedSubtotalCategories.isNotEmpty()) {
                     ocrDuplicateSubtotalCategories = result.duplicatedSubtotalCategories
+                    showCamera = false  // CameraView をリセットして再撮影できるようにする
                     return@CameraView
                 }
                 val ocrRows = result.rows
@@ -490,7 +491,7 @@ fun ReceiptInputScreen(
                             showCamera = true
                         },
                         modifier = Modifier.weight(1f),
-                        enabled = viewMode == ViewMode.EDIT && inputMode == InputMode.OCR
+                        enabled = viewMode == ViewMode.EDIT && inputMode == InputMode.OCR && totalSheets > 0
                     ) {
                         Icon(Icons.Default.CameraAlt, null, Modifier.size(20.dp))
                         Spacer(Modifier.width(4.dp))
@@ -1380,26 +1381,29 @@ private fun CameraView(
             onOcrComplete = { detectionResult ->
                 isProcessingOcr = true
                 ocrScope.launch {
-                    val dewarped = detectionResult.dewarpedBitmap
-                    val parsed = if (dewarped != null) {
-                        val mmRatio = dewarped.width / 203.0
-                        val ocrResult = com.example.greenframeocr.util.OCRProcessor.processUnderlayingBase(dewarped, mmRatio)
-                        ocrResult.rowsWithCategories.mapIndexed { index, (row, category) ->
-                            val isSubtotal     = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.SUBTOTAL
-                            val isMonthlyTotal = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.MONTHLY_TOTAL
-                            val amount = if (isSubtotal || isMonthlyTotal) row.categorySum else row.amount
-                            com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow(
-                                rowIndex = index, date = row.date, productName = row.itemName,
-                                branch = null, quantity = row.quantity?.toIntOrNull(),
-                                unitPrice = null, amount = amount,
-                                isAmountValid = amount != null,
-                                category = category, isSubtotal = isSubtotal,
-                                isMonthlyTotal = isMonthlyTotal
-                            )
-                        }
-                    } else emptyList()
-                    isProcessingOcr = false
-                    onOcrComplete(parsed)
+                    try {
+                        val dewarped = detectionResult.dewarpedBitmap
+                        val parsed = if (dewarped != null) {
+                            val mmRatio = dewarped.width / 203.0
+                            val ocrResult = com.example.greenframeocr.util.OCRProcessor.processUnderlayingBase(dewarped, mmRatio)
+                            ocrResult.rowsWithCategories.mapIndexed { index, (row, category) ->
+                                val isSubtotal     = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.SUBTOTAL
+                                val isMonthlyTotal = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.MONTHLY_TOTAL
+                                val amount = if (isSubtotal || isMonthlyTotal) row.categorySum else row.amount
+                                com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow(
+                                    rowIndex = index, date = row.date, productName = row.itemName,
+                                    branch = null, quantity = row.quantity?.toIntOrNull(),
+                                    unitPrice = null, amount = amount,
+                                    isAmountValid = amount != null,
+                                    category = category, isSubtotal = isSubtotal,
+                                    isMonthlyTotal = isMonthlyTotal
+                                )
+                            }
+                        } else emptyList()
+                        onOcrComplete(parsed)
+                    } finally {
+                        isProcessingOcr = false
+                    }
                 }
             },
             onCancel = onCancel,

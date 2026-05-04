@@ -151,15 +151,21 @@ canonicalKey による既存重複データの整理が必要か確認する（�
   2. detectGreenLineEquations に approxLeftX 引数追加 → leftCluster を「最左端」でなく「leftXに最も近い」で選択
   3. detectCornersFast も同様に左端3%以内の輪郭を除外
 
+### 今回完了（追加: 2026-05-05 数値OCR修正・小計誤判定対策）
+- 右端罫線の誤認識修正：`stripRuleSuffix` を processNormalRow（QUANTITY・AMOUNT・CATEGORY_SUM）および processSubtotalRow（CATEGORY_SUM）に適用
+  - 数値クリーンアップ順序：stripRulePrefix → stripRuleSuffix → removeThousandsSeparatorMisread
+- 「南島原市廃プラ処理袋」等の商品名が小計に誤分類される問題を修正
+  - `!hasIndividualAmount`：税込金額列（AMOUNT）に値がある行は正常行と断定（小計行には個別金額がない）
+  - `hasSubtotalMarker`：ITEM列に `*` または `＊` が必須（`※` はフッター用なので除外）
+  - 診断ログ追加：`adb logcat -s UnderlyingBaseProcessor:D | grep SubtotalCheck` で各条件の評価値を確認可能
+
 ### 未完了・中断した理由
-- 修正後も角検出が安定しない（複数回試行）→ 追加調査が必要
+- 「南島原市廃プラ処理袋」の小計誤分類が修正後も再発するか未確認（実機テスト中断）
+- Motorola での枠検出安定性は引き続き要確認
 
 ### 次回セッションで最初にやること
-Motorola でのデバッグ撮影 → columns.png で DATE列(赤, x=82..300)内にテキストが入っているか確認。
-まだずれているなら：
-1. mask.png でx=0付近の白ピクセル密度が減ったか確認（S_min=50の効果確認）
-2. overlay.png でTLのx座標を確認
-3. 必要なら S_min をさらに引き上げ（60〜80）または `fitVOuter` のスキャン範囲を leftX±20% に制限
+「南島原市廃プラ処理袋」を含む伝票を撮影し小計誤分類が解消されたか確認。
+再発した場合：`adb logcat -s UnderlyingBaseProcessor:D | grep SubtotalCheck` を実行してどの条件が通過しているか特定する。
 
 ### 新たに発覚した問題・制約
 - OCR が同カテゴリの小計を2回検出することがある（一般購買等）→ 今回の重複検出ダイアログで対応
@@ -169,3 +175,4 @@ Motorola でのデバッグ撮影 → columns.png で DATE列(赤, x=82..300)内
   → 商品名側は step8.5 の列特化OCR で正しく取得されるため実用上は許容範囲
 - **Motorola(ZY32MD4V57)固有**: カメラの色再現がHSV緑範囲に誤検知しやすく、背景の偽緑ピクセルが
   leftCluster を引き寄せてTLがx=0付近にずれる。fitVOuter のスキャン範囲制限も有効な対策候補
+- 数値列（金額・数量）の罫線誤認識パターン3種：先頭（stripRulePrefix）・3桁区切り（removeThousandsSeparatorMisread）・末尾（stripRuleSuffix）の順で処理

@@ -228,7 +228,27 @@ object UnderlyingBaseProcessor {
             .filter { detectColumn(it.centerX) == ColumnType.ITEM }
             .joinToString(" ") { it.text }
         val subtotalKeywords = listOf("小計", "一般購買", "給油所", "農業機械")
-        if (subtotalKeywords.any { itemText.contains(it) } && rowY in SUBTOTAL_Y_RANGE) {
+        val hasDate = rowBoxes.any {
+            detectColumn(it.centerX) == ColumnType.DATE &&
+            normalizeToDigits(it.text).length >= 6
+        }
+        val hasCategorySum = rowBoxes.any {
+            detectColumn(it.centerX) == ColumnType.CATEGORY_SUM &&
+            normalizeToDigits(it.text).isNotEmpty()
+        }
+        // 税込金額列に値がある行は正常行（小計行には個別金額がない）
+        val hasIndividualAmount = rowBoxes.any {
+            detectColumn(it.centerX) == ColumnType.AMOUNT &&
+            normalizeToDigits(it.text).isNotEmpty()
+        }
+        // 小計行は伝票上で必ず * または ＊ が印字される（※はフッター用で小計マーカーではない）
+        val hasSubtotalMarker = rowBoxes.any {
+            detectColumn(it.centerX) == ColumnType.ITEM &&
+            (it.text.contains('*') || it.text.contains('＊'))
+        }
+        val matchedKeyword = subtotalKeywords.firstOrNull { itemText.contains(it) }
+        Log.d(TAG, "  SubtotalCheck Y=$rowY: hasDate=$hasDate hasCategorySum=$hasCategorySum hasIndividualAmount=$hasIndividualAmount hasMarker=$hasSubtotalMarker keyword=$matchedKeyword itemText='$itemText'")
+        if (!hasDate && hasCategorySum && !hasIndividualAmount && hasSubtotalMarker && matchedKeyword != null && rowY in SUBTOTAL_Y_RANGE) {
             Log.d(TAG, "  RowType: SUBTOTAL (Y=$rowY, text='$rowText')")
             return RowType.SUBTOTAL
         }
@@ -349,20 +369,22 @@ object UnderlyingBaseProcessor {
                     Log.d(TAG, "  ITEM(skipped full-OCR): ${box.text}")
                 }
                 ColumnType.QUANTITY -> {
-                    quantity = box.text.replace(" ", "").replace(",", "")
-                    Log.d(TAG, "  QTY: $quantity")
+                    val raw  = box.text.replace(" ", "").replace(",", "")
+                    val norm = removeThousandsSeparatorMisread(box.text, stripRuleSuffix(box.text, stripRulePrefix(box.text, normalizeToDigits(raw))))
+                    quantity = norm
+                    Log.d(TAG, "  QTY: $quantity (raw: ${box.text})")
                 }
                 ColumnType.AMOUNT -> {
-                    val isNeg    = box.text.contains("-")
-                    val norm     = normalizeToDigits(box.text)
-                    val value    = norm.toIntOrNull()
+                    val isNeg = box.text.contains("-")
+                    val norm  = removeThousandsSeparatorMisread(box.text, stripRuleSuffix(box.text, stripRulePrefix(box.text, normalizeToDigits(box.text))))
+                    val value = norm.toIntOrNull()
                     amount = if (isNeg && value != null) -value else value
-                    Log.d(TAG, "  AMOUNT: $amount")
+                    Log.d(TAG, "  AMOUNT: $amount (raw: ${box.text})")
                 }
                 ColumnType.CATEGORY_SUM -> {
-                    val norm = box.text.replace(" ", "").replace(",", "")
+                    val norm = removeThousandsSeparatorMisread(box.text, stripRuleSuffix(box.text, stripRulePrefix(box.text, normalizeToDigits(box.text))))
                     categorySum = norm.toIntOrNull()
-                    Log.d(TAG, "  CATEGORY_SUM: $categorySum")
+                    Log.d(TAG, "  CATEGORY_SUM: $categorySum (raw: ${box.text})")
                 }
                 else -> Log.d(TAG, "  IGNORED: ${box.text} (X=${box.centerX})")
             }
@@ -384,7 +406,8 @@ object UnderlyingBaseProcessor {
                     if (cleaned.isNotBlank()) itemParts.add(cleaned)
                 }
                 ColumnType.CATEGORY_SUM -> {
-                    categorySum = normalizeToDigits(box.text).toIntOrNull()
+                    val norm = removeThousandsSeparatorMisread(box.text, stripRuleSuffix(box.text, stripRulePrefix(box.text, normalizeToDigits(box.text))))
+                    categorySum = norm.toIntOrNull()
                     Log.d(TAG, "  SUBTOTAL AMOUNT: $categorySum")
                 }
                 else -> {}
@@ -479,6 +502,52 @@ object UnderlyingBaseProcessor {
     // ============================================
     // ユーティリティ
     // ============================================
+
+    /**
+     * 3桁区切り（千の位）に印刷された点線の誤認識による「1」を除去する。
+     * 例: "5:610"→normalizeDigit→"51610"→この関数で→"5610"
+     * rawテキストの区切り文字（|:Ili）の位置と normalized の長さから誤挿入を特定する。
+     */
+    private fun removeThousandsSeparatorMisread(raw: String, normalized: String): String {
+        if (normalized.length < 5) return normalized      // 4桁以下はセパレータなし
+        val sepPos = normalized.length - 4                // 左から何桁目に区切りが入るか
+        if (normalized[sepPos] != '1') return normalized  // 該当位置が1でなければスキップ
+        val sepChars = setOf('|', '｜', ':', 'I', 'l', 'i')
+        var digitCount = 0
+        for (ch in raw.replace(" ", "")) {
+            if (ch.isDigit() || ch in setOf('O', 'o', 'B', 'b', 'S', 'p')) {
+                digitCount++
+            } else if (ch in sepChars && digitCount == sepPos) {
+                return normalized.removeRange(sepPos, sepPos + 1)
+            }
+        }
+        return normalized
+    }
+
+    /**
+     * 罫線文字（|・I・l・i・:）で始まる生テキストの場合、正規化後の先頭1を除去する。
+     * normalizeDigit が |→1 等に変換するため、罫線が数値先頭に混入する問題を防ぐ。
+     * 正当な "1" 始まりの数値（生テキストが "1" で始まる場合）は除去しない。
+     */
+    private fun stripRulePrefix(raw: String, normalized: String): String {
+        val first = raw.trimStart(' ').firstOrNull() ?: return normalized
+        return if (first in setOf('|', '｜', 'I', 'l', 'i', ':') && normalized.startsWith("1") && normalized.length > 1)
+            normalized.removePrefix("1")
+        else
+            normalized
+    }
+
+    /**
+     * 列の右枠罫線（|・I・l・i）が末尾に混入した場合、正規化後の末尾1を除去する。
+     * 正当な "1" 終わりの数値（生テキストが数字で終わる場合）は除去しない。
+     */
+    private fun stripRuleSuffix(raw: String, normalized: String): String {
+        val last = raw.trimEnd(' ').lastOrNull() ?: return normalized
+        return if (last in setOf('|', '｜', 'I', 'l', 'i') && normalized.endsWith("1") && normalized.length > 1)
+            normalized.removeSuffix("1")
+        else
+            normalized
+    }
 
     fun normalizeToDigits(text: String): String =
         text.replace(" ", "")
