@@ -85,6 +85,7 @@ fun ReceiptInputScreen(
     var showRowActionsBottomSheet by remember { mutableStateOf(false) }
     var halfWidthOddRows by remember { mutableStateOf<List<String>>(emptyList()) }
     var ocrDuplicateSubtotalCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showUnclassifiedBlockDialog by remember { mutableStateOf(false) }
 
     // カメラ表示状態
     var showCamera by remember { mutableStateOf(false) }
@@ -156,6 +157,19 @@ fun ReceiptInputScreen(
             },
             confirmButton = {
                 TextButton(onClick = { halfWidthOddRows = emptyList() }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    if (showUnclassifiedBlockDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnclassifiedBlockDialog = false },
+            title = { Text("未分類の行があります") },
+            text = { Text("カテゴリが「未分類」の行が残っています。\n各行のカテゴリを確認・修正してから決定してください。") },
+            confirmButton = {
+                TextButton(onClick = { showUnclassifiedBlockDialog = false }) {
                     Text("OK")
                 }
             }
@@ -641,6 +655,29 @@ fun ReceiptInputScreen(
                                 validationResult.categoryBreakdowns.forEach { category ->
                                     Divider(modifier = Modifier.padding(vertical = 4.dp))
                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        if (category.categoryName == "未分類") {
+                                            // 未分類：小計なし・警告表示
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "⚠ 未分類（小計なし）",
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.error
+                                                )
+                                                Text(
+                                                    text = "${"%,d".format(category.calculatedSubtotal)} 円",
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                                )
+                                            }
+                                        } else {
+                                        val ruleCorrection = tryStripRuleDigit(category.enteredSubtotal, category.calculatedSubtotal)
                                         // カテゴリ名と入力値
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
@@ -656,6 +693,7 @@ fun ReceiptInputScreen(
                                                 text = "入力値：${"%,d".format(category.enteredSubtotal)}",
                                                 fontSize = 13.sp,
                                                 fontWeight = FontWeight.Medium,
+                                                color = if (ruleCorrection != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                                             )
                                         }
@@ -669,12 +707,17 @@ fun ReceiptInputScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = if (category.isValid) "　一致" else "　不一致",
+                                                text = when {
+                                                    category.isValid -> "　一致"
+                                                    ruleCorrection != null -> "　罫線補正で一致"
+                                                    else -> "　不一致"
+                                                },
                                                 fontSize = 12.sp,
-                                                color = if (category.isValid)
-                                                    MaterialTheme.colorScheme.primary
-                                                else
-                                                    MaterialTheme.colorScheme.error,
+                                                color = when {
+                                                    category.isValid -> MaterialTheme.colorScheme.primary
+                                                    ruleCorrection != null -> androidx.compose.ui.graphics.Color(0xFFE65100)
+                                                    else -> MaterialTheme.colorScheme.error
+                                                },
                                                 fontWeight = FontWeight.Bold
                                             )
                                             Text(
@@ -682,6 +725,7 @@ fun ReceiptInputScreen(
                                                 fontSize = 12.sp,
                                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                                             )
+                                        }
                                         }
 
                                         // 内訳（各伝票）
@@ -704,6 +748,7 @@ fun ReceiptInputScreen(
                             validationResult.totalBreakdown?.let { total ->
                                 Divider(modifier = Modifier.padding(vertical = 4.dp))
                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    val totalRuleCorrection = tryStripRuleDigit(total.enteredTotal, total.calculatedTotal)
                                     // 合計と入力値
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -719,6 +764,7 @@ fun ReceiptInputScreen(
                                             text = "入力値：${"%,d".format(total.enteredTotal)}",
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
+                                            color = if (totalRuleCorrection != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                                         )
                                     }
@@ -732,12 +778,17 @@ fun ReceiptInputScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = if (total.isValid) "　一致" else "　不一致",
+                                            text = when {
+                                                total.isValid -> "　一致"
+                                                totalRuleCorrection != null -> "　罫線補正で一致"
+                                                else -> "　不一致"
+                                            },
                                             fontSize = 12.sp,
-                                            color = if (total.isValid)
-                                                MaterialTheme.colorScheme.primary
-                                            else
-                                                MaterialTheme.colorScheme.error,
+                                            color = when {
+                                                total.isValid -> MaterialTheme.colorScheme.primary
+                                                totalRuleCorrection != null -> androidx.compose.ui.graphics.Color(0xFFE65100)
+                                                else -> MaterialTheme.colorScheme.error
+                                            },
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
@@ -806,6 +857,12 @@ fun ReceiptInputScreen(
                                     .map { it.productName }
                                 if (invalidNames.isNotEmpty()) {
                                     halfWidthOddRows = invalidNames
+                                    return@Button
+                                }
+                                val hasUnclassified = allSheetsData.values.flatten()
+                                    .any { !it.isSubtotal && !it.isTotalRow && it.amount != 0 && it.category == "未分類" }
+                                if (hasUnclassified) {
+                                    showUnclassifiedBlockDialog = true
                                     return@Button
                                 }
                                 scope.launch {
@@ -1564,6 +1621,23 @@ data class SheetAmount(
  * 全伝票の小計・合計を検証（内訳付き）
  * メモリ上のデータは既にカテゴリが設定されているので、直接使用
  */
+/**
+ * 入力値に罫線誤認識の '1' が1桁混入している場合に補正値を返す。
+ * 全桁を左から順に検索し、'1' を除去した結果が calculated と一致すれば返す。
+ * 一致しない場合は null を返す。
+ */
+private fun tryStripRuleDigit(entered: Int, calculated: Int): Int? {
+    if (entered == calculated) return null
+    val s = entered.toString()
+    for (i in s.indices) {
+        if (s[i] == '1') {
+            val v = (s.substring(0, i) + s.substring(i + 1)).toIntOrNull()
+            if (v == calculated) return v
+        }
+    }
+    return null
+}
+
 private fun validateAllSheetsData(allSheetsData: Map<Int, List<ReceiptRowData>>): ValidationResult {
     if (allSheetsData.isEmpty()) {
         return ValidationResult(
@@ -1608,7 +1682,7 @@ private fun validateAllSheetsData(allSheetsData: Map<Int, List<ReceiptRowData>>)
             } else if (row.amount != 0) {
                 // 通常行：カテゴリに加算（メモリ上のcategoryフィールドを使用）
                 val category = row.category
-                if (category.isNotEmpty() && category != "未定" && category != "未分類" && category != "") {
+                if (category.isNotEmpty() && category != "未定" && category != "") {
                     sheetCategoryTotals[category] =
                         (sheetCategoryTotals[category] ?: 0) + row.amount
                 }
@@ -2016,7 +2090,7 @@ private fun convertParsedRowsToRowData(
         val finalAmount = row.amount ?: 0
 
         // 小計行判定: ParsedRow.isSubtotal を優先、フォールバックとして日付なし+金額ありを使用
-        val isSubtotalRow = row.isSubtotal || (digits.length < 4 && finalAmount > 0)
+        val isSubtotalRow = row.isSubtotal
 
         // 同カテゴリの小計が既に追加済みなら重複を記録してスキップ
         if (isSubtotalRow && !row.category.isNullOrBlank()) {

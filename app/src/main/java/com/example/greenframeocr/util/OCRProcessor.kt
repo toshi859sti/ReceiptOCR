@@ -154,11 +154,19 @@ object OCRProcessor {
         // 6-7. 行処理 + Y座標フィルタリング
         t = System.currentTimeMillis()
         val rowYCoordinates = mutableListOf<Int>()
+        var lastDateInGroup: String? = null
         val receiptRows = rows.mapIndexed { index, rowBoxes ->
             val avgY    = rowBoxes.map { it.centerY }.average().toInt()
             rowYCoordinates.add(avgY)
             val rowType = UnderlyingBaseProcessor.detectRowType(rowBoxes)
-            val row     = UnderlyingBaseProcessor.processRow(rowBoxes, rowType)
+            val row     = UnderlyingBaseProcessor.processRow(rowBoxes, rowType, lastDateInGroup)
+            when (row.rowType) {
+                UnderlyingBaseProcessor.RowType.NORMAL ->
+                    if (row.date != null) lastDateInGroup = row.date
+                UnderlyingBaseProcessor.RowType.SUBTOTAL ->
+                    lastDateInGroup = null  // 小計をまたいだら日付順をリセット
+                else -> Unit
+            }
             Log.d(TAG, "[UNDERLAY] Row $index (Y=$avgY) type=$rowType: ${row.rawText}")
             row
         }

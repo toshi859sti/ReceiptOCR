@@ -159,20 +159,37 @@ canonicalKey による既存重複データの整理が必要か確認する（�
   - `hasSubtotalMarker`：ITEM列に `*` または `＊` が必須（`※` はフッター用なので除外）
   - 診断ログ追加：`adb logcat -s UnderlyingBaseProcessor:D | grep SubtotalCheck` で各条件の評価値を確認可能
 
+### 今回完了（追加: 2026-05-06 OCR精度・検証UI改善）
+- 未分類行の集計・登録ブロック
+  - 一枚目に小計がない場合を想定し、未分類行を「⚠ 未分類（小計なし）」として検証カードに赤表示
+  - 未分類行（金額あり）が残っていると決定ボタンをブロック（ダイアログ表示）
+- 小計誤判定の根本修正
+  - `convertParsedRowsToRowData` のフォールバック条件（日付4桁未満＋金額あり→小計）を削除
+  - `hasSubtotalMarker` をITEM列限定から全列検索に変更（＊がDATE列寄りBoxに分離する場合に対応）
+  - `hasCategorySum` を必須条件から除外（分類計列が読まれない場合でも＊＋キーワードで判定）
+- 月合計行の分類計列に stripRulePrefix/stripRuleSuffix/removeThousandsSeparatorMisread を適用（未対策だった）
+- 取引日列専用の正規化 `normalizeDateDigits` を実装
+  - YY|MM|DD 内部区切り文字（|/I/l/- など）をセパレータとして分割処理
+  - MM(01-12)・DD(01-31) 範囲外の候補を除外
+  - 複数の有効候補がある場合は prevDate 以上で最小を選択（小計ごとに日付順リセット）
+  - OCRProcessor で小計をまたいだら lastDateInGroup をリセット
+- 検証カードの罫線補正表示
+  - `tryStripRuleDigit`：入力値の任意桁から '1' を1個除去した結果が計算値と一致するか検査
+  - 一致した場合「罫線補正で一致」（オレンジ）＋入力値を赤表示、小計・合計の両方に適用
+
 ### 未完了・中断した理由
-- 「南島原市廃プラ処理袋」の小計誤分類が修正後も再発するか未確認（実機テスト中断）
-- Motorola での枠検出安定性は引き続き要確認
+- 実機テストで今回修正の動作確認は次回セッションで実施
 
 ### 次回セッションで最初にやること
-「南島原市廃プラ処理袋」を含む伝票を撮影し小計誤分類が解消されたか確認。
-再発した場合：`adb logcat -s UnderlyingBaseProcessor:D | grep SubtotalCheck` を実行してどの条件が通過しているか特定する。
+実機テスト：小計判定・取引日・罫線補正表示の動作を伝票撮影で確認する。
 
 ### 新たに発覚した問題・制約
-- OCR が同カテゴリの小計を2回検出することがある（一般購買等）→ 今回の重複検出ダイアログで対応
+- OCR が同カテゴリの小計を2回検出することがある（一般購買等）→ 重複検出ダイアログで対応済み
 - 複雑な漢字（雲・灌など）はsharpness≥1000でも完全な認識は難しい。機種依存が大きい → 学習補正で対応
 - 商品名列の前処理（CLAHE・UnsharpMask）は現状では改善よりも悪化の傾向 → グレースケールのみで運用
 - 日付と商品名が同一テキストボックスで読まれる場合（例：「80114灌水チューブ」）は取引日が空欄になる
   → 商品名側は step8.5 の列特化OCR で正しく取得されるため実用上は許容範囲
 - **Motorola(ZY32MD4V57)固有**: カメラの色再現がHSV緑範囲に誤検知しやすく、背景の偽緑ピクセルが
-  leftCluster を引き寄せてTLがx=0付近にずれる。fitVOuter のスキャン範囲制限も有効な対策候補
-- 数値列（金額・数量）の罫線誤認識パターン3種：先頭（stripRulePrefix）・3桁区切り（removeThousandsSeparatorMisread）・末尾（stripRuleSuffix）の順で処理
+  leftCluster を引き寄せてTLがx=0付近にずれる
+- 数値列（金額・数量）の罫線誤認識：先頭（stripRulePrefix）・3桁区切り（removeThousandsSeparatorMisread）・末尾（stripRuleSuffix）の順で処理
+- 小計の分類計列金額が ML Kit に読まれない・列境界ズレで hasCategorySum=false になることがある → 必須条件から除外済み

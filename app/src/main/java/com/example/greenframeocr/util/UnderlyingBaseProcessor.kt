@@ -242,13 +242,16 @@ object UnderlyingBaseProcessor {
             normalizeToDigits(it.text).isNotEmpty()
         }
         // 小計行は伝票上で必ず * または ＊ が印字される（※はフッター用で小計マーカーではない）
+        // ＊ は ITEM列左端付近に印字されるため、ML Kit が DATE列寄りの別Boxに分離する場合がある。
+        // 小計行以外に ＊ が現れることはないため、列を限定せず全Boxから検索する。
         val hasSubtotalMarker = rowBoxes.any {
-            detectColumn(it.centerX) == ColumnType.ITEM &&
-            (it.text.contains('*') || it.text.contains('＊'))
+            it.text.contains('*') || it.text.contains('＊')
         }
         val matchedKeyword = subtotalKeywords.firstOrNull { itemText.contains(it) }
         Log.d(TAG, "  SubtotalCheck Y=$rowY: hasDate=$hasDate hasCategorySum=$hasCategorySum hasIndividualAmount=$hasIndividualAmount hasMarker=$hasSubtotalMarker keyword=$matchedKeyword itemText='$itemText'")
-        if (!hasDate && hasCategorySum && !hasIndividualAmount && hasSubtotalMarker && matchedKeyword != null && rowY in SUBTOTAL_Y_RANGE) {
+        // hasCategorySum は必須条件から除外：分類計列の金額が OCR に読まれない場合でも
+        // ＊マーカー＋キーワード＋日付なし＋個別金額なし の組み合わせで十分に判定できる
+        if (!hasDate && !hasIndividualAmount && hasSubtotalMarker && matchedKeyword != null && rowY in SUBTOTAL_Y_RANGE) {
             Log.d(TAG, "  RowType: SUBTOTAL (Y=$rowY, text='$rowText')")
             return RowType.SUBTOTAL
         }
@@ -332,17 +335,17 @@ object UnderlyingBaseProcessor {
     /**
      * 1行のテキストボックスから ReceiptRow を生成
      */
-    fun processRow(rowBoxes: List<TextBox>, rowType: RowType): ReceiptRow {
+    fun processRow(rowBoxes: List<TextBox>, rowType: RowType, prevDate: String? = null): ReceiptRow {
         val rawText = rowBoxes.joinToString(" ") { it.text }
         return when (rowType) {
             RowType.SUBTOTAL      -> processSubtotalRow(rowBoxes, rawText)
             RowType.MONTHLY_TOTAL -> processMonthlyTotalRow(rowBoxes, rawText)
             RowType.EMPTY         -> ReceiptRow(rowType, null, null, null, null, null, rawText)
-            RowType.NORMAL        -> processNormalRow(rowBoxes, rawText)
+            RowType.NORMAL        -> processNormalRow(rowBoxes, rawText, prevDate)
         }
     }
 
-    private fun processNormalRow(rowBoxes: List<TextBox>, rawText: String): ReceiptRow {
+    private fun processNormalRow(rowBoxes: List<TextBox>, rawText: String, prevDate: String? = null): ReceiptRow {
         var date: String? = null
         var quantity: String? = null
         var amount: Int? = null
@@ -356,7 +359,7 @@ object UnderlyingBaseProcessor {
 
             when (finalCol) {
                 ColumnType.DATE -> {
-                    val normalized = normalizeToDigits(box.text).take(6)
+                    val normalized = normalizeDateDigits(box.text, prevDate)
                     if (normalized.length == 6) {
                         date = normalized
                         Log.d(TAG, "  DATE: $normalized (raw: ${box.text})")
@@ -424,7 +427,8 @@ object UnderlyingBaseProcessor {
         var categorySum: Int? = null
         for (box in rowBoxes) {
             if (detectColumn(box.centerX) == ColumnType.CATEGORY_SUM) {
-                categorySum = box.text.toIntOrNull()
+                val norm = removeThousandsSeparatorMisread(box.text, stripRuleSuffix(box.text, stripRulePrefix(box.text, normalizeToDigits(box.text))))
+                categorySum = norm.toIntOrNull()
                 Log.d(TAG, "  MONTHLY_TOTAL AMOUNT: $categorySum")
             }
         }
@@ -547,6 +551,64 @@ object UnderlyingBaseProcessor {
             normalized.removeSuffix("1")
         else
             normalized
+    }
+
+    /**
+     * 取引日列専用の正規化。YY|MM|DD 形式の内部区切り文字を除去し6桁を返す。
+     * - Step1: 区切り文字（|/I/l/- など）で分割して各セグメントを正規化
+     * - Step2: 区切り文字が数字に化けた場合、位置ベースで余分な '1' を除去
+     * - MM(01-12)・DD(01-31) の範囲外は候補から除外
+     * - 複数の有効候補がある場合は prevDate 以上で最小のものを選択
+     */
+    private fun normalizeDateDigits(raw: String, prevDate: String? = null): String {
+        val candidates = mutableListOf<String>()
+
+        // Step1: 区切り文字で分割
+        val parts = raw.split(Regex("[|｜/\\-IilLl: ]+"))
+            .map { seg -> seg.map { normalizeDigit(it) }.filter { it.isDigit() }.joinToString("") }
+            .filter { it.isNotEmpty() }
+        if (parts.size >= 3) {
+            val c = parts.take(3).joinToString("") { it.take(2) }
+            if (isValidDate(c)) candidates.add(c)
+        }
+
+        // Step2: 正規化後の桁数で余分な '1' を位置ベースで除去
+        val norm = normalizeToDigits(raw)
+        when (norm.length) {
+            6 -> if (isValidDate(norm)) candidates.add(norm)
+            7 -> {
+                if (norm[2] == '1') norm.removeRange(2, 3).also { if (isValidDate(it)) candidates.add(it) }
+                if (norm[4] == '1') norm.removeRange(4, 5).also { if (isValidDate(it)) candidates.add(it) }
+            }
+            8 -> if (norm[2] == '1' && norm[5] == '1') {
+                val c = norm.removeRange(5, 6).removeRange(2, 3)
+                if (isValidDate(c)) candidates.add(c)
+            }
+            else -> norm.take(6).also { if (it.length == 6 && isValidDate(it)) candidates.add(it) }
+        }
+
+        if (candidates.isEmpty()) return ""
+        if (candidates.size == 1) return candidates[0]
+
+        // 重複除去
+        val unique = candidates.distinct()
+        if (unique.size == 1) return unique[0]
+
+        // prevDate 以上で最小の候補を選ぶ（小計内の日付順）
+        if (prevDate != null && prevDate.length == 6) {
+            val prevInt = prevDate.toIntOrNull() ?: 0
+            val forward = unique.filter { (it.toIntOrNull() ?: 0) >= prevInt }
+            if (forward.isNotEmpty()) return forward.minByOrNull { it.toInt() }!!
+        }
+        return unique[0]
+    }
+
+    /** MM=01-12, DD=01-31 の範囲チェック */
+    private fun isValidDate(s: String): Boolean {
+        if (s.length != 6) return false
+        val mm = s.substring(2, 4).toIntOrNull() ?: return false
+        val dd = s.substring(4, 6).toIntOrNull() ?: return false
+        return mm in 1..12 && dd in 1..31
     }
 
     fun normalizeToDigits(text: String): String =
