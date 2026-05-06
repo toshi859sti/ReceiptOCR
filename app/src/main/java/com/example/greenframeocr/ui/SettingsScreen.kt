@@ -5,20 +5,29 @@ import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.greenframeocr.data.AppDarkMode
 import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.data.AppThemePreset
 import com.example.greenframeocr.data.CameraResolution
 import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.util.withComputedKey
@@ -40,7 +49,8 @@ fun SettingsScreen(
     appPreferences: AppPreferences,
     onBack: () -> Unit,
     onNavigateToOcrLearningStatus: () -> Unit = {},
-    onNavigateToAccountSettings: () -> Unit = {}
+    onNavigateToAccountSettings: () -> Unit = {},
+    onThemeChanged: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -51,6 +61,8 @@ fun SettingsScreen(
     var minSharpness by remember { mutableIntStateOf(appPreferences.minSharpness) }
     var depositHideAmount by remember { mutableStateOf(appPreferences.depositHideAmount) }
     var showCameraInfo by remember { mutableStateOf(false) }
+    var selectedTheme by remember { mutableStateOf(appPreferences.themePreset) }
+    var selectedDarkMode by remember { mutableStateOf(appPreferences.darkMode) }
 
     // メッセージ状態
     var allExportMessage by remember { mutableStateOf<String?>(null) }
@@ -194,6 +206,51 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            // ========== テーマ ==========
+            SettingSection(title = "🎨 テーマ")
+
+            ThemePresetPicker(
+                selected = selectedTheme,
+                onSelect = { preset ->
+                    selectedTheme = preset
+                    appPreferences.themePreset = preset
+                    onThemeChanged()
+                }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = "ダークモード",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                AppDarkMode.entries.forEach { mode ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        RadioButton(
+                            selected = selectedDarkMode == mode,
+                            onClick = {
+                                selectedDarkMode = mode
+                                appPreferences.darkMode = mode
+                                onThemeChanged()
+                            }
+                        )
+                        Text(text = mode.displayName, fontSize = 12.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // ========== 購買部門 ==========
             SettingSection(title = "🌾 購買部門")
 
@@ -474,6 +531,82 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+}
+
+// テーマごとのライト・ダーク代表色（primary）
+private val presetLightColors = mapOf(
+    AppThemePreset.GREEN  to Color(0xFF2E7D52),
+    AppThemePreset.PURPLE to Color(0xFF6650A4),
+    AppThemePreset.BLUE   to Color(0xFF0061A4),
+    AppThemePreset.TERRA  to Color(0xFF9A4335),
+    AppThemePreset.MONO   to Color(0xFF424242),
+)
+private val presetDarkColors = mapOf(
+    AppThemePreset.GREEN  to Color(0xFF9DD5AC),
+    AppThemePreset.PURPLE to Color(0xFFD0BCFF),
+    AppThemePreset.BLUE   to Color(0xFF9ECAFF),
+    AppThemePreset.TERRA  to Color(0xFFFFB4A5),
+    AppThemePreset.MONO   to Color(0xFFE0E0E0),
+)
+
+/**
+ * テーマプリセット選択ピッカー
+ */
+@Composable
+private fun ThemePresetPicker(
+    selected: AppThemePreset,
+    onSelect: (AppThemePreset) -> Unit
+) {
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        AppThemePreset.entries.forEach { preset ->
+            val swatch = if (dark) presetDarkColors[preset]!! else presetLightColors[preset]!!
+            val isSelected = preset == selected
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onSelect(preset) }
+                    .padding(vertical = 4.dp)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(swatch)
+                        .then(
+                            if (isSelected) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                            else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        )
+                ) {
+                    if (isSelected) {
+                        val lum = 0.299f * swatch.red + 0.587f * swatch.green + 0.114f * swatch.blue
+                    val iconTint = if (lum < 0.55f) Color.White else Color.Black
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = iconTint,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = preset.displayName,
+                    fontSize = 10.sp,
+                    color = if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 2,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+        }
     }
 }
 

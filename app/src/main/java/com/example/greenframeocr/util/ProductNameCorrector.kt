@@ -143,7 +143,7 @@ object ProductNameCorrector {
                             variantText = ocrName,
                             normalizedText = ocrName,
                             hitCount = 1,
-                            source = com.example.greenframeocr.data.VariantSource.AUTO.name
+                            source = com.example.greenframeocr.data.VariantSource.SYSTEM.name
                         )
                     )
                     Log.d(TAG, "Registered new OCR variant: $ocrName")

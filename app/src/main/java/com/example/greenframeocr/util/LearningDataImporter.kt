@@ -80,7 +80,7 @@ object LearningDataImporter {
                     confidenceLevel = ev.confidenceLevel,
                     hitCount = ev.hitCount,
                     manualCorrectCount = ev.manualCorrectCount,
-                    source = VariantSource.IMPORT.name,
+                    source = ev.source.ifBlank { VariantSource.SYSTEM.name },
                     firstSeenAt = now,
                     lastSeenAt = now
                 )

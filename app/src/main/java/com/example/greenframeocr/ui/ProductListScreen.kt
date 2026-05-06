@@ -459,7 +459,7 @@ fun ProductListScreen(
                                     variantText = src.canonicalName,
                                     normalizedText = src.canonicalName,
                                     confidenceLevel = ConfidenceLevel.LOCKED.name,
-                                    source = VariantSource.USER.name,
+                                    source = VariantSource.CAPTURE.name,
                                     firstSeenAt = now,
                                     lastSeenAt = now
                                 )

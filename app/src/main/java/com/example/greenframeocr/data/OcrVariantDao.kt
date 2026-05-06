@@ -90,7 +90,6 @@ interface OcrVariantDao {
         val now = System.currentTimeMillis()
 
         if (existing != null) {
-            // 既存パターンの更新
             val newHitCount = existing.hitCount + 1
             val newTotalScore = existing.totalScore + finalScore
             val newAvgScore = newTotalScore / newHitCount
@@ -115,25 +114,18 @@ interface OcrVariantDao {
                 uniqueDays = newUniqueDays
             )
 
-            // 昇格チェック（V3: autoFailCount考慮）
             val finalVariant = when {
-                updated.canPromoteToLocked() -> updated.copy(
-                    confidenceLevel = ConfidenceLevel.LOCKED.name
-                )
-                updated.canPromoteToConfirmed() -> updated.copy(
-                    confidenceLevel = ConfidenceLevel.CONFIRMED.name
-                )
+                updated.canPromoteToLocked()    -> updated.copy(confidenceLevel = ConfidenceLevel.LOCKED.name)
+                updated.canPromoteToConfirmed() -> updated.copy(confidenceLevel = ConfidenceLevel.CONFIRMED.name)
                 else -> updated
             }
-
             update(finalVariant)
         } else {
-            // 新規パターンの登録
-            val newVariant = OcrVariant(
+            insert(OcrVariant(
                 productId = productId,
                 variantText = variantText,
                 normalizedText = normalizedText,
-                confidenceLevel = ConfidenceLevel.AUTO.name,
+                confidenceLevel = ConfidenceLevel.TENTATIVE.name,
                 hitCount = 1,
                 highScoreHits = if (finalScore >= OcrVariant.HIGH_SCORE_THRESHOLD) 1 else 0,
                 avgFinalScore = finalScore,
@@ -145,14 +137,9 @@ interface OcrVariantDao {
                 source = source.name,
                 isDisabled = false,
                 disabledReason = null
-            )
-            insert(newVariant)
+            ))
         }
     }
-
-    // ============================================================
-    // V3: 手動修正の学習登録
-    // ============================================================
 
     /**
      * 手動修正を学習登録（V3）
@@ -171,13 +158,10 @@ interface OcrVariantDao {
         val now = System.currentTimeMillis()
 
         if (existing != null) {
-            // 同一バッチで既にカウント済みならスキップ
-            if (existing.lastManualCommitBatchId == commitBatchId) {
-                return
-            }
+            if (existing.lastManualCommitBatchId == commitBatchId) return
 
             val newManualCount = existing.manualCorrectCount + 1
-            val newConfidence = if (newManualCount >= 2 && existing.confidenceLevel == ConfidenceLevel.AUTO.name) {
+            val newConfidence = if (newManualCount >= 2 && existing.confidenceLevel == ConfidenceLevel.TENTATIVE.name) {
                 ConfidenceLevel.CONFIRMED.name
             } else {
                 existing.confidenceLevel
@@ -186,19 +170,18 @@ interface OcrVariantDao {
             update(existing.copy(
                 manualCorrectCount = newManualCount,
                 confidenceLevel = newConfidence,
-                source = VariantSource.USER.name,
+                source = VariantSource.CAPTURE.name,
                 lastManualCommitBatchId = commitBatchId,
                 lastSeenAt = now,
                 hitCount = existing.hitCount + 1
             ))
         } else {
-            // 新規登録（まずAUTOとして、source=USER）
             insert(OcrVariant(
                 productId = correctProductId,
                 variantText = ocrText,
                 normalizedText = normalizedText,
-                confidenceLevel = ConfidenceLevel.AUTO.name,
-                source = VariantSource.USER.name,
+                confidenceLevel = ConfidenceLevel.TENTATIVE.name,
+                source = VariantSource.CAPTURE.name,
                 manualCorrectCount = 1,
                 hitCount = 1,
                 lastManualCommitBatchId = commitBatchId,
@@ -210,10 +193,24 @@ interface OcrVariantDao {
     }
 
     /**
+     * 学習画面からPRESET固定登録（source=PRESET, confidenceLevel=LOCKED）
+     */
+    @Transaction
+    suspend fun promoteToPreset(variantId: Long) {
+        val variant = getById(variantId) ?: return
+        update(variant.copy(
+            source = VariantSource.PRESET.name,
+            confidenceLevel = ConfidenceLevel.LOCKED.name,
+            isDisabled = false,
+            disabledReason = null
+        ))
+    }
+
+    /**
      * AUTO誤爆時の処理（V3）
      *
-     * - AUTO: 即座に無効化
-     * - CONFIRMED: AUTO降格
+     * - TENTATIVE: 即座に無効化
+     * - CONFIRMED: TENTATIVE降格
      * - LOCKED: 失敗カウントのみ記録
      */
     @Transaction
@@ -222,7 +219,7 @@ interface OcrVariantDao {
         val newFailCount = variant.autoFailCount + 1
 
         when (variant.confidenceLevel) {
-            ConfidenceLevel.AUTO.name -> {
+            ConfidenceLevel.TENTATIVE.name -> {
                 update(variant.copy(
                     autoFailCount = newFailCount,
                     isDisabled = true,
@@ -230,17 +227,13 @@ interface OcrVariantDao {
                 ))
             }
             ConfidenceLevel.CONFIRMED.name -> {
-                // CONFIRMEDでも1回の失敗でAUTO降格
                 update(variant.copy(
                     autoFailCount = newFailCount,
-                    confidenceLevel = ConfidenceLevel.AUTO.name
+                    confidenceLevel = ConfidenceLevel.TENTATIVE.name
                 ))
             }
             ConfidenceLevel.LOCKED.name -> {
-                // LOCKEDは失敗カウントのみ記録（降格しない）
-                update(variant.copy(
-                    autoFailCount = newFailCount
-                ))
+                update(variant.copy(autoFailCount = newFailCount))
             }
         }
     }
@@ -252,10 +245,9 @@ interface OcrVariantDao {
     /**
      * LOCKED または 手動修正由来を検索（無条件適用: Layer 1）
      *
-     * 手動修正由来（source=USER）は1回の訂正で即座に適用対象とする
-     * - LOCKED: 最優先
-     * - CONFIRMED + USER: 2番目
-     * - AUTO + USER: 3番目（1回の手動訂正でも適用）
+     * - LOCKED / PRESET: 最優先
+     * - CONFIRMED + CAPTURE: 2番目
+     * - TENTATIVE + CAPTURE: 3番目（1回の手動訂正でも適用）
      */
     @Query("""
         SELECT * FROM ocr_variants
@@ -263,7 +255,7 @@ interface OcrVariantDao {
         AND isDisabled = 0
         AND (
             confidenceLevel = 'LOCKED'
-            OR source = 'USER'
+            OR source = 'CAPTURE'
         )
         ORDER BY
             CASE confidenceLevel WHEN 'LOCKED' THEN 0 WHEN 'CONFIRMED' THEN 1 ELSE 2 END,
@@ -279,7 +271,8 @@ interface OcrVariantDao {
         SELECT * FROM ocr_variants
         WHERE normalizedText = :normalizedText
         AND confidenceLevel = 'CONFIRMED'
-        AND source != 'USER'
+        AND source != 'CAPTURE'
+        AND source != 'PRESET'
         AND isDisabled = 0
         ORDER BY avgFinalScore DESC, hitCount DESC
     """)
@@ -295,7 +288,7 @@ interface OcrVariantDao {
         AND isDisabled = 0
         AND (
             confidenceLevel = 'LOCKED'
-            OR source = 'USER'
+            OR source = 'CAPTURE'
         )
         ORDER BY
             CASE confidenceLevel WHEN 'LOCKED' THEN 0 WHEN 'CONFIRMED' THEN 1 ELSE 2 END,
@@ -329,11 +322,11 @@ interface OcrVariantDao {
     suspend fun disable(id: Long, reason: String)
 
     /**
-     * 自動無効化対象を取得（90日以上未使用のAUTO）
+     * 自動無効化対象を取得（90日以上未使用のTENTATIVE）
      */
     @Query("""
         SELECT * FROM ocr_variants
-        WHERE confidenceLevel = 'AUTO'
+        WHERE confidenceLevel = 'TENTATIVE'
         AND isDisabled = 0
         AND lastSeenAt < :thresholdTimestamp
     """)
@@ -342,19 +335,16 @@ interface OcrVariantDao {
     ): List<OcrVariant>
 
     /**
-     * 昇格候補を取得（V3: 日数条件廃止、失敗カウント考慮）
-     *
-     * 自動学習由来: hitCount >= 3 AND avgFinalScore >= 0.90 AND highScoreHits >= 2 AND autoFailCount == 0
-     * 手動修正由来: manualCorrectCount >= 2
+     * 昇格候補を取得（V3）
      */
     @Query("""
         SELECT * FROM ocr_variants
-        WHERE confidenceLevel = 'AUTO'
+        WHERE confidenceLevel = 'TENTATIVE'
         AND isDisabled = 0
         AND autoFailCount = 0
         AND (
-            (source != 'USER' AND hitCount >= 3 AND avgFinalScore >= 0.90 AND highScoreHits >= 2)
-            OR (source = 'USER' AND manualCorrectCount >= 2)
+            (source != 'CAPTURE' AND hitCount >= 3 AND avgFinalScore >= 0.90 AND highScoreHits >= 2)
+            OR (source = 'CAPTURE' AND manualCorrectCount >= 2)
         )
         ORDER BY avgFinalScore DESC
     """)
@@ -365,8 +355,8 @@ interface OcrVariantDao {
      */
     @Query("""
         SELECT * FROM ocr_variants
-        WHERE confidenceLevel = 'AUTO'
-        AND source != 'USER'
+        WHERE confidenceLevel = 'TENTATIVE'
+        AND source != 'CAPTURE'
         AND isDisabled = 0
         AND autoFailCount = 0
         AND (hitCount >= 2 OR avgFinalScore >= 0.85)
@@ -380,8 +370,8 @@ interface OcrVariantDao {
      */
     @Query("""
         SELECT * FROM ocr_variants
-        WHERE confidenceLevel = 'AUTO'
-        AND source = 'USER'
+        WHERE confidenceLevel = 'TENTATIVE'
+        AND source = 'CAPTURE'
         AND isDisabled = 0
         AND manualCorrectCount = 1
         ORDER BY lastSeenAt DESC
@@ -440,16 +430,16 @@ interface OcrVariantDao {
     suspend fun getMostUsedPatterns(limit: Int = 20): List<OcrVariant>
 
     /**
-     * 昇格間近のパターン（V3: autoFailCount考慮）
+     * 昇格間近のパターン（V3）
      */
     @Query("""
         SELECT * FROM ocr_variants
-        WHERE confidenceLevel = 'AUTO'
+        WHERE confidenceLevel = 'TENTATIVE'
         AND isDisabled = 0
         AND autoFailCount = 0
         AND (hitCount >= 2 OR manualCorrectCount >= 1)
         ORDER BY
-            CASE WHEN source = 'USER' THEN 0 ELSE 1 END,
+            CASE WHEN source = 'CAPTURE' THEN 0 ELSE 1 END,
             avgFinalScore DESC,
             hitCount DESC
         LIMIT :limit
@@ -463,7 +453,7 @@ interface OcrVariantDao {
     suspend fun getAll(): List<OcrVariant>
 
     /**
-     * 全誤認識パターンを削除（初期化用）
+     * 全誤認識パターンを削除
      */
     @Query("DELETE FROM ocr_variants")
     suspend fun deleteAll()
@@ -486,32 +476,20 @@ interface OcrVariantDao {
     @Query("SELECT COUNT(*) FROM ocr_variants WHERE productId = :productId")
     suspend fun countByProductId(productId: Long): Int
 
-    // ==================================
-    // 旧API互換（既存コードとの互換性維持）
-    // ==================================
-
-    /**
-     * @deprecated Use registerLearning instead
-     */
     @Query("""
         UPDATE ocr_variants
         SET hitCount = hitCount + 1, lastSeenAt = :timestamp
         WHERE id = :id
     """)
+    @Deprecated("Use registerLearning instead")
     suspend fun incrementOccurrence(id: Long, timestamp: Long = System.currentTimeMillis())
 }
 
-/**
- * 信頼度レベル別件数
- */
 data class ConfidenceLevelCount(
     val confidenceLevel: String,
     val count: Int
 )
 
-/**
- * ソース別件数
- */
 data class SourceCount(
     val source: String,
     val count: Int

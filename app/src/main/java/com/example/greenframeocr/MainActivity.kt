@@ -11,7 +11,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.example.greenframeocr.data.AppDarkMode
+import com.example.greenframeocr.data.AppThemePreset
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -29,6 +33,10 @@ class MainActivity : ComponentActivity() {
 
     // 共有されたCSVのURI
     private val sharedCsvUri = mutableStateOf<Uri?>(null)
+
+    // テーマ設定（Compose から観測できるよう mutableStateOf で保持）
+    private var currentThemePreset by mutableStateOf(AppThemePreset.GREEN)
+    private var currentDarkMode by mutableStateOf(AppDarkMode.SYSTEM)
 
     // カメラ権限リクエストランチャー
     private val requestPermissionLauncher = registerForActivityResult(
@@ -64,6 +72,8 @@ class MainActivity : ComponentActivity() {
 
         // 設定管理の初期化
         appPreferences = AppPreferences(this)
+        currentThemePreset = appPreferences.themePreset
+        currentDarkMode = appPreferences.darkMode
 
         // データベースの初期化
         val database = ReceiptDatabase.getDatabase(this)
@@ -82,7 +92,10 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
 
         setContent {
-            ReceiptOCRTheme {
+            ReceiptOCRTheme(
+                themePreset = currentThemePreset,
+                darkMode = currentDarkMode
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -102,7 +115,11 @@ class MainActivity : ComponentActivity() {
                         dao = dao,
                         database = database,
                         startDestination = startDestination,
-                        sharedCsvUri = sharedCsvUri.value
+                        sharedCsvUri = sharedCsvUri.value,
+                        onThemeChanged = {
+                            currentThemePreset = appPreferences.themePreset
+                            currentDarkMode = appPreferences.darkMode
+                        }
                     )
                 }
             }

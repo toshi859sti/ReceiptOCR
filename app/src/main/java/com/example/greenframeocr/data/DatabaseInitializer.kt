@@ -228,7 +228,7 @@ object DatabaseInitializer {
                                 hitCount = count,
                                 firstSeenAt = timestamp,
                                 lastSeenAt = timestamp,
-                                source = VariantSource.IMPORT.name
+                                source = VariantSource.SYSTEM.name
                             )
                         )
                     }

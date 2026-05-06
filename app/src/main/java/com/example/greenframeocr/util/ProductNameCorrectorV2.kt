@@ -174,7 +174,7 @@ object ProductNameCorrectorV2 {
                             variantText = ocrParts.baseName,
                             normalizedText = ocrParts.baseName,
                             hitCount = 1,
-                            source = com.example.greenframeocr.data.VariantSource.AUTO.name
+                            source = com.example.greenframeocr.data.VariantSource.SYSTEM.name
                         )
                     )
                 }

@@ -40,6 +40,12 @@ class AppPreferences(context: Context) {
         // 預金部門設定
         private const val KEY_DEPOSIT_HIDE_AMOUNT = "deposit_hide_amount"
         private const val DEFAULT_DEPOSIT_HIDE_AMOUNT = false
+
+        // テーマ設定
+        private const val KEY_THEME_PRESET = "theme_preset"
+        private const val DEFAULT_THEME_PRESET = "GREEN"
+        private const val KEY_DARK_MODE = "dark_mode"
+        private const val DEFAULT_DARK_MODE = "SYSTEM"
     }
 
     // 年号設定
@@ -87,6 +93,20 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_DEPOSIT_HIDE_AMOUNT, DEFAULT_DEPOSIT_HIDE_AMOUNT)
         set(value) = prefs.edit().putBoolean(KEY_DEPOSIT_HIDE_AMOUNT, value).apply()
 
+    // テーマプリセット
+    var themePreset: AppThemePreset
+        get() = try {
+            AppThemePreset.valueOf(prefs.getString(KEY_THEME_PRESET, DEFAULT_THEME_PRESET) ?: DEFAULT_THEME_PRESET)
+        } catch (_: IllegalArgumentException) { AppThemePreset.GREEN }
+        set(value) = prefs.edit().putString(KEY_THEME_PRESET, value.name).apply()
+
+    // ダークモード
+    var darkMode: AppDarkMode
+        get() = try {
+            AppDarkMode.valueOf(prefs.getString(KEY_DARK_MODE, DEFAULT_DARK_MODE) ?: DEFAULT_DARK_MODE)
+        } catch (_: IllegalArgumentException) { AppDarkMode.SYSTEM }
+        set(value) = prefs.edit().putString(KEY_DARK_MODE, value.name).apply()
+
     /**
      * カメラ解像度を幅と高さのペアに変換
      * 例: "1920x1080" -> Pair(1920, 1080)
@@ -106,6 +126,26 @@ class AppPreferences(context: Context) {
     fun resetToDefaults() {
         prefs.edit().clear().apply()
     }
+}
+
+/**
+ * テーマプリセット
+ */
+enum class AppThemePreset(val displayName: String) {
+    GREEN("農業グリーン"),
+    PURPLE("パープル"),
+    BLUE("オーシャンブルー"),
+    TERRA("テラコッタ"),
+    MONO("モノクローム")
+}
+
+/**
+ * ダークモード設定
+ */
+enum class AppDarkMode(val displayName: String) {
+    SYSTEM("システムに従う"),
+    LIGHT("常にライト"),
+    DARK("常にダーク")
 }
 
 /**

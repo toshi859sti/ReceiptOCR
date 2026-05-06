@@ -86,7 +86,8 @@ fun ReceiptNavGraph(
     database: com.example.greenframeocr.data.ReceiptDatabase,
     startDestination: String = Screen.Menu.route,
     sharedCsvUri: Uri? = null,
-    onNavigateToDebugCapture: (() -> Unit)? = null
+    onNavigateToDebugCapture: (() -> Unit)? = null,
+    onThemeChanged: () -> Unit = {}
 ) {
     NavHost(
         navController = navController,
@@ -291,6 +292,7 @@ fun ReceiptNavGraph(
             SettingsScreen(
                 appPreferences = appPreferences,
                 onBack = { navController.popBackStack() },
+                onThemeChanged = onThemeChanged,
                 onNavigateToOcrLearningStatus = {
                     navController.navigate(Screen.OcrLearningStatus.route)
                 },

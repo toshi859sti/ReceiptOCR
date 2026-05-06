@@ -47,6 +47,16 @@
 
 ## 技術的負債
 
+- [ ] **OCR補正の失敗検知が未実装**（2026-05-06）
+  - `OcrVariantDao.onAutoFailure()` はDAOに定義済みだが、どこからも呼ばれていない
+  - 現状 `autoFailCount` は永遠に 0 のまま → 降格・無効化の仕組みが動いていない
+  - 本来の動作：自動補正が適用されたバリアントを記録しておき、
+    ユーザーが確定時に別の商品へ手動修正した場合に `onAutoFailure(variantId)` を呼ぶ
+  - 実装に必要なこと：
+    1. OCR補正時に「どのバリアントIDを適用したか」を行データに一時保持
+    2. `registerManualCorrection` 呼び出し時に、自動補正の結果と最終商品名を比較
+    3. 食い違いがあれば `onAutoFailure()` を呼ぶ
+
 - `ProductNameCorrector.kt` / `ProductNameCorrectorV2.kt`
   - 旧バージョン。現在は `ProductNameCorrectorV3` を使用
   - 参照コードとして残存しているが、削除可能か要確認

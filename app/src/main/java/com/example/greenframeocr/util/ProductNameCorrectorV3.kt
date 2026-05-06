@@ -469,9 +469,9 @@ object ProductNameCorrectorV3 {
      */
     private fun calculateVariantBonus(existingVariant: OcrVariant?): Double {
         return when (existingVariant?.confidenceLevel) {
-            ConfidenceLevel.LOCKED.name -> MAX_VARIANT_BONUS
+            ConfidenceLevel.LOCKED.name    -> MAX_VARIANT_BONUS
             ConfidenceLevel.CONFIRMED.name -> MAX_VARIANT_BONUS * 2 / 3  // 10
-            ConfidenceLevel.AUTO.name -> 0.0  // AUTOは補正に使わない
+            ConfidenceLevel.TENTATIVE.name -> 0.0  // TENTATIVEは補正に使わない
             else -> 0.0
         }
     }
@@ -632,7 +632,7 @@ object ProductNameCorrectorV3 {
                 normalizedText = normalizedText,
                 productId = productId,
                 finalScore = score / 100.0,  // 0-1スケールに変換
-                source = VariantSource.AUTO
+                source = VariantSource.SYSTEM
             )
             Log.d(TAG, "[LEARN] Registered: '$normalizedText' -> productId=$productId")
         } catch (e: Exception) {

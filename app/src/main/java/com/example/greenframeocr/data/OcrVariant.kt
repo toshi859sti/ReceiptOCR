@@ -8,32 +8,36 @@ import androidx.room.PrimaryKey
 /**
  * 信頼度レベル
  *
- * AUTO: 自動学習だが、まだ弱い
- * CONFIRMED: 人手 or 高確率で確認済み
- * LOCKED: 絶対に変えてはいけない
+ * TENTATIVE : 自動学習だが、まだ弱い
+ * CONFIRMED : 人手 or 高確率で確認済み
+ * LOCKED    : 絶対に変えてはいけない
  */
 enum class ConfidenceLevel {
-    AUTO,
+    TENTATIVE,
     CONFIRMED,
     LOCKED
 }
 
 /**
  * 登録ソース
+ *
+ * SYSTEM  : 自動学習（OCR補正パイプラインが自動登録）
+ * CAPTURE : 撮影時にユーザーが手動修正
+ * PRESET  : 学習画面でユーザーが固定登録（常にLOCKED）
  */
 enum class VariantSource {
-    AUTO,      // 自動学習
-    USER,      // ユーザー手動補正
-    IMPORT     // CSVインポート
+    SYSTEM,
+    CAPTURE,
+    PRESET
 }
 
 /**
  * 降格/無効化アクション（V3）
  */
 enum class DemotionAction {
-    NONE,           // 何もしない
-    DEMOTE_TO_AUTO, // CONFIRMEDからAUTOへ降格
-    DISABLE         // 無効化
+    NONE,
+    DEMOTE_TO_TENTATIVE,
+    DISABLE
 }
 
 /**
@@ -57,6 +61,7 @@ enum class DemotionAction {
  *
  * 変更履歴:
  * - 2026-01-18: 低頻度利用向けに全面再設計（V3）
+ * - 2026-05-07: enum リネーム（AUTO→TENTATIVE/SYSTEM, USER→CAPTURE, PRESET追加）
  */
 @Entity(
     tableName = "ocr_variants",
@@ -89,7 +94,7 @@ data class OcrVariant(
     val normalizedText: String = "",
 
     /** 信頼度レベル */
-    val confidenceLevel: String = ConfidenceLevel.AUTO.name,
+    val confidenceLevel: String = ConfidenceLevel.TENTATIVE.name,
 
     /** 累積ヒット数 */
     val hitCount: Int = 0,
@@ -116,7 +121,7 @@ data class OcrVariant(
     val lastSeenDate: Int = 0,
 
     /** 登録ソース */
-    val source: String = VariantSource.AUTO.name,
+    val source: String = VariantSource.SYSTEM.name,
 
     /** 無効化フラグ */
     val isDisabled: Boolean = false,
@@ -135,116 +140,76 @@ data class OcrVariant(
     /** 最後に手動修正されたバッチID（重複カウント防止用） */
     val lastManualCommitBatchId: String? = null
 ) {
-    // ============================================================
-    // V3: 時間減衰を廃止、失敗駆動の昇格/降格システム
-    // ============================================================
-
     /**
      * CONFIRMED昇格条件チェック（V3設計）
      *
-     * 自動学習由来（source = AUTO）:
+     * 自動学習由来（source = SYSTEM）:
      * - hitCount >= 3
      * - avgFinalScore >= 0.90
      * - highScoreHits >= 2
      * - autoFailCount == 0
      *
-     * 手動修正由来（source = USER）:
+     * 手動修正由来（source = CAPTURE）:
      * - manualCorrectCount >= 2（異なるバッチで2回以上）
      */
     fun canPromoteToConfirmed(): Boolean {
-        // 既にCONFIRMED以上なら昇格不要
-        if (confidenceLevel != ConfidenceLevel.AUTO.name) {
-            return false
-        }
-
-        // 失敗履歴があれば昇格不可
-        if (autoFailCount > 0) {
-            return false
-        }
+        if (confidenceLevel != ConfidenceLevel.TENTATIVE.name) return false
+        if (autoFailCount > 0) return false
 
         return when (source) {
-            VariantSource.USER.name -> {
-                // 手動修正由来: 異なるバッチで2回以上
-                manualCorrectCount >= 2
-            }
-            else -> {
-                // 自動学習由来: 厳格な条件
-                hitCount >= 3 &&
-                avgFinalScore >= 0.90 &&
-                highScoreHits >= 2
-            }
+            VariantSource.CAPTURE.name -> manualCorrectCount >= 2
+            else -> hitCount >= 3 && avgFinalScore >= 0.90 && highScoreHits >= 2
         }
     }
 
     /**
      * LOCKED昇格条件チェック（V3設計）
      *
-     * 条件:
      * - hitCount >= 10
      * - avgFinalScore >= 0.92
      * - autoFailCount == 0
      */
     fun canPromoteToLocked(): Boolean {
-        if (confidenceLevel != ConfidenceLevel.CONFIRMED.name) {
-            return false
-        }
-
-        return hitCount >= 10 &&
-               avgFinalScore >= 0.92 &&
-               autoFailCount == 0
+        if (confidenceLevel != ConfidenceLevel.CONFIRMED.name) return false
+        return hitCount >= 10 && avgFinalScore >= 0.92 && autoFailCount == 0
     }
 
     /**
      * 降格・無効化判定（V3設計）
-     *
-     * AUTO: autoFailCount >= 1 → 無効化
-     * CONFIRMED: autoFailCount >= 1 → AUTO降格
-     * LOCKED: 手動解除のみ（失敗カウントのみ記録）
      */
     fun shouldDemoteOrDisable(): DemotionAction {
-        if (autoFailCount == 0) {
-            return DemotionAction.NONE
-        }
+        if (autoFailCount == 0) return DemotionAction.NONE
 
         return when (confidenceLevel) {
-            ConfidenceLevel.AUTO.name -> DemotionAction.DISABLE
-            ConfidenceLevel.CONFIRMED.name -> DemotionAction.DEMOTE_TO_AUTO
-            ConfidenceLevel.LOCKED.name -> DemotionAction.NONE  // LOCKEDは手動解除のみ
+            ConfidenceLevel.TENTATIVE.name -> DemotionAction.DISABLE
+            ConfidenceLevel.CONFIRMED.name -> DemotionAction.DEMOTE_TO_TENTATIVE
+            ConfidenceLevel.LOCKED.name   -> DemotionAction.NONE
             else -> DemotionAction.NONE
         }
     }
 
     /**
-     * 補正に使用可能かどうか（V3設計）
-     *
-     * LOCKED: 無条件で使用可能
-     * 手動CONFIRMED（source=USER）: 無条件で使用可能
-     * 自動CONFIRMED: スコア検証が必要（呼び出し元で判定）
+     * 補正に使用可能かどうか
      */
     fun isUsableForCorrection(): Boolean {
         if (isDisabled) return false
-
         return when {
-            confidenceLevel == ConfidenceLevel.LOCKED.name -> true
-            confidenceLevel == ConfidenceLevel.CONFIRMED.name && source == VariantSource.USER.name -> true
-            confidenceLevel == ConfidenceLevel.CONFIRMED.name -> true  // スコア検証は呼び出し元
-            else -> false  // AUTOは補正に使わない
+            confidenceLevel == ConfidenceLevel.LOCKED.name    -> true
+            confidenceLevel == ConfidenceLevel.CONFIRMED.name -> true
+            else -> false
         }
     }
 
     /**
      * 無条件適用（Layer 1）の対象かどうか
      *
-     * LOCKED または 手動CONFIRMEDのみ
+     * LOCKED（PRESET含む）または CAPTURE+CONFIRMED
      */
     fun isUnconditionallyApplicable(): Boolean {
         if (isDisabled) return false
-
         return confidenceLevel == ConfidenceLevel.LOCKED.name ||
-               (confidenceLevel == ConfidenceLevel.CONFIRMED.name && source == VariantSource.USER.name)
+               (confidenceLevel == ConfidenceLevel.CONFIRMED.name && source == VariantSource.CAPTURE.name)
     }
-
-    // === 旧API（互換性維持、ただし時間減衰は無効化） ===
 
     @Deprecated("V3では時間減衰を廃止。常に1.0を返す")
     fun calculateDecayScore(): Double = 1.0
@@ -256,12 +221,8 @@ data class OcrVariant(
     fun shouldBeDisabled(): Boolean = shouldDemoteOrDisable() == DemotionAction.DISABLE
 
     companion object {
-        /** 高スコア閾値 */
         const val HIGH_SCORE_THRESHOLD = 0.90
 
-        /**
-         * 今日の日付をYYYYMMDD形式で取得
-         */
         fun todayAsInt(): Int {
             val cal = java.util.Calendar.getInstance()
             return cal.get(java.util.Calendar.YEAR) * 10000 +

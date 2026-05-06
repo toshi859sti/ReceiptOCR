@@ -177,11 +177,31 @@ canonicalKey による既存重複データの整理が必要か確認する（�
   - `tryStripRuleDigit`：入力値の任意桁から '1' を1個除去した結果が計算値と一致するか検査
   - 一致した場合「罫線補正で一致」（オレンジ）＋入力値を赤表示、小計・合計の両方に適用
 
+### 今回完了（追加: 2026-05-07 テーマ設定・OCR学習 enum リファクタ）
+
+**テーマ設定機能**
+- Material3 ダイナミックカラー無効化
+- `AppThemePreset` 5プリセット追加（農業グリーン・パープル・オーシャンブルー・テラコッタ・モノクローム）
+- `AppDarkMode` 3モード追加（システムに従う・常にライト・常にダーク）
+- SettingsScreen 上部に色テーマ・ダークモード設定UI追加
+- MainActivity に `mutableStateOf` でリアクティブテーマ管理 → 設定変更即時反映
+- ステータスバー = `primary`（濃い目）、TopAppBar = `primaryContainer`（ライトトーン）
+
+**OCR学習 enum リファクタ（DB v17→v18）**
+- `confidenceLevel.AUTO` → `TENTATIVE`（「学習中」）
+- `source.AUTO` → `SYSTEM`、`source.USER` → `CAPTURE`、`source.IMPORT` 廃止、`source.PRESET` 追加
+- PRESET = 既存パターンをユーザーが「固定する」で LOCKED 昇格させる操作
+- MIGRATION_17_18: DB 内の旧文字列値を一括 UPDATE
+- PatternCard に錠前アイコン（「固定する」ボタン）追加
+- 統計表示・昇格進捗の判定ロジックを新 enum 名に合わせて修正
+- `DatabaseInitializer` / `ProductNameCorrector` / `ProductNameCorrectorV2` / `ProductListScreen` の残存参照も修正
+- **BUILD SUCCESSFUL・実機インストール済み**（動作テストは実データで次回）
+
 ### 未完了・中断した理由
-- 実機テストで今回修正の動作確認は次回セッションで実施
+- OCR学習システムの動作テストは実データが必要なため次回実施
 
 ### 次回セッションで最初にやること
-実機テスト：小計判定・取引日・罫線補正表示の動作を伝票撮影で確認する。
+実データで OCR 学習画面を動作確認する（「固定する」ボタン・統計表示・昇格進捗バーが正しく動くか）。
 
 ### 新たに発覚した問題・制約
 - OCR が同カテゴリの小計を2回検出することがある（一般購買等）→ 重複検出ダイアログで対応済み
