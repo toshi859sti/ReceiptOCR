@@ -17,3 +17,29 @@ local.properties
 *.ap_
 *.dex
 *.class
+
+# 個人情報・機密ファイル（GitHub公開禁止）
+.claude/
+app/src/main/assets/meisai*.csv
+app/src/main/assets/receipts_*.csv
+imgk2.jpg
+app/src/main/assets/imgk2.jpg
+
+# データベースダンプ
+*.db
+*.db-shm
+*.db-wal
+
+# ログファイル・デバッグ出力
+*.txt
+OCRTest/
+debug_*.png
+screen.png
+
+# Claude Code 一時ファイル
+tmpclaude-*
+
+# ローカル用CSVファイル（勘定科目等）
+kamoku*.csv
+ya*.csv
+rakurakutekiyou.csv
