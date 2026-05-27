@@ -7,11 +7,16 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -46,6 +51,7 @@ import java.io.OutputStream
 fun DebugCaptureScreen(onBack: () -> Unit) {
     val cameraViewModel: CameraViewModel = viewModel()
     val uiState by cameraViewModel.uiState.collectAsState()
+    val greenOverlay by cameraViewModel.greenFrameOverlay.collectAsState()
 
     var ocrResults     by remember { mutableStateOf<List<String>>(emptyList()) }
     var columnBitmap   by remember { mutableStateOf<Bitmap?>(null) }
@@ -98,7 +104,13 @@ fun DebugCaptureScreen(onBack: () -> Unit) {
 
                     val texts = ocrResult.rowsWithCategories.mapIndexed { i, (row, cat) ->
                         val catSum = if (row.categorySum != null) " catSum=${row.categorySum}" else ""
-                        "Row $i [$cat] date=${row.date} item=${row.itemName} qty=${row.quantity} amt=${row.amount}$catSum"
+                        val dateRect = row.dateBounds?.let { r ->
+                            " dateRect=[${r.left},${r.top},${r.right},${r.bottom}](${r.width()}×${r.height()})"
+                        } ?: ""
+                        val amtRect = row.amountBounds?.let { r ->
+                            " amtRect=[${r.left},${r.top},${r.right},${r.bottom}](${r.width()}×${r.height()})"
+                        } ?: ""
+                        "Row $i [$cat] date=${row.date} item=${row.itemName} qty=${row.quantity} amt=${row.amount}$catSum$dateRect$amtRect"
                     }
                     ocrResults = texts
                 }
@@ -117,6 +129,29 @@ fun DebugCaptureScreen(onBack: () -> Unit) {
                         viewModel = cameraViewModel,
                         showForceCapture = true,
                         debugMode = true
+                    )
+                    // フレーム検出オーバーレイ
+                    FrameDetectionOverlay(
+                        greenOverlay = greenOverlay,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    // 緑枠検出状態テキスト（左上）
+                    Text(
+                        text = when {
+                            greenOverlay == null   -> "緑枠: 待機中"
+                            greenOverlay!!.success -> "緑枠: OK ✓"
+                            else                   -> "緑枠: NG ✗"
+                        },
+                        color = when {
+                            greenOverlay == null   -> Color.White
+                            greenOverlay!!.success -> Color.Green
+                            else                   -> Color.Red
+                        },
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(start = 8.dp, top = 72.dp)
                     )
                     // 戻るボタンだけオーバーレイ
                     IconButton(
@@ -344,6 +379,25 @@ private fun DebugResultView(
                         color = if (info.sharpness >= 1000) androidx.compose.ui.graphics.Color(0xFF2E7D32)
                                 else androidx.compose.ui.graphics.Color(0xFFE65100)
                     )
+                    if (info.cornerAngles.size == 4) {
+                        val labels = listOf("TL", "TR", "BR", "BL")
+                        val maxDev = info.cornerAngles.maxOf { Math.abs(it - 90.0) }
+                        val angleText = labels.zip(info.cornerAngles)
+                            .joinToString("  ") { (l, a) -> "$l:${"%.1f".format(a)}°" }
+                        Text(
+                            "コーナー角度：$angleText",
+                            fontSize = 13.sp,
+                            color = if (maxDev <= 1.5) androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                    else androidx.compose.ui.graphics.Color(0xFFE65100)
+                        )
+                    }
+                    if (info.brCorrected) {
+                        Text(
+                            "⚠ BR補正済み（平行四辺形則で置換）",
+                            fontSize = 13.sp,
+                            color = androidx.compose.ui.graphics.Color(0xFFE65100)
+                        )
+                    }
                 }
             }
         }
@@ -453,6 +507,23 @@ private fun DebugResultView(
                     Text("画像保存")
                 }
             }
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        val ok = withContext(Dispatchers.IO) {
+                            saveDebugText(context, result.captureInfo, ocrResults)
+                        }
+                        saveMessage = if (ok) "✓ テキストを保存" else "テキスト保存失敗"
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+            ) {
+                Icon(Icons.Default.SaveAlt, contentDescription = null)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("テキスト保存")
+            }
         }
     }
 }
@@ -487,6 +558,50 @@ private fun saveDebugImages(
         if (saveBitmapToGallery(context, bmp, name)) saved++
     }
     return saved
+}
+
+private fun saveDebugText(
+    context: Context,
+    captureInfo: GreenFrameDetector.CaptureInfo,
+    ocrResults: List<String>
+): Boolean {
+    return try {
+        val timestamp = System.currentTimeMillis()
+        val content = buildString {
+            appendLine("=== JA仕訳変換 デバッグ情報 ===")
+            appendLine("撮影時刻　: ${captureInfo.capturedAt}")
+            appendLine("入力解像度: ${captureInfo.inputWidth} × ${captureInfo.inputHeight} px")
+            appendLine("透視変換後: ${captureInfo.warpWidth} × ${captureInfo.warpHeight} px")
+            appendLine("鮮鋭度　　: ${"%.1f".format(captureInfo.sharpness)}")
+            appendLine()
+            appendLine("=== OCR結果（${ocrResults.size}行）===")
+            ocrResults.forEachIndexed { i, line -> appendLine(line) }
+        }
+
+        val fileName = "debug_${timestamp}_ocr.txt"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Files.FileColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.Files.FileColumns.MIME_TYPE, "text/plain")
+                put(MediaStore.Files.FileColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOCUMENTS}/$SAVE_FOLDER")
+            }
+            val uri = context.contentResolver.insert(
+                MediaStore.Files.getContentUri("external"), values
+            ) ?: return false
+            context.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
+        } else {
+            @Suppress("DEPRECATION")
+            val dir = java.io.File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+                SAVE_FOLDER
+            ).also { it.mkdirs() }
+            java.io.File(dir, fileName).writeText(content)
+        }
+        true
+    } catch (e: Exception) {
+        android.util.Log.e("DebugCaptureScreen", "テキスト保存失敗", e)
+        false
+    }
 }
 
 /** OCRTest フォルダ内の既存画像をすべて削除する */
@@ -538,6 +653,62 @@ private fun saveBitmapToGallery(context: Context, bitmap: Bitmap, name: String):
     } catch (e: Exception) {
         android.util.Log.e("DebugCaptureScreen", "画像保存失敗: $name", e)
         false
+    }
+}
+
+// ============================================================
+// フレーム検出オーバーレイ
+// ============================================================
+
+@Composable
+private fun FrameDetectionOverlay(
+    greenOverlay: CameraViewModel.FrameOverlayState?,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        greenOverlay?.let { state ->
+            if (state.corners.size == 4) {
+                drawFrameOverlay(
+                    corners = state.corners,
+                    imageWidth = state.imageWidth,
+                    imageHeight = state.imageHeight,
+                    strokeColor = if (state.success) Color.Green else Color.Red,
+                    dotColor = Color.Yellow,
+                    strokeWidthPx = 6f,
+                    dotRadiusPx = 16f
+                )
+            }
+        }
+    }
+}
+
+private fun DrawScope.drawFrameOverlay(
+    corners: List<org.opencv.core.Point>,
+    imageWidth: Int,
+    imageHeight: Int,
+    strokeColor: Color,
+    dotColor: Color,
+    strokeWidthPx: Float,
+    dotRadiusPx: Float
+) {
+    // PreviewView は FILL_CENTER（デフォルト）: 長辺を合わせてクロップ
+    val cameraScale = maxOf(size.width / imageWidth.toFloat(), size.height / imageHeight.toFloat())
+    val offsetX = (size.width  - imageWidth  * cameraScale) / 2f
+    val offsetY = (size.height - imageHeight * cameraScale) / 2f
+
+    val screenCorners = corners.map { pt ->
+        Offset(pt.x.toFloat() * cameraScale + offsetX, pt.y.toFloat() * cameraScale + offsetY)
+    }
+
+    val path = Path().apply {
+        moveTo(screenCorners[0].x, screenCorners[0].y)
+        screenCorners.drop(1).forEach { lineTo(it.x, it.y) }
+        close()
+    }
+    drawPath(path, strokeColor, style = Stroke(width = strokeWidthPx))
+
+    screenCorners.forEach { pt ->
+        drawCircle(dotColor, radius = dotRadiusPx, center = pt, style = Stroke(width = 3f))
     }
 }
 

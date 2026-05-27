@@ -34,7 +34,9 @@ object GreenFrameDetector {
         val warpWidth: Int = 0,
         val warpHeight: Int = 0,
         val sharpness: Double = 0.0,
-        val capturedAt: String = ""
+        val capturedAt: String = "",
+        val cornerAngles: List<Double> = emptyList(), // TL, TR, BR, BL 順
+        val brCorrected: Boolean = false
     )
 
     data class DetectionResult(
@@ -156,10 +158,11 @@ object GreenFrameDetector {
 
             // 緑線の方程式（HoughLines）
             t = System.currentTimeMillis()
-            val lineEqs = detectGreenLineEquations(src, imgW, imgH, leftX)
+            val lineEqs = detectGreenLineEquations(src, imgW, imgH, leftX, topY, bottomY)
             Log.d(TAG, "[PERF] Step4b 緑線方程式: ${System.currentTimeMillis() - t} ms")
 
-            val tl: Point; val tr: Point; val br: Point; val bl: Point
+            val tl: Point; val tr: Point; var br: Point; val bl: Point
+            var brCorrected = false
 
             if (lineEqs != null && rightSeg != null) {
                 val rightLine = FittedLine(rightSeg.first, rightSeg.second)
@@ -174,6 +177,16 @@ object GreenFrameDetector {
 
                 Log.d(TAG, "TL=(%.0f,%.0f) TR=(%.0f,%.0f) BR=(%.0f,%.0f) BL=(%.0f,%.0f)"
                     .format(tl.x,tl.y, tr.x,tr.y, br.x,br.y, bl.x,bl.y))
+
+                // BR 妥当性チェック: 平行四辺形則 BR ≈ BL + TR - TL（受票は矩形のため許容差5%）
+                val brExpectedY = bl.y + tr.y - tl.y
+                val receiptHeightPx = (bottomY - topY).toDouble()
+                if (Math.abs(br.y - brExpectedY) > receiptHeightPx * 0.05) {
+                    Log.w(TAG, "BR補正: botLine誤差大 computed=(%.0f,%.0f) expected_y=%.0f → 平行四辺形則で置換"
+                        .format(br.x, br.y, brExpectedY))
+                    br = Point(bl.x + tr.x - tl.x, brExpectedY)
+                    brCorrected = true
+                }
             } else {
                 // フォールバック: バウンディングボックス
                 val fx = rightSeg?.let { ((it.first.x + it.second.x) / 2) } ?: expectedRight.toDouble()
@@ -196,6 +209,7 @@ object GreenFrameDetector {
                 Point(-200.0, -30.0), // BR: 左上
                 Point( 30.0, -30.0)   // BL: 右上
             )
+            val cornerAngles = mutableListOf<Double>()
             corners.forEachIndexed { idx, pt ->
                 val prev = corners[(idx + 3) % 4]
                 val next = corners[(idx + 1) % 4]
@@ -206,6 +220,7 @@ object GreenFrameDetector {
                 val angleDeg = if (mag1 > 0 && mag2 > 0)
                     Math.toDegrees(Math.acos((dot / (mag1 * mag2)).coerceIn(-1.0, 1.0)))
                 else 0.0
+                cornerAngles.add(angleDeg)
                 Imgproc.circle(debugMat, pt, (imgW * 0.006).toInt(), YELLOW, -1)
                 val label = "${cornerLabels[idx]}:${"%.1f".format(angleDeg)}°"
                 val off = angleOffsets[idx]
@@ -265,13 +280,15 @@ object GreenFrameDetector {
             warpedMat.release()
 
             val captureInfo = CaptureInfo(
-                inputWidth  = inputBitmap.width,
-                inputHeight = inputBitmap.height,
-                warpWidth   = (RECEIPT_WIDTH_MM  * WARP_PX_PER_MM).toInt(),
-                warpHeight  = (RECEIPT_HEIGHT_MM * WARP_PX_PER_MM).toInt(),
-                sharpness   = sharpness,
-                capturedAt  = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                                  .format(java.util.Date())
+                inputWidth    = inputBitmap.width,
+                inputHeight   = inputBitmap.height,
+                warpWidth     = (RECEIPT_WIDTH_MM  * WARP_PX_PER_MM).toInt(),
+                warpHeight    = (RECEIPT_HEIGHT_MM * WARP_PX_PER_MM).toInt(),
+                sharpness     = sharpness,
+                capturedAt    = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                                    .format(java.util.Date()),
+                cornerAngles  = cornerAngles,
+                brCorrected   = brCorrected
             )
 
             Log.d(TAG, "[PERF] ===== GreenFrameDetector 合計: ${System.currentTimeMillis() - totalStart} ms =====")
@@ -399,7 +416,12 @@ object GreenFrameDetector {
 
     data class LineEqs(val top: FittedLine, val bot: FittedLine, val left: FittedLine)
 
-    private fun detectGreenLineEquations(src: Mat, imgW: Int, imgH: Int, approxLeftX: Int = 0): LineEqs? {
+    private fun detectGreenLineEquations(
+        src: Mat, imgW: Int, imgH: Int,
+        approxLeftX: Int = 0,
+        approxTopY: Int = 0,
+        approxBottomY: Int = 0
+    ): LineEqs? {
         val greenMask = buildGreenMask(src)
         val minLen    = (maxOf(imgW, imgH) * 0.05).toDouble()
         val minVotes  = (maxOf(imgW, imgH) * 0.05).toInt().coerceAtLeast(40)
@@ -485,8 +507,22 @@ object GreenFrameDetector {
         fun fitHOuter(segs: List<Seg>, useMaxY: Boolean): FittedLine {
             val allY = segs.flatMap { listOf(it.y1, it.y2) }
             val pad  = (imgH * 0.02).toInt().coerceAtLeast(10)
-            val yFrom = (allY.min()!! - pad).toInt().coerceAtLeast(0)
-            val yTo   = (allY.max()!! + pad).toInt().coerceAtMost(imgH - 1)
+            // 上辺: approxTopY まで確実にスキャン開始位置を上げる
+            val yFrom = if (!useMaxY && approxTopY > 0)
+                minOf((allY.min()!! - pad).toInt(), approxTopY).coerceAtLeast(0)
+            else
+                (allY.min()!! - pad).toInt().coerceAtLeast(0)
+            // 下辺: approxBottomY まで確実にスキャン終端を下げる（HoughLines検出不足で右端が浮く問題を防ぐ）
+            val yTo = if (useMaxY && approxBottomY > 0)
+                maxOf((allY.max()!! + pad).toInt(), approxBottomY).coerceAtMost(imgH - 1)
+            else
+                (allY.max()!! + pad).toInt().coerceAtMost(imgH - 1)
+
+            // X範囲: セグメント端点から ±padX（背景緑・切り端ノイズをスキャン対象外にする）
+            val allX = segs.flatMap { listOf(it.x1, it.x2) }
+            val padX = (imgW * 0.03).toInt().coerceAtLeast(10)
+            val xFrom = (allX.min()!! - padX).toInt().coerceAtLeast(0)
+            val xTo   = (allX.max()!! + padX).toInt().coerceAtMost(imgW - 1)
 
             val edgeY = IntArray(imgW) { -1 }
             val rowBuf = ByteArray(imgW)
@@ -494,7 +530,7 @@ object GreenFrameDetector {
                 // 上辺外縁: 上→下へ走査、列ごとに最初の緑ピクセル（最小y）
                 for (y in yFrom..yTo) {
                     greenMask.get(y, 0, rowBuf)
-                    for (x in 0 until imgW) {
+                    for (x in xFrom..xTo) {
                         if (edgeY[x] < 0 && rowBuf[x].toInt() and 0xFF > 0) edgeY[x] = y
                     }
                 }
@@ -502,13 +538,13 @@ object GreenFrameDetector {
                 // 下辺外縁: 下→上へ走査、列ごとに最初の緑ピクセル（最大y）
                 for (y in yTo downTo yFrom) {
                     greenMask.get(y, 0, rowBuf)
-                    for (x in 0 until imgW) {
+                    for (x in xFrom..xTo) {
                         if (edgeY[x] < 0 && rowBuf[x].toInt() and 0xFF > 0) edgeY[x] = y
                     }
                 }
             }
-            val pts = (0 until imgW).filter { edgeY[it] >= 0 }
-            Log.d(TAG, "fitHOuter(useMaxY=$useMaxY): ${pts.size}点")
+            val pts = (xFrom..xTo).filter { edgeY[it] >= 0 }
+            Log.d(TAG, "fitHOuter(useMaxY=$useMaxY): ${pts.size}点 xRange=[$xFrom..$xTo]")
             if (pts.size < 5) return fitH(segs)
 
             var sw=0.0; var swX=0.0; var swY=0.0; var swXX=0.0; var swXY=0.0
