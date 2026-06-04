@@ -46,6 +46,9 @@ class AppPreferences(context: Context) {
         private const val DEFAULT_THEME_PRESET = "GREEN"
         private const val KEY_DARK_MODE = "dark_mode"
         private const val DEFAULT_DARK_MODE = "SYSTEM"
+
+        // Gemini API キー（一般購買OCR用）
+        private const val KEY_GEMINI_API_KEY = "gemini_api_key"
     }
 
     // 年号設定
@@ -99,6 +102,11 @@ class AppPreferences(context: Context) {
             AppThemePreset.valueOf(prefs.getString(KEY_THEME_PRESET, DEFAULT_THEME_PRESET) ?: DEFAULT_THEME_PRESET)
         } catch (_: IllegalArgumentException) { AppThemePreset.GREEN }
         set(value) = prefs.edit().putString(KEY_THEME_PRESET, value.name).apply()
+
+    // Gemini API キー
+    var geminiApiKey: String
+        get() = prefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_GEMINI_API_KEY, value).apply()
 
     // ダークモード
     var darkMode: AppDarkMode

@@ -1,16 +1,13 @@
 package com.example.greenframeocr.ui
 
-import android.content.Context
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -18,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -28,15 +26,8 @@ import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.RakurakuTekiyou
 import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.util.importTekiyouFromCsv
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
 
-/**
- * メインカテゴリの定義
- */
 private enum class MainCategory(val displayName: String) {
     CASH("現金"),
     DEPOSIT("預金"),
@@ -44,84 +35,64 @@ private enum class MainCategory(val displayName: String) {
     PAYABLE("買掛")
 }
 
-/**
- * サブカテゴリのマッピング
- */
 private val subCategoryMap = mapOf(
-    MainCategory.CASH to listOf("入金" to "入金", "出金" to "出金"),
-    MainCategory.DEPOSIT to listOf("入金" to "入金", "出金" to "出金"),
+    MainCategory.CASH       to listOf("入金" to "入金", "出金" to "出金"),
+    MainCategory.DEPOSIT    to listOf("入金" to "入金", "出金" to "出金"),
     MainCategory.RECEIVABLE to listOf("販売" to "販売", "入金" to "入金"),
-    MainCategory.PAYABLE to listOf("購入" to "購入", "出金" to "出金")
+    MainCategory.PAYABLE    to listOf("購入" to "購入", "出金" to "出金")
 )
 
-/**
- * らくらく青色申告 摘要辞書画面
- */
+// 検索文字列列を表示するための画面幅しきい値
+private val SEARCH_KEY_MIN_WIDTH = 380
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RakurakuTekiyouScreen(
     database: ReceiptDatabase,
     onBack: () -> Unit
 ) {
-    val scope = rememberCoroutineScope()
+    val scope   = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // State
     var selectedMainCategory by remember { mutableStateOf(MainCategory.CASH) }
-    var selectedSubCategory by remember { mutableStateOf("入金") }
+    var selectedSubCategory  by remember { mutableStateOf("入金") }
     var tekiyouList by remember { mutableStateOf<List<RakurakuTekiyou>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    var isLoading   by remember { mutableStateOf(true) }
 
-    // Edit/Add dialogs
-    var showEditDialog by remember { mutableStateOf(false) }
-    var showAddDialog by remember { mutableStateOf(false) }
+    var showEditDialog   by remember { mutableStateOf(false) }
+    var showAddDialog    by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
-    var selectedTekiyou by remember { mutableStateOf<RakurakuTekiyou?>(null) }
+    var selectedTekiyou  by remember { mutableStateOf<RakurakuTekiyou?>(null) }
 
-    // サブカテゴリリスト
     val subCategories = subCategoryMap[selectedMainCategory] ?: emptyList()
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val showSearchKey = screenWidthDp >= SEARCH_KEY_MIN_WIDTH
 
-    // メインカテゴリ変更時にサブカテゴリをリセット
     LaunchedEffect(selectedMainCategory) {
         selectedSubCategory = subCategories.firstOrNull()?.second ?: ""
     }
 
-    // データ読み込み
     fun loadData() {
         scope.launch {
             isLoading = true
             tekiyouList = database.rakurakuTekiyouDao().getByCategory(
-                selectedMainCategory.displayName,
-                selectedSubCategory
+                selectedMainCategory.displayName, selectedSubCategory
             )
             isLoading = false
         }
     }
 
-    // 初期データのインポート（CSVに新規追加された項目のみ挿入）
-    fun importFromCsv() {
-        scope.launch {
-            importTekiyouFromCsv(context, database)
-            loadData()
-        }
-    }
-
     LaunchedEffect(Unit) {
-        importFromCsv()
+        scope.launch { importTekiyouFromCsv(context, database); loadData() }
     }
-
-    LaunchedEffect(selectedMainCategory, selectedSubCategory) {
-        loadData()
-    }
+    LaunchedEffect(selectedMainCategory, selectedSubCategory) { loadData() }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("摘要辞書") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "戻る")
-                    }
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "戻る") }
                 },
                 actions = {
                     IconButton(onClick = { showAddDialog = true }) {
@@ -134,25 +105,20 @@ fun RakurakuTekiyouScreen(
             )
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            // メインカテゴリ選択
+        Column(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+
+            // メインカテゴリ
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 MainCategory.entries.forEach { category ->
                     FilterChip(
                         selected = selectedMainCategory == category,
-                        onClick = { selectedMainCategory = category },
-                        label = {
+                        onClick  = { selectedMainCategory = category },
+                        label    = {
                             Text(
-                                text = category.displayName,
+                                category.displayName,
                                 fontWeight = if (selectedMainCategory == category) FontWeight.Bold else FontWeight.Normal
                             )
                         },
@@ -161,89 +127,82 @@ fun RakurakuTekiyouScreen(
                 }
             }
 
-            // サブカテゴリ選択
+            // サブカテゴリ
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 subCategories.forEach { (display, value) ->
                     FilterChip(
                         selected = selectedSubCategory == value,
-                        onClick = { selectedSubCategory = value },
-                        label = {
+                        onClick  = { selectedSubCategory = value },
+                        label    = {
                             Text(
-                                text = display,
+                                display,
                                 fontWeight = if (selectedSubCategory == value) FontWeight.Bold else FontWeight.Normal
                             )
                         },
-                        colors = FilterChipDefaults.filterChipColors(
+                        colors   = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer
                         ),
                         modifier = Modifier.weight(1f)
                     )
                 }
-                // 空白を埋める（2つのボタンのみの場合）
                 if (subCategories.size < 4) {
-                    repeat(4 - subCategories.size) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
+                    repeat(4 - subCategories.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
 
-            // 件数表示
             Text(
-                text = "${tekiyouList.size}件",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                "${tekiyouList.size}件",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            // リストヘッダー
+            TekiyouHeader(showSearchKey = showSearchKey)
             Divider()
 
-            // データグリッド
             if (isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
             } else {
-                TekiyouGrid(
-                    tekiyouList = tekiyouList,
-                    showSharedColumn = selectedMainCategory == MainCategory.CASH || selectedMainCategory == MainCategory.DEPOSIT,
-                    onEdit = { tekiyou ->
-                        selectedTekiyou = tekiyou
-                        showEditDialog = true
-                    },
-                    onDelete = { tekiyou ->
-                        selectedTekiyou = tekiyou
-                        showDeleteDialog = true
+                LazyColumn(Modifier.fillMaxSize()) {
+                    itemsIndexed(tekiyouList, key = { _, item -> item.id }) { index, tekiyou ->
+                        TekiyouRow(
+                            tekiyou       = tekiyou,
+                            zebra         = index % 2 != 0,
+                            showSearchKey = showSearchKey,
+                            onToggleEnabled = { id, enabled ->
+                                scope.launch {
+                                    database.rakurakuTekiyouDao().updateEnabled(id, enabled)
+                                    loadData()
+                                }
+                            },
+                            onEdit = { selectedTekiyou = it; showEditDialog = true }
+                        )
                     }
-                )
+                }
             }
         }
     }
 
-    // 編集ダイアログ
+    // 編集ダイアログ（既存項目）
     if (showEditDialog && selectedTekiyou != null) {
         TekiyouEditDialog(
-            title = "摘要編集",
-            tekiyou = selectedTekiyou,
-            showSharedField = selectedMainCategory == MainCategory.CASH || selectedMainCategory == MainCategory.DEPOSIT,
-            onDismiss = {
-                showEditDialog = false
-                selectedTekiyou = null
+            title     = "摘要編集",
+            tekiyou   = selectedTekiyou,
+            onDismiss = { showEditDialog = false; selectedTekiyou = null },
+            onSave    = { updated ->
+                scope.launch { database.rakurakuTekiyouDao().update(updated); loadData() }
+                showEditDialog = false; selectedTekiyou = null
             },
-            onSave = { updated ->
-                scope.launch {
-                    database.rakurakuTekiyouDao().update(updated)
-                    loadData()
-                }
+            onDelete  = {
+                // 編集ダイアログを閉じてから削除確認ダイアログを表示
                 showEditDialog = false
-                selectedTekiyou = null
+                showDeleteDialog = true
             }
         )
     }
@@ -251,62 +210,44 @@ fun RakurakuTekiyouScreen(
     // 追加ダイアログ
     if (showAddDialog) {
         TekiyouEditDialog(
-            title = "摘要追加",
+            title   = "摘要追加",
             tekiyou = RakurakuTekiyou(
-                mainCategory = selectedMainCategory.displayName,
-                subCategory = selectedSubCategory,
-                tekiyouName = "",
-                searchKey = "",
-                kamoku = "",
-                taxRate = "",
-                businessRatio = null,
-                isShared = if (selectedMainCategory == MainCategory.CASH || selectedMainCategory == MainCategory.DEPOSIT) true else null
+                mainCategory  = selectedMainCategory.displayName,
+                subCategory   = selectedSubCategory,
+                tekiyouName   = "",
+                searchKey     = "",
+                kamoku        = "",
+                businessRatio = null
             ),
-            showSharedField = selectedMainCategory == MainCategory.CASH || selectedMainCategory == MainCategory.DEPOSIT,
             onDismiss = { showAddDialog = false },
-            onSave = { newTekiyou ->
-                scope.launch {
-                    database.rakurakuTekiyouDao().insert(newTekiyou)
-                    loadData()
-                }
+            onSave    = { newTekiyou ->
+                scope.launch { database.rakurakuTekiyouDao().insert(newTekiyou); loadData() }
                 showAddDialog = false
-            }
+            },
+            onDelete  = null   // 新規追加時は削除不要
         )
     }
 
     // 削除確認ダイアログ
     if (showDeleteDialog && selectedTekiyou != null) {
         AlertDialog(
-            onDismissRequest = {
-                showDeleteDialog = false
-                selectedTekiyou = null
-            },
+            onDismissRequest = { showDeleteDialog = false; selectedTekiyou = null },
             title = { Text("削除確認") },
-            text = { Text("「${selectedTekiyou?.tekiyouName}」を削除しますか？") },
+            text  = { Text("「${selectedTekiyou?.tekiyouName}」を削除しますか？") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         scope.launch {
-                            selectedTekiyou?.let {
-                                database.rakurakuTekiyouDao().delete(it)
-                            }
+                            selectedTekiyou?.let { database.rakurakuTekiyouDao().delete(it) }
                             loadData()
                         }
-                        showDeleteDialog = false
-                        selectedTekiyou = null
+                        showDeleteDialog = false; selectedTekiyou = null
                     },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text("削除")
-                }
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) { Text("削除") }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    showDeleteDialog = false
-                    selectedTekiyou = null
-                }) {
+                TextButton(onClick = { showDeleteDialog = false; selectedTekiyou = null }) {
                     Text("キャンセル")
                 }
             }
@@ -314,163 +255,126 @@ fun RakurakuTekiyouScreen(
     }
 }
 
-/**
- * 摘要グリッド表示
- */
+// ── リストヘッダー ────────────────────────────────────────
 @Composable
-private fun TekiyouGrid(
-    tekiyouList: List<RakurakuTekiyou>,
-    showSharedColumn: Boolean,
-    onEdit: (RakurakuTekiyou) -> Unit,
-    onDelete: (RakurakuTekiyou) -> Unit
-) {
-    val scrollState = rememberScrollState()
-
-    Column(
+private fun TekiyouHeader(showSearchKey: Boolean) {
+    Row(
         modifier = Modifier
-            .fillMaxSize()
-            .horizontalScroll(scrollState)
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(end = 8.dp, top = 5.dp, bottom = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        // ヘッダー行
-        Row(
-            modifier = Modifier
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .padding(vertical = 8.dp)
-        ) {
-            HeaderCell("摘要名", 180.dp)
-            HeaderCell("検索文字", 100.dp)
-            HeaderCell("科目", 180.dp)
-            HeaderCell("税率", 60.dp)
-            HeaderCell("事業割合", 80.dp)
-            if (showSharedColumn) {
-                HeaderCell("共有", 60.dp)
-            }
-            HeaderCell("操作", 80.dp)
-        }
-
-        Divider()
-
-        // データ行
-        LazyColumn(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            itemsIndexed(tekiyouList, key = { _, item -> item.id }) { index, tekiyou ->
-                Row(
-                    modifier = Modifier
-                        .background(
-                            if (index % 2 == 0) Color.Transparent
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                        )
-                        .clickable { onEdit(tekiyou) }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    DataCell(tekiyou.tekiyouName, 180.dp)
-                    DataCell(tekiyou.searchKey, 100.dp)
-                    DataCell(tekiyou.kamoku, 180.dp)
-                    DataCell(tekiyou.taxRate, 60.dp, TextAlign.Center)
-                    DataCell(
-                        tekiyou.businessRatio?.let { "$it%" } ?: "",
-                        80.dp,
-                        TextAlign.Center
-                    )
-                    if (showSharedColumn) {
-                        DataCell(
-                            if (tekiyou.isShared == true) "○" else "",
-                            60.dp,
-                            TextAlign.Center
-                        )
-                    }
-                    // 操作ボタン
-                    Row(
-                        modifier = Modifier.width(80.dp),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        IconButton(
-                            onClick = { onEdit(tekiyou) },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Edit,
-                                contentDescription = "編集",
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                        IconButton(
-                            onClick = { onDelete(tekiyou) },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "削除",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-                Divider()
-            }
-        }
+        ColHead("使用", width = 40.dp, textAlign = TextAlign.Center)
+        ColHead("摘要名", modifier = Modifier.weight(2f))
+        if (showSearchKey) ColHead("検索文字", modifier = Modifier.weight(1.5f))
+        ColHead("科目", modifier = Modifier.weight(2f))
+        ColHead("割合", width = 48.dp, textAlign = TextAlign.Center)
     }
 }
 
 @Composable
-private fun HeaderCell(
+private fun ColHead(
     text: String,
-    width: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+    width: androidx.compose.ui.unit.Dp? = null,
     textAlign: TextAlign = TextAlign.Start
 ) {
+    val m = if (width != null) modifier.width(width) else modifier
     Text(
-        text = text,
-        modifier = Modifier
-            .width(width)
-            .padding(horizontal = 8.dp),
-        fontWeight = FontWeight.Bold,
-        fontSize = 13.sp,
-        textAlign = textAlign
-    )
-}
-
-@Composable
-private fun DataCell(
-    text: String,
-    width: androidx.compose.ui.unit.Dp,
-    textAlign: TextAlign = TextAlign.Start
-) {
-    Text(
-        text = text,
-        modifier = Modifier
-            .width(width)
-            .padding(horizontal = 8.dp),
-        fontSize = 14.sp,
+        text, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+        modifier = m.padding(horizontal = 2.dp),
         textAlign = textAlign,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
+        maxLines = 1
     )
 }
 
-/**
- * 摘要編集ダイアログ
- */
+// ── 摘要行（横一列）────────────────────────────────────────
+@Composable
+private fun TekiyouRow(
+    tekiyou: RakurakuTekiyou,
+    zebra: Boolean,
+    showSearchKey: Boolean,
+    onToggleEnabled: (Int, Boolean) -> Unit,
+    onEdit: (RakurakuTekiyou) -> Unit
+) {
+    val alpha = if (tekiyou.isEnabled) 1f else 0.4f
+    val bg    = if (zebra)
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+    else Color.Transparent
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(bg)
+            .clickable { onEdit(tekiyou) }
+            .padding(end = 8.dp, top = 3.dp, bottom = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 使用チェックボックス
+        Checkbox(
+            checked = tekiyou.isEnabled,
+            onCheckedChange = { onToggleEnabled(tekiyou.id, it) },
+            modifier = Modifier.size(40.dp)
+        )
+        // 摘要名
+        Text(
+            tekiyou.tekiyouName,
+            modifier = Modifier.weight(2f).padding(horizontal = 2.dp),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
+        )
+        // 検索文字（幅が広い場合のみ）
+        if (showSearchKey) {
+            Text(
+                tekiyou.searchKey,
+                modifier = Modifier.weight(1.5f).padding(horizontal = 2.dp),
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)
+            )
+        }
+        // 科目
+        Text(
+            tekiyou.kamoku,
+            modifier = Modifier.weight(2f).padding(horizontal = 2.dp),
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
+        )
+        // 事業割合
+        Text(
+            tekiyou.businessRatio?.let { "$it%" } ?: "",
+            modifier = Modifier.width(48.dp).padding(horizontal = 2.dp),
+            fontSize = 12.sp,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)
+        )
+    }
+    Divider(Modifier.padding(start = 40.dp), thickness = 0.5.dp)
+}
+
+// ── 編集ダイアログ ────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TekiyouEditDialog(
     title: String,
     tekiyou: RakurakuTekiyou?,
-    showSharedField: Boolean,
     onDismiss: () -> Unit,
-    onSave: (RakurakuTekiyou) -> Unit
+    onSave: (RakurakuTekiyou) -> Unit,
+    onDelete: (() -> Unit)?          // null = 新規追加（削除ボタン非表示）
 ) {
-    var tekiyouName by remember { mutableStateOf(tekiyou?.tekiyouName ?: "") }
-    var searchKey by remember { mutableStateOf(tekiyou?.searchKey ?: "") }
-    var kamoku by remember { mutableStateOf(tekiyou?.kamoku ?: "") }
-    var taxRate by remember { mutableStateOf(tekiyou?.taxRate ?: "") }
+    var tekiyouName       by remember { mutableStateOf(tekiyou?.tekiyouName ?: "") }
+    var searchKey         by remember { mutableStateOf(tekiyou?.searchKey ?: "") }
+    var kamoku            by remember { mutableStateOf(tekiyou?.kamoku ?: "") }
     var businessRatioText by remember { mutableStateOf(tekiyou?.businessRatio?.toString() ?: "") }
-    var isShared by remember { mutableStateOf(tekiyou?.isShared ?: true) }
-
-    var expandedTaxRate by remember { mutableStateOf(false) }
-    val taxRateOptions = listOf("", "8%", "10%", "非", "不")
+    var isEnabled         by remember { mutableStateOf(tekiyou?.isEnabled ?: true) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -485,9 +389,9 @@ private fun TekiyouEditDialog(
                     onValueChange = { tekiyouName = it },
                     label = { Text("摘要名 *") },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    isError = tekiyouName.isBlank()
                 )
-
                 OutlinedTextField(
                     value = searchKey,
                     onValueChange = { searchKey = it },
@@ -495,70 +399,46 @@ private fun TekiyouEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
-
                 OutlinedTextField(
                     value = kamoku,
                     onValueChange = { kamoku = it },
                     label = { Text("科目 *") },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    isError = kamoku.isBlank()
                 )
-
-                // 税率選択
-                ExposedDropdownMenuBox(
-                    expanded = expandedTaxRate,
-                    onExpandedChange = { expandedTaxRate = it }
-                ) {
-                    OutlinedTextField(
-                        value = taxRate,
-                        onValueChange = { taxRate = it },
-                        label = { Text("税率") },
-                        modifier = Modifier.fillMaxWidth().menuAnchor(),
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedTaxRate) },
-                        singleLine = true,
-                        readOnly = true
-                    )
-                    ExposedDropdownMenu(
-                        expanded = expandedTaxRate,
-                        onDismissRequest = { expandedTaxRate = false }
-                    ) {
-                        taxRateOptions.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(if (option.isEmpty()) "(なし)" else option) },
-                                onClick = {
-                                    taxRate = option
-                                    expandedTaxRate = false
-                                }
-                            )
-                        }
-                    }
-                }
-
                 OutlinedTextField(
                     value = businessRatioText,
-                    onValueChange = { newValue ->
-                        if (newValue.isEmpty() || newValue.all { it.isDigit() }) {
-                            val intValue = newValue.toIntOrNull()
-                            if (intValue == null || intValue in 0..100) {
-                                businessRatioText = newValue
-                            }
-                        }
+                    onValueChange = { v ->
+                        if (v.isEmpty() || (v.all { it.isDigit() } && (v.toIntOrNull() ?: 0) <= 100))
+                            businessRatioText = v
                     },
                     label = { Text("事業割合 (%)") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = isEnabled, onCheckedChange = { isEnabled = it })
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (isEnabled) "使用する" else "使用しない", fontSize = 14.sp)
+                }
 
-                if (showSharedField) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
+                // 削除ボタン（既存項目のみ）
+                if (onDelete != null) {
+                    OutlinedButton(
+                        onClick = onDelete,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp, MaterialTheme.colorScheme.error
+                        ),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Checkbox(
-                            checked = isShared,
-                            onCheckedChange = { isShared = it }
-                        )
-                        Text("預金/現金と共有")
+                        Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("この摘要を削除")
                     }
                 }
             }
@@ -567,30 +447,27 @@ private fun TekiyouEditDialog(
             TextButton(
                 onClick = {
                     if (tekiyouName.isNotBlank() && kamoku.isNotBlank()) {
-                        val updated = RakurakuTekiyou(
-                            id = tekiyou?.id ?: 0,
-                            mainCategory = tekiyou?.mainCategory ?: "",
-                            subCategory = tekiyou?.subCategory ?: "",
-                            tekiyouName = tekiyouName.trim(),
-                            searchKey = searchKey.trim(),
-                            kamoku = kamoku.trim(),
-                            taxRate = taxRate,
-                            businessRatio = businessRatioText.toIntOrNull(),
-                            isShared = if (showSharedField) isShared else null
+                        onSave(
+                            RakurakuTekiyou(
+                                id            = tekiyou?.id ?: 0,
+                                mainCategory  = tekiyou?.mainCategory ?: "",
+                                subCategory   = tekiyou?.subCategory ?: "",
+                                tekiyouName   = tekiyouName.trim(),
+                                searchKey     = searchKey.trim(),
+                                kamoku        = kamoku.trim(),
+                                taxRate       = tekiyou?.taxRate ?: "",
+                                businessRatio = businessRatioText.toIntOrNull(),
+                                isShared      = tekiyou?.isShared,
+                                isEnabled     = isEnabled
+                            )
                         )
-                        onSave(updated)
                     }
                 },
                 enabled = tekiyouName.isNotBlank() && kamoku.isNotBlank()
-            ) {
-                Text("保存")
-            }
+            ) { Text("保存") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("キャンセル")
-            }
+            TextButton(onClick = onDismiss) { Text("キャンセル") }
         }
     )
 }
-

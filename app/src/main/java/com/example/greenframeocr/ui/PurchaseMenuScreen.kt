@@ -21,7 +21,6 @@ fun PurchaseMenuScreen(
     onNavigateToReceiptInput: () -> Unit,
     onNavigateToYearSummary: () -> Unit,
     onNavigateToProductList: () -> Unit,
-    onNavigateToKaikakeTekiyou: () -> Unit,
     onNavigateToOutputConfirm: () -> Unit
 ) {
     Scaffold(
@@ -78,13 +77,6 @@ fun PurchaseMenuScreen(
             SubMenuButton(
                 text = "購買品目別リスト",
                 onClick = onNavigateToProductList
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            SubMenuButton(
-                text = "買掛摘要辞書",
-                onClick = onNavigateToKaikakeTekiyou
             )
 
             Spacer(modifier = Modifier.height(16.dp))

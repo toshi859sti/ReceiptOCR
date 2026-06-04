@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,6 +24,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AppDarkMode
@@ -63,6 +66,8 @@ fun SettingsScreen(
     var showCameraInfo by remember { mutableStateOf(false) }
     var selectedTheme by remember { mutableStateOf(appPreferences.themePreset) }
     var selectedDarkMode by remember { mutableStateOf(appPreferences.darkMode) }
+    var geminiApiKey by remember { mutableStateOf(appPreferences.geminiApiKey) }
+    var geminiKeyVisible by remember { mutableStateOf(false) }
 
     // メッセージ状態
     var allExportMessage by remember { mutableStateOf<String?>(null) }
@@ -385,6 +390,44 @@ fun SettingsScreen(
                     }
                 )
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ========== 一般購買部門 ==========
+            SettingSection(title = "🛒 一般購買部門")
+
+            Text(
+                text = "Gemini APIキー",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+            )
+            Text(
+                text = "未設定・オフライン時は手動入力が必要です",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            OutlinedTextField(
+                value = geminiApiKey,
+                onValueChange = { geminiApiKey = it },
+                placeholder = { Text("AIza...") },
+                visualTransformation = if (geminiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    Row {
+                        TextButton(onClick = { geminiKeyVisible = !geminiKeyVisible }) {
+                            Text(if (geminiKeyVisible) "隠す" else "表示", fontSize = 12.sp)
+                        }
+                        IconButton(onClick = {
+                            appPreferences.geminiApiKey = geminiApiKey
+                        }) {
+                            Icon(Icons.Default.Save, contentDescription = "保存")
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
 

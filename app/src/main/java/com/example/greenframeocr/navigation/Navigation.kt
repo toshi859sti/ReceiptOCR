@@ -36,8 +36,18 @@ import com.example.greenframeocr.ui.SettingsScreen
 import com.example.greenframeocr.ui.SheetEditorScreen
 import com.example.greenframeocr.ui.TekiyouMatchingScreen
 import com.example.greenframeocr.ui.AccountSettingsScreen
+import com.example.greenframeocr.ui.BookkeepingMenuScreen
+import com.example.greenframeocr.ui.RakurakuAccountSettingsScreen
+import com.example.greenframeocr.ui.YayoiAccountEditScreen
+import com.example.greenframeocr.ui.YayoiAccountSettingsScreen
+import com.example.greenframeocr.ui.GeneralPurchaseMenuScreen
+import com.example.greenframeocr.ui.GeneralReceiptCaptureScreen
+import com.example.greenframeocr.ui.GeneralReceiptConfirmScreen
+import com.example.greenframeocr.ui.GeneralReceiptListScreen
+import com.example.greenframeocr.ui.GeneralReceiptOutputScreen
 import com.example.greenframeocr.ui.YearSummaryScreen
 import com.example.greenframeocr.ui.YokinTekiyouScreen
+import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 import com.example.greenframeocr.viewmodel.OcrCaptureViewModel
 import com.example.greenframeocr.viewmodel.SheetEditorViewModel
 
@@ -62,7 +72,22 @@ sealed class Screen(val route: String) {
     object RakurakuTekiyou : Screen("rakuraku_tekiyou")
     object DebugCapture : Screen("debug_capture")
     object YearSummary : Screen("year_summary")
-    object AccountSettings : Screen("account_settings")
+    object AccountSettings : Screen("account_settings?initialTab={initialTab}") {
+        val route0 = "account_settings?initialTab=0"
+        val route1 = "account_settings?initialTab=1"
+    }
+    object BookkeepingMenu : Screen("bookkeeping_menu")
+    object YayoiAccountSettings : Screen("yayoi_account_settings")
+    object RakurakuAccountSettings : Screen("rakuraku_account_settings")
+    object YayoiAccountEdit : Screen("yayoi_account_edit/{accountId}?parentId={parentId}") {
+        fun createRoute(accountId: Long, parentId: Long = -1L): String =
+            "yayoi_account_edit/$accountId?parentId=$parentId"
+    }
+    object GeneralPurchaseMenu : Screen("general_purchase_menu")
+    object GeneralReceiptCapture : Screen("general_receipt_capture")
+    object GeneralReceiptConfirm : Screen("general_receipt_confirm")
+    object GeneralReceiptList : Screen("general_receipt_list")
+    object GeneralReceiptOutput : Screen("general_receipt_output")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
         fun createRoute(year: Int, month: Int): String {
             return "monthly_summary/$year/$month"
@@ -89,6 +114,8 @@ fun ReceiptNavGraph(
     onNavigateToDebugCapture: (() -> Unit)? = null,
     onThemeChanged: () -> Unit = {}
 ) {
+    val generalReceiptViewModel: GeneralReceiptViewModel = viewModel()
+
     NavHost(
         navController = navController,
         startDestination = startDestination
@@ -102,6 +129,12 @@ fun ReceiptNavGraph(
                 },
                 onNavigateToDepositMenu = {
                     navController.navigate(Screen.DepositMenu.route)
+                },
+                onNavigateToGeneralPurchaseMenu = {
+                    navController.navigate(Screen.GeneralPurchaseMenu.route)
+                },
+                onNavigateToBookkeepingMenu = {
+                    navController.navigate(Screen.BookkeepingMenu.route)
                 },
                 onNavigateToSettings = {
                     navController.navigate(Screen.Settings.route)
@@ -132,9 +165,6 @@ fun ReceiptNavGraph(
                 onNavigateToProductList = {
                     navController.navigate(Screen.ProductList.route)
                 },
-                onNavigateToKaikakeTekiyou = {
-                    navController.navigate(Screen.KaikakeTekiyou.route)
-                },
                 onNavigateToOutputConfirm = {
                     navController.navigate(Screen.PurchaseOutputConfirm.route)
                 }
@@ -161,9 +191,6 @@ fun ReceiptNavGraph(
                 },
                 onNavigateToTekiyouMatching = {
                     navController.navigate(Screen.TekiyouMatching.route)
-                },
-                onNavigateToYokinTekiyou = {
-                    navController.navigate(Screen.YokinTekiyou.route)
                 },
                 onNavigateToOutputConfirm = {
                     navController.navigate(Screen.DepositOutputConfirm.route)
@@ -297,16 +324,79 @@ fun ReceiptNavGraph(
                     navController.navigate(Screen.OcrLearningStatus.route)
                 },
                 onNavigateToAccountSettings = {
-                    navController.navigate(Screen.AccountSettings.route)
+                    navController.navigate(Screen.AccountSettings.route0)
                 }
             )
         }
 
-        // 勘定科目設定画面
-        composable(Screen.AccountSettings.route) {
-            AccountSettingsScreen(
+        // 簿記ソフト連携メニュー
+        composable(Screen.BookkeepingMenu.route) {
+            BookkeepingMenuScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToYayoiAccounts = {
+                    navController.navigate(Screen.YayoiAccountSettings.route)
+                },
+                onNavigateToRakurakuAccounts = {
+                    navController.navigate(Screen.RakurakuAccountSettings.route)
+                },
+                onNavigateToRakurakuTekiyou = {
+                    navController.navigate(Screen.RakurakuTekiyou.route)
+                }
+            )
+        }
+
+        // 弥生勘定科目設定画面（階層化表示）
+        composable(Screen.YayoiAccountSettings.route) {
+            YayoiAccountSettingsScreen(
+                database = database,
+                onBack = { navController.popBackStack() },
+                onNavigateToEdit = { accountId, parentId ->
+                    navController.navigate(Screen.YayoiAccountEdit.createRoute(accountId, parentId))
+                }
+            )
+        }
+
+        // らくらく勘定科目設定画面
+        composable(Screen.RakurakuAccountSettings.route) {
+            RakurakuAccountSettingsScreen(
                 database = database,
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 勘定科目設定画面（initialTab: 0=らくらく, 1=弥生）
+        composable(
+            route = Screen.AccountSettings.route,
+            arguments = listOf(
+                navArgument("initialTab") { type = NavType.IntType; defaultValue = 0 }
+            )
+        ) { backStackEntry ->
+            val initialTab = backStackEntry.arguments?.getInt("initialTab") ?: 0
+            AccountSettingsScreen(
+                database = database,
+                onBack = { navController.popBackStack() },
+                onNavigateToYayoiEdit = { accountId ->
+                    navController.navigate(Screen.YayoiAccountEdit.createRoute(accountId))
+                },
+                initialTab = initialTab
+            )
+        }
+
+        // 弥生勘定科目編集画面（accountId = -1 で新規、parentId = -1 で単独作成）
+        composable(
+            route = Screen.YayoiAccountEdit.route,
+            arguments = listOf(
+                navArgument("accountId") { type = NavType.LongType },
+                navArgument("parentId")  { type = NavType.LongType; defaultValue = -1L }
+            )
+        ) { backStackEntry ->
+            val accountId = backStackEntry.arguments?.getLong("accountId") ?: -1L
+            val parentId  = backStackEntry.arguments?.getLong("parentId")  ?: -1L
+            YayoiAccountEditScreen(
+                accountId     = accountId,
+                initialParentId = if (parentId >= 0L) parentId else null,
+                database      = database,
+                onBack        = { navController.popBackStack() }
             )
         }
 
@@ -338,6 +428,58 @@ fun ReceiptNavGraph(
         composable(Screen.TekiyouMatching.route) {
             TekiyouMatchingScreen(
                 database = database,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 一般購買部門サブメニュー
+        composable(Screen.GeneralPurchaseMenu.route) {
+            GeneralPurchaseMenuScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToCapture = { navController.navigate(Screen.GeneralReceiptCapture.route) },
+                onNavigateToList = { navController.navigate(Screen.GeneralReceiptList.route) },
+                onNavigateToOutput = { navController.navigate(Screen.GeneralReceiptOutput.route) }
+            )
+        }
+
+        // 一般レシート撮影画面
+        composable(Screen.GeneralReceiptCapture.route) {
+            GeneralReceiptCaptureScreen(
+                viewModel = generalReceiptViewModel,
+                onNavigateToConfirm = {
+                    navController.navigate(Screen.GeneralReceiptConfirm.route) {
+                        popUpTo(Screen.GeneralReceiptCapture.route) { inclusive = true }
+                    }
+                },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 一般レシート確認・編集画面
+        composable(Screen.GeneralReceiptConfirm.route) {
+            GeneralReceiptConfirmScreen(
+                viewModel = generalReceiptViewModel,
+                onBack = { navController.popBackStack() },
+                onNavigateToList = {
+                    navController.navigate(Screen.GeneralReceiptList.route) {
+                        popUpTo(Screen.GeneralPurchaseMenu.route)
+                    }
+                }
+            )
+        }
+
+        // 一般レシート一覧画面
+        composable(Screen.GeneralReceiptList.route) {
+            GeneralReceiptListScreen(
+                viewModel = generalReceiptViewModel,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 一般購買CSV出力画面
+        composable(Screen.GeneralReceiptOutput.route) {
+            GeneralReceiptOutputScreen(
+                viewModel = generalReceiptViewModel,
                 onBack = { navController.popBackStack() }
             )
         }

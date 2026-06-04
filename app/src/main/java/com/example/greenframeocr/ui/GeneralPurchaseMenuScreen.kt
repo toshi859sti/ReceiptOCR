@@ -4,34 +4,28 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * 預金部門サブメニュー画面
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DepositMenuScreen(
+fun GeneralPurchaseMenuScreen(
     onBack: () -> Unit,
-    onNavigateToPassbookData: () -> Unit,
-    onNavigateToTekiyouMatching: () -> Unit,
-    onNavigateToOutputConfirm: () -> Unit
+    onNavigateToCapture: () -> Unit,
+    onNavigateToList: () -> Unit,
+    onNavigateToOutput: () -> Unit
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("預金部門") },
+                title = { Text("一般購買部門") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "戻る"
-                        )
+                        Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -50,7 +44,7 @@ fun DepositMenuScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "預金部門",
+                text = "一般購買部門",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
@@ -58,50 +52,26 @@ fun DepositMenuScreen(
 
             Spacer(modifier = Modifier.height(48.dp))
 
-            // メニューボタン（4項目）
-            SubMenuButton(
-                text = "通帳データ",
-                onClick = onNavigateToPassbookData
-            )
-
+            GeneralMenuButton(text = "レシート撮影・OCR", onClick = onNavigateToCapture)
             Spacer(modifier = Modifier.height(16.dp))
-
-            SubMenuButton(
-                text = "通帳摘要別リスト",
-                onClick = onNavigateToTekiyouMatching
-            )
-
+            GeneralMenuButton(text = "レシート一覧", onClick = onNavigateToList)
             Spacer(modifier = Modifier.height(16.dp))
-
-            SubMenuButton(
-                text = "出力確認画面",
-                onClick = onNavigateToOutputConfirm
-            )
+            GeneralMenuButton(text = "CSV出力", onClick = onNavigateToOutput)
         }
     }
 }
 
-/**
- * サブメニューボタン
- */
 @Composable
-private fun SubMenuButton(
-    text: String,
-    onClick: () -> Unit
-) {
+private fun GeneralMenuButton(text: String, onClick: () -> Unit) {
     Button(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.tertiary
+            containerColor = MaterialTheme.colorScheme.secondary
         )
     ) {
-        Text(
-            text = text,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Medium
-        )
+        Text(text = text, fontSize = 18.sp, fontWeight = FontWeight.Medium)
     }
 }

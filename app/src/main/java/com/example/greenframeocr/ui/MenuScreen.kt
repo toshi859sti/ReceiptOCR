@@ -19,6 +19,8 @@ fun MenuScreen(
     appPreferences: AppPreferences,
     onNavigateToPurchaseMenu: () -> Unit,
     onNavigateToDepositMenu: () -> Unit,
+    onNavigateToGeneralPurchaseMenu: () -> Unit = {},
+    onNavigateToBookkeepingMenu: () -> Unit = {},
     onNavigateToSettings: () -> Unit,
     onNavigateToDebugCapture: () -> Unit = {}
 ) {
@@ -64,6 +66,20 @@ fun MenuScreen(
             MenuButton(
                 text = "預金部門",
                 onClick = onNavigateToDepositMenu
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            MenuButton(
+                text = "一般購買部門",
+                onClick = onNavigateToGeneralPurchaseMenu
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            MenuButton(
+                text = "簿記ソフト連携",
+                onClick = onNavigateToBookkeepingMenu
             )
 
             Spacer(modifier = Modifier.height(24.dp))

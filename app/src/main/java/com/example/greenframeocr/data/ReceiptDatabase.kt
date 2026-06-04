@@ -23,9 +23,11 @@ import com.example.greenframeocr.util.toCanonicalKey
         DepositMeisai::class,
         TekiyouMatchingRule::class,
         OcrFallbackLog::class,
-        OcrExplicitJoin::class
+        OcrExplicitJoin::class,
+        GeneralReceipt::class,
+        GeneralReceiptItem::class
     ],
-    version = 18,
+    version = 20,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -41,6 +43,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun tekiyouMatchingRuleDao(): TekiyouMatchingRuleDao
     abstract fun ocrFallbackLogDao(): OcrFallbackLogDao
     abstract fun ocrExplicitJoinDao(): OcrExplicitJoinDao
+    abstract fun generalReceiptDao(): GeneralReceiptDao
 
     companion object {
         @Volatile
@@ -749,6 +752,195 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 19 → 20（yayoi_accounts 刷新：isEnabled追加・accountCode NULL許容・categoryC削除・defaultTaxCategory追加）
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // yayoi_accounts を完全再作成
+                database.execSQL("""
+                    CREATE TABLE yayoi_accounts_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        accountName TEXT NOT NULL,
+                        searchKeyAlpha TEXT NOT NULL DEFAULT '',
+                        accountCode TEXT,
+                        debitCredit TEXT NOT NULL DEFAULT '',
+                        categoryA TEXT NOT NULL DEFAULT '',
+                        categoryB TEXT NOT NULL DEFAULT '',
+                        defaultTaxCategory TEXT NOT NULL DEFAULT '対象外',
+                        usedForPurchase INTEGER NOT NULL DEFAULT 0,
+                        usedForDeposit INTEGER NOT NULL DEFAULT 0,
+                        isEnabled INTEGER NOT NULL DEFAULT 1,
+                        parentId INTEGER
+                    )
+                """.trimIndent())
+
+                database.execSQL("DROP TABLE yayoi_accounts")
+                database.execSQL("ALTER TABLE yayoi_accounts_new RENAME TO yayoi_accounts")
+                database.execSQL("CREATE INDEX index_yayoi_accounts_accountCode ON yayoi_accounts (accountCode)")
+
+                // 農業用初期データを投入
+                fun ins(
+                    accountName: String, searchKeyAlpha: String, accountCode: String?,
+                    debitCredit: String, categoryA: String, categoryB: String,
+                    defaultTaxCategory: String,
+                    usedForPurchase: Boolean, usedForDeposit: Boolean,
+                    parentId: Long? = null
+                ) {
+                    database.execSQL("""
+                        INSERT INTO yayoi_accounts
+                        (accountName, searchKeyAlpha, accountCode, debitCredit,
+                         categoryA, categoryB, defaultTaxCategory,
+                         usedForPurchase, usedForDeposit, isEnabled, parentId)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    """.trimIndent(), arrayOf(
+                        accountName, searchKeyAlpha, accountCode,
+                        debitCredit, categoryA, categoryB, defaultTaxCategory,
+                        if (usedForPurchase) 1 else 0,
+                        if (usedForDeposit) 1 else 0,
+                        parentId
+                    ))
+                }
+
+                // ========== 資産 ==========
+                ins("現金",               "GENKIN",    "100", "借", "資産", "現金・預金",      "対象外",     false, true)
+                ins("普通預金",           "FUTSUUYO",  "111", "借", "資産", "現金・預金",      "対象外",     false, true)
+                ins("当座預金",           "TOUZAYO",   "110", "借", "資産", "現金・預金",      "対象外",     false, true)
+                ins("定期預金",           "TEIKIYO",   "113", "借", "資産", "現金・預金",      "対象外",     false, true)
+                ins("売掛金",             "URIKAKE",   "130", "借", "資産", "売上債権",        "対象外",     false, true)
+                ins("農産物等",           "",          null,  "借", "資産", "農業棚卸資産",    "対象外",     false, false)
+                ins("未収穫農産物等",     "",          null,  "借", "資産", "農業棚卸資産",    "対象外",     false, false)
+                ins("肥料その他の貯蔵品", "",          null,  "借", "資産", "農業棚卸資産",    "対象外",     false, false)
+                ins("前払金",             "MAEBARAI",  "160", "借", "資産", "その他流動資産",  "対象外",     false, false)
+                ins("未収金",             "MISHUUKI",  "164", "借", "資産", "その他流動資産",  "対象外",     false, false)
+                ins("建物・構築物",       "TATEMONO",  "200", "借", "資産", "固定資産",        "課対仕入10", false, false)
+                ins("農機具等",           "KIKAISO",   "203", "借", "資産", "固定資産",        "課対仕入10", false, false)
+                ins("果樹・牛馬等",       "",          null,  "借", "資産", "固定資産",        "対象外",     false, false)
+                ins("土地",               "TOCHI",     "210", "借", "資産", "固定資産",        "対象外",     false, false)
+                ins("事業主貸",           "JIGYOU",    "291", "借", "資産", "事業主貸",        "対象外",     false, false)
+
+                // ========== 負債 ==========
+                ins("買掛金",   "KAIKAKE",  "301", "貸", "負債", "仕入債務",   "対象外", false, true)
+                ins("借入金",   "KARIIREK", "320", "貸", "負債", "その他負債", "対象外", false, true)
+                ins("未払金",   "MIHARAIK", "322", "貸", "負債", "その他負債", "対象外", false, true)
+                ins("前受金",   "MAEUKEKI", "324", "貸", "負債", "その他負債", "対象外", false, false)
+                ins("預り金",   "AZUKARIK", "325", "貸", "負債", "その他負債", "対象外", false, false)
+                ins("事業主借", "JIGYOU",   "390", "貸", "負債", "事業主借",   "対象外", false, false)
+
+                // ========== 資本 ==========
+                ins("元入金",     "MOTOIRE", "400", "貸", "資本", "資本", "対象外", false, false)
+                ins("専従者給与", "SENJUU",  "810", "借", "資本", "資本", "対象外", false, false)
+
+                // ========== 収入 ==========
+                ins("売上高",   "URIAGE",   "500", "貸", "収入", "農産物売上", "課税売上", false, true)
+                ins("家事消費等", "KAJISHOU","583", "貸", "収入", "農産物売上", "課税売上", false, false)
+                ins("雑収入",   "ZATSUSHU", "590", "貸", "収入", "その他収入", "課税売上", false, false)
+
+                // ========== 経費：農業生産費 ==========
+                ins("租税公課",     "SOZEI",    "700", "借", "経費", "農業生産費", "対象外",     true, false)
+                ins("種苗費",       "",         null,  "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("素畜費",       "",         null,  "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("肥料費",       "",         null,  "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("飼料費",       "",         null,  "借", "経費", "農業生産費", "課対仕入8",  true, false)
+                ins("農具費",       "",         null,  "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("農薬衛生費",   "",         null,  "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("諸材料費",     "",         null,  "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("修繕費",       "SHUUZEN",  "709", "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("動力光熱費",   "",         null,  "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("作業用衣料費", "",         null,  "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("農業共済掛金", "",         null,  "借", "経費", "農業生産費", "非課税",     true, false)
+                ins("減価償却費",   "GENKASHO", "712", "借", "経費", "農業生産費", "対象外",     true, false)
+                ins("荷造運賃手数料","NIZUKURI","701", "借", "経費", "農業生産費", "課対仕入10", true, false)
+                ins("雇人費",       "KYUURYOU", "715", "借", "経費", "農業生産費", "対象外",     true, false)
+
+                // ========== 経費：一般経費 ==========
+                ins("地代・賃借料", "CHIDAI",   "723", "借", "経費", "一般経費", "課対仕入10", true,  false)
+                ins("利子割引料",   "RISHIWAR", "722", "借", "経費", "一般経費", "非課税",     true,  false)
+                ins("外注工賃",     "GAICHUU",  "720", "借", "経費", "一般経費", "課対仕入10", true,  false)
+                ins("損害保険料",   "SONGAIHO", "708", "借", "経費", "一般経費", "非課税",     true,  false)
+                ins("車両費",       "SHARYOU",  "726", "借", "経費", "一般経費", "課対仕入10", true,  false)
+                ins("消耗品費",     "SHOUMOU",  "710", "借", "経費", "一般経費", "課対仕入10", true,  false)
+                ins("支払手数料",   "SHIHARAI", "725", "借", "経費", "一般経費", "課対仕入10", true,  false)
+                ins("水道光熱費",   "SUIDOU",   "703", "借", "経費", "一般経費", "課対仕入10", false, false)
+                ins("通信費",       "TSUUSHIN", "705", "借", "経費", "一般経費", "課対仕入10", false, false)
+                ins("雑費",         "ZAPPI",    "760", "借", "経費", "一般経費", "課対仕入10", true,  false)
+
+                // ========== 引当金等 ==========
+                ins("貸倒引当金戻入", "KASHIDAO", "800", "貸", "引当金等", "引当金等", "対象外", false, false)
+                ins("貸倒引当金繰入", "KASHIDAO", "811", "借", "引当金等", "引当金等", "対象外", false, false)
+
+                // ========== 補助科目（SELECTでparentIdを解決） ==========
+                database.execSQL("""
+                    INSERT INTO yayoi_accounts
+                    (accountName, searchKeyAlpha, accountCode, debitCredit,
+                     categoryA, categoryB, defaultTaxCategory,
+                     usedForPurchase, usedForDeposit, isEnabled, parentId)
+                    SELECT 'JA島原雲仙', '', NULL, '借',
+                        '資産', '現金・預金', '対象外', 0, 1, 1, id
+                    FROM yayoi_accounts WHERE accountName = '普通預金' AND parentId IS NULL LIMIT 1
+                """.trimIndent())
+
+                database.execSQL("""
+                    INSERT INTO yayoi_accounts
+                    (accountName, searchKeyAlpha, accountCode, debitCredit,
+                     categoryA, categoryB, defaultTaxCategory,
+                     usedForPurchase, usedForDeposit, isEnabled, parentId)
+                    SELECT '直売所', '', NULL, '借',
+                        '資産', '売上債権', '対象外', 0, 1, 1, id
+                    FROM yayoi_accounts WHERE accountName = '売掛金' AND parentId IS NULL LIMIT 1
+                """.trimIndent())
+
+                database.execSQL("""
+                    INSERT INTO yayoi_accounts
+                    (accountName, searchKeyAlpha, accountCode, debitCredit,
+                     categoryA, categoryB, defaultTaxCategory,
+                     usedForPurchase, usedForDeposit, isEnabled, parentId)
+                    SELECT '直売所', '', NULL, '貸',
+                        '収入', '農産物売上', '課税売上', 0, 1, 1, id
+                    FROM yayoi_accounts WHERE accountName = '売上高' AND parentId IS NULL LIMIT 1
+                """.trimIndent())
+
+                database.execSQL("""
+                    INSERT INTO yayoi_accounts
+                    (accountName, searchKeyAlpha, accountCode, debitCredit,
+                     categoryA, categoryB, defaultTaxCategory,
+                     usedForPurchase, usedForDeposit, isEnabled, parentId)
+                    SELECT '農協', '', NULL, '貸',
+                        '収入', '農産物売上', '課税売上', 0, 1, 1, id
+                    FROM yayoi_accounts WHERE accountName = '売上高' AND parentId IS NULL LIMIT 1
+                """.trimIndent())
+            }
+        }
+
+        // マイグレーション: version 18 → 19（一般購買レシートテーブル追加）
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS general_receipts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        date TEXT NOT NULL,
+                        storeName TEXT NOT NULL DEFAULT '',
+                        total INTEGER NOT NULL DEFAULT 0,
+                        rawOcrText TEXT NOT NULL DEFAULT '',
+                        geminiUsed INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS general_receipt_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        receiptId INTEGER NOT NULL,
+                        itemName TEXT NOT NULL DEFAULT '',
+                        price INTEGER NOT NULL DEFAULT 0,
+                        category TEXT NOT NULL DEFAULT '未分類',
+                        tekiyouId INTEGER,
+                        FOREIGN KEY (receiptId) REFERENCES general_receipts(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_general_receipt_items_receiptId ON general_receipt_items(receiptId)"
+                )
+            }
+        }
+
         // マイグレーション: version 17 → 18（OcrVariant enum リネーム）
         // confidenceLevel: AUTO → TENTATIVE
         // source: AUTO → SYSTEM, USER → CAPTURE, IMPORT → SYSTEM
@@ -769,7 +961,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance

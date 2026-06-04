@@ -83,13 +83,14 @@ data class CategoryCGroup<T>(
 @Composable
 fun AccountSettingsScreen(
     database: ReceiptDatabase,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToYayoiEdit: (Long) -> Unit = {},
+    initialTab: Int = 0
 ) {
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
 
     // State
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableStateOf(initialTab) }
     var rakurakuAccounts by remember { mutableStateOf<List<RakurakuAccount>>(emptyList()) }
     var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var showEditDialog by remember { mutableStateOf(false) }
@@ -126,7 +127,8 @@ fun AccountSettingsScreen(
     }
 
     val yayoiHierarchy = remember(yayoiAccounts) {
-        buildHierarchy(yayoiAccounts) { Triple(it.categoryA, it.categoryB, it.categoryC) }
+        // categoryC は廃止のため categoryB を C にも使用（C ヘッダーは B と同名で非表示になる）
+        buildHierarchy(yayoiAccounts) { Triple(it.categoryA, it.categoryB, it.categoryB) }
     }
 
     // 区分Aリスト（タブによって切り替え）
@@ -183,7 +185,13 @@ fun AccountSettingsScreen(
                             contentDescription = if (expandedCategoryB.isNotEmpty()) "すべて折りたたむ" else "すべて展開"
                         )
                     }
-                    IconButton(onClick = { showAddDialog = true }) {
+                    IconButton(onClick = {
+                        if (selectedTab == 1) {
+                            onNavigateToYayoiEdit(-1L)
+                        } else {
+                            showAddDialog = true
+                        }
+                    }) {
                         Icon(Icons.Default.Add, "追加")
                     }
                 },
@@ -293,10 +301,7 @@ fun AccountSettingsScreen(
                             accountContent = { account ->
                                 YayoiAccountItem(
                                     account = account,
-                                    onClick = {
-                                        selectedYayoiAccount = account
-                                        showEditDialog = true
-                                    },
+                                    onClick = { onNavigateToYayoiEdit(account.id) },
                                     onDelete = {
                                         selectedYayoiAccount = account
                                         showDeleteDialog = true
@@ -310,81 +315,44 @@ fun AccountSettingsScreen(
         }
     }
 
-    // 編集ダイアログ
+    // 編集ダイアログ（らくらくのみ。弥生は専用画面へ遷移）
     if (showEditDialog) {
-        when (selectedTab) {
-            0 -> selectedRakurakuAccount?.let { account ->
-                RakurakuAccountEditDialog(
-                    title = "らくらく勘定科目編集",
-                    account = account,
-                    existingCategories = rakurakuAccounts.map { Triple(it.categoryA, it.categoryB, it.categoryC) }.distinct(),
-                    onDismiss = {
-                        showEditDialog = false
-                        selectedRakurakuAccount = null
-                    },
-                    onSave = { updatedAccount ->
-                        scope.launch {
-                            database.rakurakuAccountDao().update(updatedAccount)
-                            loadAccounts()
-                        }
-                        showEditDialog = false
-                        selectedRakurakuAccount = null
+        selectedRakurakuAccount?.let { account ->
+            RakurakuAccountEditDialog(
+                title = "らくらく勘定科目編集",
+                account = account,
+                existingCategories = rakurakuAccounts.map { Triple(it.categoryA, it.categoryB, it.categoryC) }.distinct(),
+                onDismiss = {
+                    showEditDialog = false
+                    selectedRakurakuAccount = null
+                },
+                onSave = { updatedAccount ->
+                    scope.launch {
+                        database.rakurakuAccountDao().update(updatedAccount)
+                        loadAccounts()
                     }
-                )
-            }
-            1 -> selectedYayoiAccount?.let { account ->
-                YayoiAccountEditDialog(
-                    title = "弥生勘定科目編集",
-                    account = account,
-                    existingCategories = yayoiAccounts.map { Triple(it.categoryA, it.categoryB, it.categoryC) }.distinct(),
-                    onDismiss = {
-                        showEditDialog = false
-                        selectedYayoiAccount = null
-                    },
-                    onSave = { updatedAccount ->
-                        scope.launch {
-                            database.yayoiAccountDao().update(updatedAccount)
-                            loadAccounts()
-                        }
-                        showEditDialog = false
-                        selectedYayoiAccount = null
-                    }
-                )
-            }
+                    showEditDialog = false
+                    selectedRakurakuAccount = null
+                }
+            )
         }
     }
 
-    // 追加ダイアログ
+    // 追加ダイアログ（らくらくのみ。弥生は onNavigateToYayoiEdit(-1L) で遷移済み）
     if (showAddDialog) {
-        if (selectedTab == 0) {
-            RakurakuAccountEditDialog(
-                title = "らくらく勘定科目追加",
-                account = null,
-                existingCategories = rakurakuAccounts.map { Triple(it.categoryA, it.categoryB, it.categoryC) }.distinct(),
-                onDismiss = { showAddDialog = false },
-                onSave = { newAccount ->
-                    scope.launch {
-                        database.rakurakuAccountDao().insert(newAccount)
-                        loadAccounts()
-                    }
-                    showAddDialog = false
+        RakurakuAccountEditDialog(
+            title = "らくらく勘定科目追加",
+            account = null,
+            existingCategories = rakurakuAccounts.map { Triple(it.categoryA, it.categoryB, it.categoryC) }.distinct(),
+            onDismiss = { showAddDialog = false },
+            onSave = { newAccount ->
+                scope.launch {
+                    database.rakurakuAccountDao().insert(newAccount)
+                    loadAccounts()
                 }
-            )
-        } else {
-            YayoiAccountEditDialog(
-                title = "弥生勘定科目追加",
-                account = null,
-                existingCategories = yayoiAccounts.map { Triple(it.categoryA, it.categoryB, it.categoryC) }.distinct(),
-                onDismiss = { showAddDialog = false },
-                onSave = { newAccount ->
-                    scope.launch {
-                        database.yayoiAccountDao().insert(newAccount)
-                        loadAccounts()
-                    }
-                    showAddDialog = false
-                }
-            )
-        }
+                showAddDialog = false
+            }
+        )
     }
 
     // 削除確認ダイアログ
@@ -442,7 +410,7 @@ fun AccountSettingsScreen(
 /**
  * 階層構造を構築（並び順を適用）
  */
-private fun <T> buildHierarchy(
+internal fun <T> buildHierarchy(
     accounts: List<T>,
     getCategoryKeys: (T) -> Triple<String, String, String>
 ): List<AccountHierarchy<T>> {
@@ -497,7 +465,7 @@ private fun <T> buildHierarchy(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CategoryASelector(
+internal fun CategoryASelector(
     categories: List<String>,
     selectedCategory: String?,
     onCategorySelected: (String) -> Unit
@@ -536,7 +504,7 @@ private fun CategoryASelector(
  * フィルタリングされた勘定科目リスト（区分B以下を表示）
  */
 @Composable
-private fun <T> FilteredAccountList(
+internal fun <T> FilteredAccountList(
     categoryBGroups: List<CategoryBGroup<T>>,
     expandedCategoryB: Set<String>,
     expandedCategoryC: Set<String>,
@@ -619,7 +587,7 @@ private fun <T> FilteredAccountList(
  * カテゴリヘッダー
  */
 @Composable
-private fun CategoryHeader(
+internal fun CategoryHeader(
     title: String,
     level: Int,
     isExpanded: Boolean,
@@ -808,11 +776,13 @@ private fun YayoiAccountItem(
             modifier = Modifier.weight(1f)
         )
         // サーチキー数字（コード）
-        Text(
-            text = account.accountCode,
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        account.accountCode?.let {
+            Text(
+                text = it,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         // サーチキー英字
         if (account.searchKeyAlpha.isNotEmpty()) {
             Text(
@@ -1099,7 +1069,7 @@ private fun RakurakuAccountEditDialog(
 private fun YayoiAccountEditDialog(
     title: String,
     account: YayoiAccount?,
-    existingCategories: List<Triple<String, String, String>>,
+    existingCategories: List<Pair<String, String>>,
     onDismiss: () -> Unit,
     onSave: (YayoiAccount) -> Unit
 ) {
@@ -1109,16 +1079,13 @@ private fun YayoiAccountEditDialog(
     var editDebitCredit by remember { mutableStateOf(account?.debitCredit ?: "借") }
     var editCategoryA by remember { mutableStateOf(account?.categoryA ?: "") }
     var editCategoryB by remember { mutableStateOf(account?.categoryB ?: "") }
-    var editCategoryC by remember { mutableStateOf(account?.categoryC ?: "") }
     var editUsedForPurchase by remember { mutableStateOf(account?.usedForPurchase ?: false) }
 
     var expandedCategoryA by remember { mutableStateOf(false) }
     var expandedCategoryB by remember { mutableStateOf(false) }
-    var expandedCategoryC by remember { mutableStateOf(false) }
 
     val distinctCategoryA = existingCategories.map { it.first }.distinct().sorted()
     val distinctCategoryB = existingCategories.map { it.second }.distinct().sorted()
-    val distinctCategoryC = existingCategories.map { it.third }.distinct().sorted()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1233,35 +1200,6 @@ private fun YayoiAccountEditDialog(
                     }
                 }
 
-                // 区分C
-                ExposedDropdownMenuBox(
-                    expanded = expandedCategoryC,
-                    onExpandedChange = { expandedCategoryC = it }
-                ) {
-                    OutlinedTextField(
-                        value = editCategoryC,
-                        onValueChange = { editCategoryC = it },
-                        label = { Text("区分C (小分類) *") },
-                        modifier = Modifier.fillMaxWidth().menuAnchor(),
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedCategoryC) },
-                        singleLine = true
-                    )
-                    ExposedDropdownMenu(
-                        expanded = expandedCategoryC,
-                        onDismissRequest = { expandedCategoryC = false }
-                    ) {
-                        distinctCategoryC.forEach { category ->
-                            DropdownMenuItem(
-                                text = { Text(category) },
-                                onClick = {
-                                    editCategoryC = category
-                                    expandedCategoryC = false
-                                }
-                            )
-                        }
-                    }
-                }
-
                 // 購買取引使用
                 Row(
                     verticalAlignment = Alignment.CenterVertically
@@ -1277,26 +1215,25 @@ private fun YayoiAccountEditDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (editName.isNotBlank() && editCategoryA.isNotBlank() &&
-                        editCategoryB.isNotBlank() && editCategoryC.isNotBlank()) {
+                    if (editName.isNotBlank() && editCategoryA.isNotBlank() && editCategoryB.isNotBlank()) {
                         val newAccount = YayoiAccount(
                             id = account?.id ?: 0,
                             accountName = editName.trim(),
-                            accountCode = editCode.trim(),
+                            accountCode = editCode.trim().ifEmpty { null },
                             searchKeyAlpha = editSearchKey.trim(),
                             debitCredit = editDebitCredit,
                             categoryA = editCategoryA.trim(),
                             categoryB = editCategoryB.trim(),
-                            categoryC = editCategoryC.trim(),
+                            defaultTaxCategory = account?.defaultTaxCategory ?: "対象外",
                             usedForPurchase = editUsedForPurchase,
-                            usedForDeposit = account?.usedForDeposit ?: true,
+                            usedForDeposit = account?.usedForDeposit ?: false,
+                            isEnabled = account?.isEnabled ?: true,
                             parentId = account?.parentId
                         )
                         onSave(newAccount)
                     }
                 },
-                enabled = editName.isNotBlank() && editCategoryA.isNotBlank() &&
-                        editCategoryB.isNotBlank() && editCategoryC.isNotBlank()
+                enabled = editName.isNotBlank() && editCategoryA.isNotBlank() && editCategoryB.isNotBlank()
             ) {
                 Text("保存")
             }

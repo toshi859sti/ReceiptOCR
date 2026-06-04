@@ -61,38 +61,36 @@ object DatabaseInitializer {
     }
 
     /**
-     * 弥生会計 勘定科目マスタをインポート
-     * CSV形式: 勘定科目,サーチキー英字,サーチキー数字,借貸,区分C,区分B,区分A,購買取引使用,預金取引使用,親科目
+     * 弥生会計 勘定科目マスタ初期化
+     * 初期データはマイグレーション（MIGRATION_19_20）で投入済みのため、
+     * reinitialize() 時のみ再投入が必要。
+     * CSV形式: 勘定科目,サーチキー英字,サーチキー数字,借貸,区分B,区分A,税区分,購買取引使用,預金取引使用
      */
     private suspend fun importYayoiAccounts(context: Context, database: ReceiptDatabase) {
         val dao = database.yayoiAccountDao()
         val accounts = mutableListOf<YayoiAccount>()
-        val parentMap = mutableMapOf<Int, Long>() // CSV行番号 -> DB ID
 
         context.assets.open("yayoi_accounts.csv").use { inputStream ->
             BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).use { reader ->
-                // ヘッダー行をスキップ
-                reader.readLine()
+                reader.readLine() // ヘッダー行をスキップ
 
-                var lineNumber = 1
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
-                    lineNumber++
                     val parts = line!!.split(",")
                     if (parts.isNotEmpty() && parts[0].isNotBlank()) {
                         accounts.add(
                             YayoiAccount(
-                                id = 0, // AutoGenerate
+                                id = 0,
                                 accountName = parts[0].trim(),
                                 searchKeyAlpha = parts.getOrNull(1)?.trim() ?: "",
-                                accountCode = parts.getOrNull(2)?.trim() ?: "",
+                                accountCode = parts.getOrNull(2)?.trim()?.ifEmpty { null },
                                 debitCredit = parts.getOrNull(3)?.trim() ?: "",
-                                categoryC = parts.getOrNull(4)?.trim() ?: "",
-                                categoryB = parts.getOrNull(5)?.trim() ?: "",
-                                categoryA = parts.getOrNull(6)?.trim() ?: "",
+                                categoryB = parts.getOrNull(4)?.trim() ?: "",
+                                categoryA = parts.getOrNull(5)?.trim() ?: "",
+                                defaultTaxCategory = parts.getOrNull(6)?.trim() ?: "対象外",
                                 usedForPurchase = parts.getOrNull(7)?.trim()?.uppercase() == "TRUE",
-                                usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() != "FALSE",
-                                parentId = null // 後で設定
+                                usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() == "TRUE",
+                                parentId = null
                             )
                         )
                     }
