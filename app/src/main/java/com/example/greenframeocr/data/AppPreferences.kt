@@ -49,6 +49,10 @@ class AppPreferences(context: Context) {
 
         // Gemini API キー（一般購買OCR用）
         private const val KEY_GEMINI_API_KEY = "gemini_api_key"
+
+        // 連携会計ソフト
+        private const val KEY_ACCOUNTING_SOFTWARE = "accounting_software"
+        private const val DEFAULT_ACCOUNTING_SOFTWARE = "RAKURAKU"
     }
 
     // 年号設定
@@ -108,6 +112,13 @@ class AppPreferences(context: Context) {
         get() = prefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
         set(value) = prefs.edit().putString(KEY_GEMINI_API_KEY, value).apply()
 
+    // 連携会計ソフト
+    var accountingSoftware: AccountingSoftware
+        get() = try {
+            AccountingSoftware.valueOf(prefs.getString(KEY_ACCOUNTING_SOFTWARE, DEFAULT_ACCOUNTING_SOFTWARE) ?: DEFAULT_ACCOUNTING_SOFTWARE)
+        } catch (_: IllegalArgumentException) { AccountingSoftware.RAKURAKU }
+        set(value) = prefs.edit().putString(KEY_ACCOUNTING_SOFTWARE, value.name).apply()
+
     // ダークモード
     var darkMode: AppDarkMode
         get() = try {
@@ -134,6 +145,15 @@ class AppPreferences(context: Context) {
     fun resetToDefaults() {
         prefs.edit().clear().apply()
     }
+}
+
+/**
+ * 連携会計ソフト
+ */
+enum class AccountingSoftware(val displayName: String) {
+    RAKURAKU("らくらく青色申告農業版"),
+    YAYOI("弥生の青色申告"),
+    BLUE_RETURN_PREP("BlueReturnPrep（自作）")
 }
 
 /**

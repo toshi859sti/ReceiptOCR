@@ -15,8 +15,131 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
 class GeminiRateLimitException : Exception("APIの利用上限に達しました。しばらく待ってから再試行してください")
+class GeminiApiKeyMissingException : Exception("Gemini APIキーが設定されていません。設定画面で入力してください。")
 
 object GeminiReceiptClient {
+
+    data class AccountMatchSuggestion(
+        val productName: String,
+        val suggestedAccountId: Long,
+        val suggestedAccountName: String,
+        val reason: String
+    )
+
+    suspend fun matchProductsToAccounts(
+        productNames: List<Pair<String, String>>,  // (productName, category)
+        accounts: List<com.example.greenframeocr.data.YayoiAccount>,
+        apiKey: String
+    ): List<AccountMatchSuggestion> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) throw GeminiApiKeyMissingException()
+
+        val productsText = productNames.take(60).joinToString("\n") { (name, cat) ->
+            "- $name（カテゴリ: $cat）"
+        }
+        val accountsText = accounts.take(100).joinToString("\n") { acc ->
+            val code = acc.accountCode?.let { "[$it]" } ?: ""
+            "ID:${acc.id}  ${acc.accountName}$code  ${acc.categoryA}/${acc.categoryB}"
+        }
+
+        val prompt = """
+あなたは農業経営の青色申告（弥生の青色申告）に詳しい会計専門家です。
+以下の農業関連購買品目に対して、提示された弥生勘定科目の中から最も適切なものを1つ割り当ててください。
+
+# 購買品目（未割当・${productNames.size}件）
+$productsText
+
+# 弥生勘定科目リスト（${accounts.size}件）
+$accountsText
+
+# 回答形式（JSON）
+- accountId は必ず上記リストの ID を使用してください
+- 適切な科目が見つからない場合はそのエントリを省略してください
+- reason は30文字以内の日本語で記述してください
+
+{
+  "matches": [
+    {"productName": "品目名", "accountId": 科目ID, "reason": "割り当て理由"}
+  ]
+}
+""".trimIndent()
+
+        val requestBody = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply { put("text", prompt) })
+                    })
+                })
+            })
+            put("generationConfig", JSONObject().apply {
+                put("responseMimeType", "application/json")
+                put("temperature", 0)
+            })
+        }
+
+        val client = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .build()
+
+        val request = Request.Builder()
+            .url("$API_URL?key=$apiKey")
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    if (response.code == 429) throw GeminiRateLimitException()
+                    Log.e("GeminiReceiptClient", "HTTP ${response.code}")
+                    return@withContext emptyList()
+                }
+                val body = response.body?.string() ?: return@withContext emptyList()
+                parseMatchResponse(body, accounts)
+            }
+        } catch (e: GeminiRateLimitException) { throw e }
+          catch (e: GeminiApiKeyMissingException) { throw e }
+          catch (e: Exception) {
+            Log.e("GeminiReceiptClient", "matchProducts error: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun parseMatchResponse(
+        responseBody: String,
+        accounts: List<com.example.greenframeocr.data.YayoiAccount>
+    ): List<AccountMatchSuggestion> {
+        return try {
+            val root = JSONObject(responseBody)
+            val text = root.getJSONArray("candidates")
+                .getJSONObject(0)
+                .getJSONObject("content")
+                .getJSONArray("parts")
+                .getJSONObject(0)
+                .getString("text")
+
+            val json = JSONObject(text)
+            val arr = json.getJSONArray("matches")
+            val accountMap = accounts.associateBy { it.id }
+
+            (0 until arr.length()).mapNotNull { i ->
+                val obj = arr.getJSONObject(i)
+                val productName = obj.optString("productName")
+                val accountId = obj.optLong("accountId", -1L)
+                val reason = obj.optString("reason", "")
+                val account = accountMap[accountId] ?: return@mapNotNull null
+                AccountMatchSuggestion(
+                    productName = productName,
+                    suggestedAccountId = accountId,
+                    suggestedAccountName = account.accountName,
+                    reason = reason
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("GeminiReceiptClient", "parseMatchResponse error: ${e.message}")
+            emptyList()
+        }
+    }
 
     private const val API_URL =
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"

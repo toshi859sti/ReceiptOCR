@@ -412,6 +412,7 @@ fun ReceiptNavGraph(
         composable(Screen.ProductList.route) {
             ProductListScreen(
                 database = database,
+                appPreferences = appPreferences,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -428,6 +429,7 @@ fun ReceiptNavGraph(
         composable(Screen.TekiyouMatching.route) {
             TekiyouMatchingScreen(
                 database = database,
+                appPreferences = appPreferences,
                 onBack = { navController.popBackStack() }
             )
         }

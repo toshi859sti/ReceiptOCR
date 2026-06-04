@@ -6,11 +6,13 @@ import androidx.room.*
 interface TekiyouMatchingRuleDao {
 
     @Query("""
-        SELECT r.id, r.pattern, r.normalizedTekiyou, r.isRegex, r.rakurakuTekiyouId,
+        SELECT r.id, r.pattern, r.normalizedTekiyou, r.isRegex, r.rakurakuTekiyouId, r.yayoiAccountId,
                r.sampleText, r.matchCount, r.isDeposit,
-               t.tekiyouName as rakurakuTekiyouName, t.mainCategory, t.subCategory, t.kamoku
+               t.tekiyouName as rakurakuTekiyouName, t.mainCategory, t.subCategory, t.kamoku,
+               y.accountName as yayoiAccountName, y.accountCode as yayoiAccountCode
         FROM tekiyou_matching_rules r
         LEFT JOIN rakuraku_tekiyou t ON r.rakurakuTekiyouId = t.id
+        LEFT JOIN yayoi_accounts y ON r.yayoiAccountId = y.id
         ORDER BY r.isDeposit DESC, r.normalizedTekiyou
     """)
     suspend fun getAllWithTekiyou(): List<MatchingRuleWithTekiyou>
@@ -53,7 +55,7 @@ interface TekiyouMatchingRuleDao {
 }
 
 /**
- * マッチングルールとらくらく摘要の結合結果
+ * マッチングルールとらくらく摘要／弥生勘定科目の結合結果
  */
 data class MatchingRuleWithTekiyou(
     val id: Int,
@@ -61,6 +63,7 @@ data class MatchingRuleWithTekiyou(
     val normalizedTekiyou: String,
     val isRegex: Boolean,
     val rakurakuTekiyouId: Int?,
+    val yayoiAccountId: Long?,
     val sampleText: String,
     val matchCount: Int,
     val isDeposit: Boolean,
@@ -68,5 +71,8 @@ data class MatchingRuleWithTekiyou(
     val rakurakuTekiyouName: String?,
     val mainCategory: String?,
     val subCategory: String?,
-    val kamoku: String?
+    val kamoku: String?,
+    // 弥生勘定科目の情報
+    val yayoiAccountName: String?,
+    val yayoiAccountCode: String?
 )

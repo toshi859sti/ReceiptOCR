@@ -47,5 +47,8 @@ data class TekiyouMatchingRule(
     val matchCount: Int = 0,
 
     /** 入金(true) or 出金(false) - 金額の符号から自動判定 */
-    val isDeposit: Boolean = true
+    val isDeposit: Boolean = true,
+
+    /** 弥生勘定科目ID（弥生モード時に使用） */
+    val yayoiAccountId: Long? = null
 )

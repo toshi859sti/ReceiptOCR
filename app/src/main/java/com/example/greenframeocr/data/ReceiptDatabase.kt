@@ -27,7 +27,7 @@ import com.example.greenframeocr.util.toCanonicalKey
         GeneralReceipt::class,
         GeneralReceiptItem::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -752,6 +752,14 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 20 → 21（連携会計ソフト対応：product_master/tekiyou_matching_rules に yayoiAccountId 追加）
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE product_master ADD COLUMN yayoiAccountId INTEGER DEFAULT NULL")
+                database.execSQL("ALTER TABLE tekiyou_matching_rules ADD COLUMN yayoiAccountId INTEGER DEFAULT NULL")
+            }
+        }
+
         // マイグレーション: version 19 → 20（yayoi_accounts 刷新：isEnabled追加・accountCode NULL許容・categoryC削除・defaultTaxCategory追加）
         private val MIGRATION_19_20 = object : Migration(19, 20) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -961,7 +969,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance

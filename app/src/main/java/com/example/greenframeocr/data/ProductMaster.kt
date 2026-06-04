@@ -49,5 +49,8 @@ data class ProductMaster(
     val kaikakeTekiyouId: Int? = null,
 
     /** 確定フラグ: 手動入力・訂正済みアイテムはtrue */
-    val isCertified: Boolean = false
+    val isCertified: Boolean = false,
+
+    /** 弥生勘定科目ID（YayoiAccountのID、弥生モード時に使用） */
+    val yayoiAccountId: Long? = null
 )

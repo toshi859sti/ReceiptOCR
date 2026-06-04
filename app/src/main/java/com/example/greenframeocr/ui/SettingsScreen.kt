@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppDarkMode
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.AppThemePreset
@@ -59,6 +60,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val db = remember { ReceiptDatabase.getDatabase(context) }
 
+    var selectedAccountingSoftware by remember { mutableStateOf(appPreferences.accountingSoftware) }
     var eraYear by remember { mutableIntStateOf(appPreferences.eraYear) }
     var cameraFlash by remember { mutableStateOf(appPreferences.cameraFlash) }
     var minSharpness by remember { mutableIntStateOf(appPreferences.minSharpness) }
@@ -211,6 +213,48 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            // ========== 連携会計ソフト ==========
+            SettingSection(title = "📊 連携会計ソフト")
+
+            Text(
+                text = "購買品目リスト・通帳摘要リストのマッチング対象が切り替わります",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            AccountingSoftware.entries.forEach { software ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            selectedAccountingSoftware = software
+                            appPreferences.accountingSoftware = software
+                        }
+                        .padding(vertical = 4.dp)
+                ) {
+                    RadioButton(
+                        selected = selectedAccountingSoftware == software,
+                        onClick = {
+                            selectedAccountingSoftware = software
+                            appPreferences.accountingSoftware = software
+                        }
+                    )
+                    Column {
+                        Text(software.displayName, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        if (software == AccountingSoftware.BLUE_RETURN_PREP) {
+                            Text(
+                                "マッチングはWindows側アプリで実施",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // ========== テーマ ==========
             SettingSection(title = "🎨 テーマ")
 
