@@ -14,6 +14,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.RakurakuTekiyou
 import com.example.greenframeocr.data.ReceiptDatabase
 import kotlinx.coroutines.launch
@@ -26,11 +27,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun KaikakeTekiyouScreen(
     database: ReceiptDatabase,
+    appPreferences: AppPreferences,
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var tekiyouList by remember { mutableStateOf<List<RakurakuTekiyou>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
 
     // データ読み込み
     fun loadData() {
@@ -79,8 +82,24 @@ fun KaikakeTekiyouScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FontSizeControl(
+                    fontSize = listFontSize,
+                    onDecrease = {
+                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                        appPreferences.listFontSize = listFontSize
+                    },
+                    onIncrease = {
+                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                        appPreferences.listFontSize = listFontSize
+                    }
+                )
+            }
             // ヘッダー行
-            KaikakeTekiyouGridHeader()
+            KaikakeTekiyouGridHeader(fontSize = listFontSize)
 
             Divider(thickness = 2.dp)
 
@@ -109,6 +128,7 @@ fun KaikakeTekiyouScreen(
                     items(tekiyouList, key = { it.id }) { tekiyou ->
                         KaikakeTekiyouGridRow(
                             tekiyou = tekiyou,
+                            fontSize = listFontSize,
                             onEnabledChange = { isEnabled -> onEnabledChange(tekiyou, isEnabled) }
                         )
                         Divider()
@@ -123,7 +143,8 @@ fun KaikakeTekiyouScreen(
  * グリッドヘッダー
  */
 @Composable
-private fun KaikakeTekiyouGridHeader() {
+private fun KaikakeTekiyouGridHeader(fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE) {
+    val sub = (fontSize - 2f).coerceAtLeast(10f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -131,41 +152,11 @@ private fun KaikakeTekiyouGridHeader() {
             .padding(vertical = 12.dp, horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = "使用",
-            modifier = Modifier.width(40.dp),
-            fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = "摘要名",
-            modifier = Modifier.weight(1.8f),
-            fontWeight = FontWeight.Bold,
-            fontSize = 12.sp,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = "Key",
-            modifier = Modifier.weight(0.8f),
-            fontWeight = FontWeight.Bold,
-            fontSize = 12.sp,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = "科目",
-            modifier = Modifier.weight(1.2f),
-            fontWeight = FontWeight.Bold,
-            fontSize = 12.sp,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = "事業",
-            modifier = Modifier.weight(0.6f),
-            fontWeight = FontWeight.Bold,
-            fontSize = 12.sp,
-            textAlign = TextAlign.Center
-        )
+        Text(text = "使用",  modifier = Modifier.width(40.dp),  fontWeight = FontWeight.Bold, fontSize = sub.sp, textAlign = TextAlign.Center)
+        Text(text = "摘要名", modifier = Modifier.weight(1.8f), fontWeight = FontWeight.Bold, fontSize = sub.sp, textAlign = TextAlign.Center)
+        Text(text = "Key",   modifier = Modifier.weight(0.8f), fontWeight = FontWeight.Bold, fontSize = sub.sp, textAlign = TextAlign.Center)
+        Text(text = "科目",  modifier = Modifier.weight(1.2f), fontWeight = FontWeight.Bold, fontSize = sub.sp, textAlign = TextAlign.Center)
+        Text(text = "事業",  modifier = Modifier.weight(0.6f), fontWeight = FontWeight.Bold, fontSize = sub.sp, textAlign = TextAlign.Center)
     }
 }
 
@@ -175,43 +166,20 @@ private fun KaikakeTekiyouGridHeader() {
 @Composable
 private fun KaikakeTekiyouGridRow(
     tekiyou: RakurakuTekiyou,
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onEnabledChange: (Boolean) -> Unit
 ) {
+    val sub = (fontSize - 2f).coerceAtLeast(10f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp, horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Checkbox(
-            checked = tekiyou.isEnabled,
-            onCheckedChange = onEnabledChange,
-            modifier = Modifier.width(40.dp)
-        )
-        Text(
-            text = tekiyou.tekiyouName,
-            modifier = Modifier.weight(1.8f),
-            fontSize = 13.sp,
-            textAlign = TextAlign.Start
-        )
-        Text(
-            text = tekiyou.searchKey,
-            modifier = Modifier.weight(0.8f),
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = tekiyou.kamoku,
-            modifier = Modifier.weight(1.2f),
-            fontSize = 13.sp,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = tekiyou.businessRatio?.let { "${it}%" } ?: "-",
-            modifier = Modifier.weight(0.6f),
-            fontSize = 12.sp,
-            textAlign = TextAlign.Center
-        )
+        Checkbox(checked = tekiyou.isEnabled, onCheckedChange = onEnabledChange, modifier = Modifier.width(40.dp))
+        Text(text = tekiyou.tekiyouName, modifier = Modifier.weight(1.8f), fontSize = (fontSize - 1f).sp, textAlign = TextAlign.Start)
+        Text(text = tekiyou.searchKey,   modifier = Modifier.weight(0.8f), fontSize = sub.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text = tekiyou.kamoku,      modifier = Modifier.weight(1.2f), fontSize = (fontSize - 1f).sp, textAlign = TextAlign.Center)
+        Text(text = tekiyou.businessRatio?.let { "${it}%" } ?: "-", modifier = Modifier.weight(0.6f), fontSize = sub.sp, textAlign = TextAlign.Center)
     }
 }

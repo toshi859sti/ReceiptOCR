@@ -37,6 +37,9 @@ data class DepositMeisai(
     /** マッチングルールID（nullならマッチなし） */
     val matchingRuleId: Int? = null,
 
-    /** 個別オーバーライド摘要ID（nullならグループのデフォルトを使用） */
-    val overrideTekiyouId: Int? = null
+    /** 個別オーバーライド摘要ID（nullならグループのデフォルトを使用・らくらく用） */
+    val overrideTekiyouId: Int? = null,
+
+    /** 個別オーバーライド弥生勘定科目ID（nullならグループのデフォルトを使用・弥生用） */
+    val overrideYayoiAccountId: Long? = null
 )

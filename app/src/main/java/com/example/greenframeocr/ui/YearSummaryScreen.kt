@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.ReceiptDatabase
 import java.text.NumberFormat
 import java.util.*
@@ -36,11 +37,13 @@ private data class MonthEntry(
 @Composable
 fun YearSummaryScreen(
     database: ReceiptDatabase,
+    appPreferences: AppPreferences,
     onNavigateToMonth: (year: Int, month: Int) -> Unit,
     onBack: () -> Unit
 ) {
     var isLoading by remember { mutableStateOf(true) }
     var yearGroups by remember { mutableStateOf<List<YearGroup>>(emptyList()) }
+    var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
 
     LaunchedEffect(Unit) {
         val allSheets = database.receiptDao().getAllSheetData()
@@ -90,27 +93,45 @@ fun YearSummaryScreen(
             )
         }
     ) { padding ->
-        when {
-            isLoading -> Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center
-            ) { CircularProgressIndicator() }
-
-            yearGroups.isEmpty() -> Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                horizontalArrangement = Arrangement.End
             ) {
-                Text(
-                    text = "データがありません",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                FontSizeControl(
+                    fontSize = listFontSize,
+                    onDecrease = {
+                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                        appPreferences.listFontSize = listFontSize
+                    },
+                    onIncrease = {
+                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                        appPreferences.listFontSize = listFontSize
+                    }
                 )
             }
+            when {
+                isLoading -> Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) { CircularProgressIndicator() }
 
-            else -> LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(16.dp),
+                yearGroups.isEmpty() -> Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "データがありません",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                else -> LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(yearGroups, key = { it.year }) { group ->
@@ -134,20 +155,20 @@ fun YearSummaryScreen(
                                 Column {
                                     Text(
                                         text = "令和${group.year}年",
-                                        fontSize = 20.sp,
+                                        fontSize = (listFontSize + 6f).sp,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                     Text(
                                         text = "${group.sheetCount}枚・${group.months.size}ヶ月分",
-                                        fontSize = 13.sp,
+                                        fontSize = (listFontSize - 1f).coerceAtLeast(10f).sp,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                                     )
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = "¥${numberFormat.format(group.yearTotal)}",
-                                        fontSize = 18.sp,
+                                        fontSize = (listFontSize + 4f).sp,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         fontFamily = FontFamily.Monospace
@@ -181,12 +202,12 @@ fun YearSummaryScreen(
                                         ) {
                                             Text(
                                                 text = "${entry.month}月（${entry.sheetCount}枚）",
-                                                fontSize = 16.sp,
+                                                fontSize = (listFontSize + 2f).sp,
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                                             )
                                             Text(
                                                 text = "¥${numberFormat.format(entry.monthTotal)}",
-                                                fontSize = 16.sp,
+                                                fontSize = (listFontSize + 2f).sp,
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                                 fontFamily = FontFamily.Monospace
                                             )
@@ -198,6 +219,7 @@ fun YearSummaryScreen(
                     }
                 }
             }
+        }
         }
     }
 }

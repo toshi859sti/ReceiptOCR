@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.material3.Divider
 import androidx.compose.runtime.*
@@ -39,6 +40,8 @@ fun GeneralReceiptConfirmScreen(
     val pendingReceipt by viewModel.pendingReceipt.collectAsState()
     val pendingItems by viewModel.pendingItems.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
+    val isLookingUpStore by viewModel.isLookingUpStore.collectAsState()
+    val storeLookupError by viewModel.storeLookupError.collectAsState()
 
     var storeName by remember { mutableStateOf("") }
     var dateText by remember { mutableStateOf("") }
@@ -65,9 +68,18 @@ fun GeneralReceiptConfirmScreen(
         }
     }
 
+    // ViewModel が店舗名を更新した場合（登録番号照会完了後）に反映
+    LaunchedEffect(pendingReceipt?.storeName) {
+        val newName = pendingReceipt?.storeName ?: return@LaunchedEffect
+        if (initialized && storeName.isBlank() && newName.isNotBlank()) {
+            storeName = newName
+        }
+    }
+
     val total = editItems.sumOf { it.priceText.toIntOrNull() ?: 0 }
     val geminiUsed = pendingReceipt?.geminiUsed ?: false
     val rawOcrText = pendingReceipt?.rawOcrText ?: ""
+    val registrationNumber = pendingReceipt?.registrationNumber ?: ""
 
     Scaffold(
         topBar = {
@@ -114,6 +126,42 @@ fun GeneralReceiptConfirmScreen(
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (registrationNumber.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "登録番号: $registrationNumber",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = {
+                                    viewModel.lookupStoreByRegistrationNumber(registrationNumber)
+                                },
+                                enabled = !isLookingUpStore,
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                if (isLookingUpStore) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                } else {
+                                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("店舗名を検索", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                        storeLookupError?.let { err ->
+                            Text(err, fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
             }
 
@@ -224,7 +272,8 @@ fun GeneralReceiptConfirmScreen(
                             storeName = storeName,
                             total = total,
                             rawOcrText = rawOcrText,
-                            geminiUsed = geminiUsed
+                            geminiUsed = geminiUsed,
+                            registrationNumber = registrationNumber
                         )
                         val items = editItems.map {
                             GeneralReceiptItem(

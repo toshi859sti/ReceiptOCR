@@ -46,9 +46,34 @@ fun PassbookDataScreen(
     val scope = rememberCoroutineScope()
     var meisaiList by remember { mutableStateOf<List<DepositMeisai>>(emptyList()) }
     val hideAmount = appPreferences.depositHideAmount
+    var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
     var isLoading by remember { mutableStateOf(true) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var importResultMessage by remember { mutableStateOf<String?>(null) }
+
+    val currentCalendarYear = remember {
+        java.util.Calendar.getInstance().get(java.util.Calendar.YEAR).toString()
+    }
+    val availableYears = remember(meisaiList) {
+        meisaiList.map { it.transactionDate.take(4) }
+            .filter { it.matches(Regex("\\d{4}")) }
+            .distinct()
+            .sortedDescending()
+    }
+    var selectedYear by remember(availableYears) {
+        mutableStateOf(
+            when {
+                availableYears.contains(currentCalendarYear) -> currentCalendarYear
+                availableYears.isNotEmpty() -> availableYears.first()
+                else -> null
+            }
+        )
+    }
+    val displayedMeisai = remember(meisaiList, selectedYear) {
+        if (selectedYear == null) meisaiList
+        else meisaiList.filter { it.transactionDate.startsWith(selectedYear!!) }
+    }
+    var yearDropdownExpanded by remember { mutableStateOf(false) }
 
     // データ読み込み
     fun loadData() {
@@ -186,6 +211,22 @@ fun PassbookDataScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FontSizeControl(
+                    fontSize = listFontSize,
+                    onDecrease = {
+                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                        appPreferences.listFontSize = listFontSize
+                    },
+                    onIncrease = {
+                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                        appPreferences.listFontSize = listFontSize
+                    }
+                )
+            }
             // 取込結果メッセージ
             importResultMessage?.let { message ->
                 Text(
@@ -199,16 +240,58 @@ fun PassbookDataScreen(
                 )
             }
 
-            // 件数表示
-            Text(
-                text = "件数: ${meisaiList.size}",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // 年フィルター + 件数表示
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ExposedDropdownMenuBox(
+                    expanded = yearDropdownExpanded,
+                    onExpandedChange = { yearDropdownExpanded = it },
+                    modifier = Modifier.width(130.dp)
+                ) {
+                    OutlinedTextField(
+                        value = selectedYear ?: "全て",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("年", fontSize = 11.sp) },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearDropdownExpanded)
+                        },
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth(),
+                        singleLine = true,
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = yearDropdownExpanded,
+                        onDismissRequest = { yearDropdownExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("全て") },
+                            onClick = { selectedYear = null; yearDropdownExpanded = false }
+                        )
+                        availableYears.forEach { year ->
+                            DropdownMenuItem(
+                                text = { Text(year) },
+                                onClick = { selectedYear = year; yearDropdownExpanded = false }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = "件数: ${displayedMeisai.size}",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             // ヘッダー行
-            PassbookGridHeader()
+            PassbookGridHeader(fontSize = listFontSize)
 
             Divider(thickness = 2.dp)
 
@@ -240,12 +323,23 @@ fun PassbookDataScreen(
                         )
                     }
                 }
+            } else if (displayedMeisai.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "${selectedYear}年のデータがありません",
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(meisaiList) { meisai ->
-                        PassbookGridRow(meisai, hideAmount)
+                    items(displayedMeisai) { meisai ->
+                        PassbookGridRow(meisai, hideAmount, listFontSize)
                         Divider()
                     }
                 }
@@ -283,7 +377,7 @@ private fun parseCsvLine(line: String): DepositMeisai? {
  * グリッドヘッダー
  */
 @Composable
-private fun PassbookGridHeader() {
+private fun PassbookGridHeader(fontSize: Float) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -295,28 +389,28 @@ private fun PassbookGridHeader() {
             text = "取引日",
             modifier = Modifier.weight(1.4f),
             fontWeight = FontWeight.Bold,
-            fontSize = 12.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.Center
         )
         Text(
             text = "通番",
             modifier = Modifier.weight(0.8f),
             fontWeight = FontWeight.Bold,
-            fontSize = 12.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.Center
         )
         Text(
             text = "摘要",
             modifier = Modifier.weight(2f),
             fontWeight = FontWeight.Bold,
-            fontSize = 12.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.Center
         )
         Text(
             text = "金額",
             modifier = Modifier.weight(1.2f),
             fontWeight = FontWeight.Bold,
-            fontSize = 12.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.Center
         )
     }
@@ -326,7 +420,7 @@ private fun PassbookGridHeader() {
  * グリッド行
  */
 @Composable
-private fun PassbookGridRow(meisai: DepositMeisai, hideAmount: Boolean = false) {
+private fun PassbookGridRow(meisai: DepositMeisai, hideAmount: Boolean = false, fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE) {
     val amountColor = if (meisai.amount >= 0) {
         Color(0xFF1B5E20) // 緑（入金）
     } else {
@@ -346,28 +440,28 @@ private fun PassbookGridRow(meisai: DepositMeisai, hideAmount: Boolean = false) 
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = meisai.transactionDate, // YYYY-MM-DD形式で表示
+            text = meisai.transactionDate,
             modifier = Modifier.weight(1.4f),
-            fontSize = 11.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.Center
         )
         Text(
-            text = meisai.transactionNumber.takeLast(3), // 下3桁
+            text = meisai.transactionNumber.takeLast(3),
             modifier = Modifier.weight(0.8f),
-            fontSize = 12.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.Center
         )
         Text(
             text = meisai.tekiyou,
             modifier = Modifier.weight(2f),
-            fontSize = 12.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.Start,
             maxLines = 2
         )
         Text(
             text = amountText,
             modifier = Modifier.weight(1.2f),
-            fontSize = 12.sp,
+            fontSize = fontSize.sp,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.End,
             color = amountColor

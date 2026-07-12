@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.RakurakuTekiyou
 import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.util.importTekiyouFromCsv
@@ -49,6 +50,7 @@ private val SEARCH_KEY_MIN_WIDTH = 380
 @Composable
 fun RakurakuTekiyouScreen(
     database: ReceiptDatabase,
+    appPreferences: AppPreferences,
     onBack: () -> Unit
 ) {
     val scope   = rememberCoroutineScope()
@@ -58,6 +60,7 @@ fun RakurakuTekiyouScreen(
     var selectedSubCategory  by remember { mutableStateOf("入金") }
     var tekiyouList by remember { mutableStateOf<List<RakurakuTekiyou>>(emptyList()) }
     var isLoading   by remember { mutableStateOf(true) }
+    var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
 
     var showEditDialog   by remember { mutableStateOf(false) }
     var showAddDialog    by remember { mutableStateOf(false) }
@@ -106,7 +109,22 @@ fun RakurakuTekiyouScreen(
         }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FontSizeControl(
+                    fontSize = listFontSize,
+                    onDecrease = {
+                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                        appPreferences.listFontSize = listFontSize
+                    },
+                    onIncrease = {
+                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                        appPreferences.listFontSize = listFontSize
+                    }
+                )
+            }
             // メインカテゴリ
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
@@ -161,7 +179,7 @@ fun RakurakuTekiyouScreen(
             )
 
             // リストヘッダー
-            TekiyouHeader(showSearchKey = showSearchKey)
+            TekiyouHeader(showSearchKey = showSearchKey, fontSize = listFontSize)
             Divider()
 
             if (isLoading) {
@@ -175,6 +193,7 @@ fun RakurakuTekiyouScreen(
                             tekiyou       = tekiyou,
                             zebra         = index % 2 != 0,
                             showSearchKey = showSearchKey,
+                            fontSize      = listFontSize,
                             onToggleEnabled = { id, enabled ->
                                 scope.launch {
                                     database.rakurakuTekiyouDao().updateEnabled(id, enabled)
@@ -257,7 +276,7 @@ fun RakurakuTekiyouScreen(
 
 // ── リストヘッダー ────────────────────────────────────────
 @Composable
-private fun TekiyouHeader(showSearchKey: Boolean) {
+private fun TekiyouHeader(showSearchKey: Boolean, fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -265,11 +284,11 @@ private fun TekiyouHeader(showSearchKey: Boolean) {
             .padding(end = 8.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ColHead("使用", width = 40.dp, textAlign = TextAlign.Center)
-        ColHead("摘要名", modifier = Modifier.weight(2f))
-        if (showSearchKey) ColHead("検索文字", modifier = Modifier.weight(1.5f))
-        ColHead("科目", modifier = Modifier.weight(2f))
-        ColHead("割合", width = 48.dp, textAlign = TextAlign.Center)
+        ColHead("使用", width = 40.dp, textAlign = TextAlign.Center, fontSize = fontSize)
+        ColHead("摘要名", modifier = Modifier.weight(2f), fontSize = fontSize)
+        if (showSearchKey) ColHead("検索文字", modifier = Modifier.weight(1.5f), fontSize = fontSize)
+        ColHead("科目", modifier = Modifier.weight(2f), fontSize = fontSize)
+        ColHead("割合", width = 48.dp, textAlign = TextAlign.Center, fontSize = fontSize)
     }
 }
 
@@ -278,11 +297,12 @@ private fun ColHead(
     text: String,
     modifier: Modifier = Modifier,
     width: androidx.compose.ui.unit.Dp? = null,
-    textAlign: TextAlign = TextAlign.Start
+    textAlign: TextAlign = TextAlign.Start,
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE
 ) {
     val m = if (width != null) modifier.width(width) else modifier
     Text(
-        text, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+        text, fontSize = (fontSize - 3f).coerceAtLeast(10f).sp, fontWeight = FontWeight.Bold,
         modifier = m.padding(horizontal = 2.dp),
         textAlign = textAlign,
         maxLines = 1
@@ -295,6 +315,7 @@ private fun TekiyouRow(
     tekiyou: RakurakuTekiyou,
     zebra: Boolean,
     showSearchKey: Boolean,
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onToggleEnabled: (Int, Boolean) -> Unit,
     onEdit: (RakurakuTekiyou) -> Unit
 ) {
@@ -321,7 +342,7 @@ private fun TekiyouRow(
         Text(
             tekiyou.tekiyouName,
             modifier = Modifier.weight(2f).padding(horizontal = 2.dp),
-            fontSize = 13.sp,
+            fontSize = (fontSize - 1f).sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -332,7 +353,7 @@ private fun TekiyouRow(
             Text(
                 tekiyou.searchKey,
                 modifier = Modifier.weight(1.5f).padding(horizontal = 2.dp),
-                fontSize = 11.sp,
+                fontSize = (fontSize - 3f).coerceAtLeast(10f).sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)
@@ -342,7 +363,7 @@ private fun TekiyouRow(
         Text(
             tekiyou.kamoku,
             modifier = Modifier.weight(2f).padding(horizontal = 2.dp),
-            fontSize = 12.sp,
+            fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
@@ -351,7 +372,7 @@ private fun TekiyouRow(
         Text(
             tekiyou.businessRatio?.let { "$it%" } ?: "",
             modifier = Modifier.width(48.dp).padding(horizontal = 2.dp),
-            fontSize = 12.sp,
+            fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
             textAlign = TextAlign.End,
             maxLines = 1,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)

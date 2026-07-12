@@ -57,21 +57,21 @@ fun MenuScreen(
 
             // メニューボタン（3項目）
             MenuButton(
-                text = "購買部門",
+                text = "JA購買伝票",
                 onClick = onNavigateToPurchaseMenu
             )
 
             Spacer(modifier = Modifier.height(24.dp))
 
             MenuButton(
-                text = "預金部門",
+                text = "JA預金",
                 onClick = onNavigateToDepositMenu
             )
 
             Spacer(modifier = Modifier.height(24.dp))
 
             MenuButton(
-                text = "一般購買部門",
+                text = "レシート・領収書",
                 onClick = onNavigateToGeneralPurchaseMenu
             )
 

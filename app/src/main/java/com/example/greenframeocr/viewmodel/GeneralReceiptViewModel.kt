@@ -8,11 +8,18 @@ import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.data.GeneralItemGroup
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
+import com.example.greenframeocr.data.InvoiceStore
 import com.example.greenframeocr.data.ReceiptDatabase
+import com.example.greenframeocr.data.YayoiAccount
+import com.example.greenframeocr.util.GeminiApiException
+import com.example.greenframeocr.util.GeminiApiKeyMissingException
+import com.example.greenframeocr.util.GeminiQuotaExhaustedException
 import com.example.greenframeocr.util.GeminiRateLimitException
 import com.example.greenframeocr.util.GeminiReceiptClient
+import com.example.greenframeocr.util.NtaInvoiceClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,6 +27,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+data class GeneralReceiptOutputItem(
+    val itemId: Long,
+    val receiptId: Long,
+    val date: String,
+    val storeName: String,
+    val itemName: String,
+    val price: Int,
+    val accountName: String,       // 主科目名（補助科目がある場合は親科目名）
+    val accountCode: String,
+    val debitSubAccountName: String = "",  // 補助科目名（なければ空）
+    val defaultTaxCategory: String = "対象外",
+    var isSelected: Boolean = true
+)
 
 class GeneralReceiptViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -29,6 +50,40 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
 
     val receipts: StateFlow<List<GeneralReceipt>> =
         dao.getAllReceipts().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val itemGroups: StateFlow<List<GeneralItemGroup>> =
+        dao.getItemGroups().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val invoiceStores: StateFlow<List<InvoiceStore>> =
+        db.invoiceStoreDao().getAll().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    // AI提案結果
+    data class AiSuggestion(
+        val itemName: String,
+        val accountId: Long,
+        val accountName: String,
+        val reason: String
+    )
+    private val _aiSuggestions = MutableStateFlow<List<AiSuggestion>>(emptyList())
+    val aiSuggestions: StateFlow<List<AiSuggestion>> = _aiSuggestions
+
+    private val _aiUsageStats = MutableStateFlow<GeminiReceiptClient.AiUsageStats?>(null)
+    val aiUsageStats: StateFlow<GeminiReceiptClient.AiUsageStats?> = _aiUsageStats
+
+    private val _aiError = MutableStateFlow<String?>(null)
+    val aiError: StateFlow<String?> = _aiError
+
+    private val _isAiMatching = MutableStateFlow(false)
+    val isAiMatching: StateFlow<Boolean> = _isAiMatching
+
+    private val _storeRefreshState = MutableStateFlow<Set<String>>(emptySet())
+    val storeRefreshState: StateFlow<Set<String>> = _storeRefreshState
+
+    private val _isLookingUpStore = MutableStateFlow(false)
+    val isLookingUpStore: StateFlow<Boolean> = _isLookingUpStore
+
+    private val _storeLookupError = MutableStateFlow<String?>(null)
+    val storeLookupError: StateFlow<String?> = _storeLookupError
 
     private val _pendingReceipt = MutableStateFlow<GeneralReceipt?>(null)
     val pendingReceipt: StateFlow<GeneralReceipt?> = _pendingReceipt
@@ -51,6 +106,7 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     fun onOcrCompleted(ocrText: String) {
         viewModelScope.launch {
             _uiState.value = UiState.OcrRunning
+            val regNum = NtaInvoiceClient.extractRegistrationNumber(ocrText)
             val apiKey = prefs.geminiApiKey
             val isOnline = isNetworkAvailable()
 
@@ -64,33 +120,40 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                             storeName = result.storeName,
                             total = result.total,
                             rawOcrText = ocrText,
-                            geminiUsed = true
+                            geminiUsed = true,
+                            registrationNumber = regNum ?: ""
                         )
                         _pendingItems.value = result.items.map { item ->
                             GeneralReceiptItem(receiptId = 0, itemName = item.name, price = item.price)
                         }
                         _uiState.value = UiState.Idle
+                        // Geminiが店舗名を取れなかった場合のみ登録番号で補完
+                        if (result.storeName.isBlank() && regNum != null) {
+                            autoLookupStore(regNum)
+                        }
                     } else {
-                        fallbackToRawOcr(ocrText)
+                        fallbackToRawOcr(ocrText, regNum)
                     }
                 } catch (e: GeminiRateLimitException) {
-                    fallbackToRawOcr(ocrText)
+                    fallbackToRawOcr(ocrText, regNum)
                     _uiState.value = UiState.Error(e.message ?: "利用上限エラー")
                 }
             } else {
                 _uiState.value = UiState.GeminiUnavailable
-                fallbackToRawOcr(ocrText)
+                fallbackToRawOcr(ocrText, regNum)
+                if (regNum != null) autoLookupStore(regNum)
             }
         }
     }
 
-    private fun fallbackToRawOcr(ocrText: String) {
+    private fun fallbackToRawOcr(ocrText: String, regNum: String? = null) {
         _pendingReceipt.value = GeneralReceipt(
             date = "",
             storeName = "",
             total = 0,
             rawOcrText = ocrText,
-            geminiUsed = false
+            geminiUsed = false,
+            registrationNumber = regNum ?: ""
         )
         _pendingItems.value = emptyList()
         _uiState.value = UiState.Idle
@@ -101,6 +164,18 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             val receiptId = dao.insertReceipt(receipt)
             val itemsWithId = items.map { it.copy(receiptId = receiptId) }
             dao.insertItems(itemsWithId)
+            // 登録番号があれば invoice_stores に登録（未登録の場合のみ）
+            if (receipt.registrationNumber.isNotBlank()) {
+                val existing = db.invoiceStoreDao().findByNumber(receipt.registrationNumber)
+                if (existing == null) {
+                    db.invoiceStoreDao().upsert(
+                        InvoiceStore(
+                            registrationNumber = receipt.registrationNumber,
+                            storeName = receipt.storeName
+                        )
+                    )
+                }
+            }
             _pendingReceipt.value = null
             _pendingItems.value = emptyList()
             _uiState.value = UiState.Done(receiptId)
@@ -129,6 +204,7 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                         GeneralReceiptItem(receiptId = 0, itemName = item.name, price = item.price)
                     }
                     _uiState.value = UiState.Idle
+                    // 画像モードでも店舗名が空なら登録番号フィールドで後から補完可能
                 } else {
                     _uiState.value = UiState.Error("Gemini画像解析に失敗しました")
                 }
@@ -137,6 +213,153 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             }
         }
     }
+
+    fun updateAccountForItemName(itemName: String, accountId: Long?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.updateAccountForItemName(itemName, accountId)
+        }
+    }
+
+    fun suggestAccountsForItems(
+        unmatchedGroups: List<GeneralItemGroup>,
+        accounts: List<YayoiAccount>
+    ) {
+        viewModelScope.launch {
+            _isAiMatching.value = true
+            _aiError.value = null
+            try {
+                val productPairs = unmatchedGroups.map { it.itemName to "一般購買" }
+                val result = GeminiReceiptClient.matchProductsToAccounts(
+                    productNames = productPairs,
+                    accounts = accounts,
+                    apiKey = prefs.geminiApiKey
+                )
+                _aiSuggestions.value = result.suggestions.map {
+                    AiSuggestion(it.productName, it.suggestedAccountId, it.suggestedAccountName, it.reason)
+                }
+                _aiUsageStats.value = result.usageStats
+            } catch (e: GeminiApiKeyMissingException) {
+                _aiError.value = e.message
+            } catch (e: GeminiQuotaExhaustedException) {
+                _aiError.value = e.message
+            } catch (e: GeminiRateLimitException) {
+                _aiError.value = e.message
+            } catch (e: GeminiApiException) {
+                _aiError.value = e.message
+            } catch (e: Exception) {
+                _aiError.value = "エラー: ${e.message}"
+            } finally {
+                _isAiMatching.value = false
+            }
+        }
+    }
+
+    fun clearAiSuggestions() {
+        _aiSuggestions.value = emptyList()
+        _aiUsageStats.value = null
+        _aiError.value = null
+    }
+
+    /** 登録番号から店舗名を照会し pendingReceipt.storeName を更新する（手動ボタン用） */
+    fun lookupStoreByRegistrationNumber(registrationNumber: String) {
+        viewModelScope.launch { autoLookupStore(registrationNumber) }
+    }
+
+    private suspend fun autoLookupStore(registrationNumber: String) {
+        _isLookingUpStore.value = true
+        _storeLookupError.value = null
+        try {
+            val storeName = resolveStoreName(registrationNumber)
+            if (storeName != null) {
+                _pendingReceipt.value = _pendingReceipt.value?.copy(storeName = storeName)
+            } else {
+                _storeLookupError.value = "登録番号 $registrationNumber の事業者情報が見つかりませんでした"
+            }
+        } finally {
+            _isLookingUpStore.value = false
+        }
+    }
+
+    /** ローカルキャッシュ → NTA API の順で照会し店舗名を返す */
+    private suspend fun resolveStoreName(registrationNumber: String): String? =
+        withContext(Dispatchers.IO) {
+            val cached = db.invoiceStoreDao().findByNumber(registrationNumber)
+            if (cached != null) return@withContext cached.storeName
+
+            val info = NtaInvoiceClient.lookup(registrationNumber, prefs.ntaApplicationId) ?: return@withContext null
+            db.invoiceStoreDao().upsert(
+                InvoiceStore(
+                    registrationNumber = info.registrationNumber,
+                    storeName = info.storeName,
+                    address = info.address
+                )
+            )
+            info.storeName
+        }
+
+    fun clearStoreLookupError() { _storeLookupError.value = null }
+
+    /** 既存の保存済みレシートから登録番号を遡って invoice_stores に登録する */
+    fun backfillInvoiceStoresFromReceipts() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val allReceipts = dao.getAllReceiptsOnce()
+            allReceipts
+                .filter { it.registrationNumber.isNotBlank() }
+                .forEach { receipt ->
+                    val existing = db.invoiceStoreDao().findByNumber(receipt.registrationNumber)
+                    if (existing == null) {
+                        db.invoiceStoreDao().upsert(
+                            InvoiceStore(
+                                registrationNumber = receipt.registrationNumber,
+                                storeName = receipt.storeName
+                            )
+                        )
+                    }
+                }
+        }
+    }
+
+    fun deleteInvoiceStore(store: InvoiceStore) {
+        viewModelScope.launch(Dispatchers.IO) { db.invoiceStoreDao().delete(store) }
+    }
+
+    fun updateInvoiceStoreName(
+        registrationNumber: String,
+        newName: String,
+        feedbackToReceipts: Boolean
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            db.invoiceStoreDao().upsert(
+                InvoiceStore(registrationNumber = registrationNumber, storeName = newName)
+            )
+            if (feedbackToReceipts) {
+                dao.updateStoreNameByRegistrationNumber(registrationNumber, newName)
+            }
+        }
+    }
+
+    fun refreshStore(registrationNumber: String) {
+        viewModelScope.launch {
+            _storeRefreshState.value = _storeRefreshState.value + registrationNumber
+            try {
+                withContext(Dispatchers.IO) {
+                    val info = NtaInvoiceClient.lookup(registrationNumber, prefs.ntaApplicationId) ?: return@withContext
+                    db.invoiceStoreDao().upsert(
+                        InvoiceStore(
+                            registrationNumber = info.registrationNumber,
+                            storeName = info.storeName,
+                            address = info.address
+                        )
+                    )
+                }
+            } finally {
+                _storeRefreshState.value = _storeRefreshState.value - registrationNumber
+            }
+        }
+    }
+
+    suspend fun loadYayoiAccounts(): List<YayoiAccount> =
+        withContext(Dispatchers.IO) { db.yayoiAccountDao().getAll().filter { it.isEnabled } }
 
     fun clearPending() {
         _pendingReceipt.value = null
@@ -151,15 +374,61 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     suspend fun getItemsForReceipt(receiptId: Long): List<GeneralReceiptItem> =
         withContext(Dispatchers.IO) { dao.getItemsByReceiptIdOnce(receiptId) }
 
-    suspend fun buildCsvForExport(from: String?, to: String?): String =
+    fun saveReceiptEdits(
+        receipt: GeneralReceipt,
+        updatedItems: List<GeneralReceiptItem>,
+        originalItems: List<GeneralReceiptItem>
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.updateReceipt(receipt)
+            val updatedIds = updatedItems.filter { it.id != 0L }.map { it.id }.toSet()
+            originalItems.filter { it.id !in updatedIds }.forEach { dao.deleteItem(it) }
+            updatedItems.forEach { item ->
+                if (item.id == 0L) dao.insertItem(item.copy(receiptId = receipt.id))
+                else dao.updateItem(item)
+            }
+        }
+    }
+
+    suspend fun loadOutputItems(): List<GeneralReceiptOutputItem> =
         withContext(Dispatchers.IO) {
-            val items = dao.getItemsForExport(from, to)
+            val allItems = dao.getItemsForExport(null, null)
+            val allAccounts = db.yayoiAccountDao().getAll().associateBy { it.id }
+            allItems.map { item ->
+                val receipt = dao.getReceiptById(item.receiptId)
+                val account = item.yayoiAccountId?.let { allAccounts[it] }
+                val parentAccount = account?.parentId?.let { allAccounts[it] }
+                val debitAccountName = parentAccount?.accountName ?: account?.accountName ?: ""
+                val debitSubAccountName = if (parentAccount != null) account?.accountName ?: "" else ""
+                GeneralReceiptOutputItem(
+                    itemId = item.id,
+                    receiptId = item.receiptId,
+                    date = receipt?.date ?: "",
+                    storeName = receipt?.storeName ?: "",
+                    itemName = item.itemName,
+                    price = item.price,
+                    accountName = debitAccountName,
+                    accountCode = account?.accountCode ?: "",
+                    debitSubAccountName = debitSubAccountName,
+                    defaultTaxCategory = account?.defaultTaxCategory ?: "対象外"
+                )
+            }
+        }
+
+    suspend fun buildCsvForExport(from: String?, to: String?, accounts: List<YayoiAccount>): String =
+        withContext(Dispatchers.IO) {
+            val items = dao.getItemsForExport(from, to).filter { !it.isExcluded }
+            val accountMap = accounts.associateBy { it.id }
             buildString {
-                appendLine("ID,日付,摘要,メモ,金額")
+                appendLine("日付,店舗名,商品名,金額,勘定科目,科目コード")
                 items.forEach { item ->
                     val receipt = dao.getReceiptById(item.receiptId)
                     val date = receipt?.date?.replace("-", "/") ?: ""
-                    appendLine("${item.id},$date,,${item.itemName},${item.price}")
+                    val store = receipt?.storeName ?: ""
+                    val account = item.yayoiAccountId?.let { accountMap[it] }
+                    val accountName = account?.accountName ?: ""
+                    val accountCode = account?.accountCode ?: ""
+                    appendLine("$date,$store,${item.itemName},${item.price},$accountName,$accountCode")
                 }
             }
         }

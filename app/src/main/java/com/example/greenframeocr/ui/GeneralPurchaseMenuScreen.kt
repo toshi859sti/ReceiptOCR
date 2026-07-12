@@ -17,12 +17,13 @@ fun GeneralPurchaseMenuScreen(
     onBack: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToList: () -> Unit,
-    onNavigateToOutput: () -> Unit
+    onNavigateToOutput: () -> Unit,
+    onNavigateToStoreList: () -> Unit
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("一般購買部門") },
+                title = { Text("レシート・領収書") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
@@ -44,7 +45,7 @@ fun GeneralPurchaseMenuScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "一般購買部門",
+                text = "レシート・領収書",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
@@ -57,6 +58,8 @@ fun GeneralPurchaseMenuScreen(
             GeneralMenuButton(text = "レシート一覧", onClick = onNavigateToList)
             Spacer(modifier = Modifier.height(16.dp))
             GeneralMenuButton(text = "CSV出力", onClick = onNavigateToOutput)
+            Spacer(modifier = Modifier.height(16.dp))
+            GeneralMenuButton(text = "登録番号・店舗一覧", onClick = onNavigateToStoreList)
         }
     }
 }

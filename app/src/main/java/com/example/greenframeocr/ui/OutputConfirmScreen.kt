@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.*
+import java.nio.charset.Charset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,14 +52,18 @@ fun OutputConfirmScreen(
             database = database,
             onBack = onBack,
             scope = scope,
-            context = context
+            context = context,
+            appPreferences = appPreferences,
+            accountingSoftware = appPreferences.accountingSoftware
         )
         "預金" -> DepositOutputConfirmContent(
             database = database,
             onBack = onBack,
             scope = scope,
             context = context,
-            hideAmount = appPreferences.depositHideAmount
+            hideAmount = appPreferences.depositHideAmount,
+            appPreferences = appPreferences,
+            accountingSoftware = appPreferences.accountingSoftware
         )
     }
 }
@@ -69,9 +74,11 @@ fun OutputConfirmScreen(
 data class PurchaseOutputItem(
     val id: Long,
     val date: String,           // 日付 (YYYY/MM/DD)
-    val tekiyou: String,        // 摘要（買掛摘要名）
+    val tekiyou: String,        // 摘要（らくらく=買掛摘要名 / 弥生=勘定科目名）
     val memo: String,           // メモ（商品名）
     val amount: Int,            // 購入金額
+    val yayoiSubAccountName: String = "",
+    val defaultTaxCategory: String = "対象外",
     var isSelected: Boolean = true
 )
 
@@ -81,10 +88,12 @@ data class PurchaseOutputItem(
 data class DepositOutputItem(
     val id: Int,
     val date: String,           // 日付
-    val tekiyou: String,        // 摘要（預金摘要名）
+    val tekiyou: String,        // 摘要（らくらく=預金摘要名 / 弥生=勘定科目名）
     val memo: String,           // メモ（通帳摘要原文）
     val deposit: Int?,          // 入金（正の金額）
     val withdrawal: Int?,       // 出金（負の金額の絶対値）
+    val yayoiSubAccountName: String = "",
+    val defaultTaxCategory: String = "対象外",
     var isSelected: Boolean = true
 )
 
@@ -97,8 +106,11 @@ private fun PurchaseOutputConfirmContent(
     database: ReceiptDatabase,
     onBack: () -> Unit,
     scope: kotlinx.coroutines.CoroutineScope,
-    context: Context
+    context: Context,
+    appPreferences: AppPreferences,
+    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU
 ) {
+    var listFontSize by remember { mutableStateOf(appPreferences.listFontSize) }
     var allItems by remember { mutableStateOf<List<PurchaseOutputItem>>(emptyList()) }
     var outputItems by remember { mutableStateOf<List<PurchaseOutputItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -114,7 +126,12 @@ private fun PurchaseOutputConfirmContent(
     ) { uri: Uri? ->
         uri?.let {
             scope.launch {
-                exportPurchaseCsvToUri(context, it, outputItems.filter { item -> item.isSelected })
+                val selected = outputItems.filter { item -> item.isSelected }
+                if (accountingSoftware == AccountingSoftware.YAYOI) {
+                    exportPurchaseYayoiCsvToUri(context, it, selected)
+                } else {
+                    exportPurchaseCsvToUri(context, it, selected)
+                }
             }
         }
     }
@@ -122,7 +139,7 @@ private fun PurchaseOutputConfirmContent(
     // データ読み込み
     LaunchedEffect(Unit) {
         isLoading = true
-        allItems = loadPurchaseOutputItems(database)
+        allItems = loadPurchaseOutputItems(database, accountingSoftware)
         outputItems = allItems
         isLoading = false
     }
@@ -169,6 +186,29 @@ private fun PurchaseOutputConfirmContent(
                     CircularProgressIndicator()
                 }
             } else {
+                // 出力形式バッジ + フォントサイズコントロール
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutputFormatBadge(accountingSoftware)
+                    }
+                    FontSizeControl(
+                        fontSize = listFontSize,
+                        onDecrease = {
+                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                            appPreferences.listFontSize = listFontSize
+                        },
+                        onIncrease = {
+                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                            appPreferences.listFontSize = listFontSize
+                        }
+                    )
+                }
+
                 // 年選択UI
                 YearSelector(
                     availableYears = availablePurchaseYears,
@@ -211,7 +251,7 @@ private fun PurchaseOutputConfirmContent(
                 }
 
                 // ヘッダー行
-                PurchaseGridHeader()
+                PurchaseGridHeader(accountingSoftware)
 
                 Divider()
 
@@ -222,6 +262,7 @@ private fun PurchaseOutputConfirmContent(
                     items(outputItems, key = { it.id }) { item ->
                         PurchaseGridRow(
                             item = item,
+                            fontSize = listFontSize,
                             onToggleSelect = {
                                 outputItems = outputItems.map {
                                     if (it.id == item.id) it.copy(isSelected = !it.isSelected)
@@ -273,7 +314,8 @@ private fun PurchaseOutputConfirmContent(
  * 購買グリッドヘッダー
  */
 @Composable
-private fun PurchaseGridHeader() {
+private fun PurchaseGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU) {
+    val tekiyouLabel = if (accountingSoftware == AccountingSoftware.YAYOI) "科目/メモ" else "摘要/メモ"
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -296,9 +338,9 @@ private fun PurchaseGridHeader() {
             textAlign = TextAlign.Center,
             modifier = Modifier.weight(1.2f)
         )
-        // 摘要/メモ列
+        // 科目/メモ or 摘要/メモ列
         Text(
-            text = "摘要/メモ",
+            text = tekiyouLabel,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
@@ -321,6 +363,7 @@ private fun PurchaseGridHeader() {
 @Composable
 private fun PurchaseGridRow(
     item: PurchaseOutputItem,
+    fontSize: Float = 14f,
     onToggleSelect: () -> Unit
 ) {
     // 摘要未設定の場合は薄い赤の背景色
@@ -352,7 +395,7 @@ private fun PurchaseGridRow(
         // 日付列
         Text(
             text = item.date,
-            fontSize = 11.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.Center,
             modifier = Modifier.weight(1.2f)
         )
@@ -362,7 +405,7 @@ private fun PurchaseGridRow(
         ) {
             Text(
                 text = item.tekiyou.ifEmpty { "（未設定）" },
-                fontSize = 11.sp,
+                fontSize = fontSize.sp,
                 fontWeight = FontWeight.Medium,
                 color = if (item.tekiyou.isEmpty()) Color.Gray else Color.Unspecified,
                 maxLines = 1,
@@ -370,7 +413,7 @@ private fun PurchaseGridRow(
             )
             Text(
                 text = item.memo,
-                fontSize = 10.sp,
+                fontSize = (fontSize - 1f).sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -379,7 +422,7 @@ private fun PurchaseGridRow(
         // 金額列
         Text(
             text = "%,d".format(item.amount),
-            fontSize = 11.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1f).padding(end = 8.dp)
         )
@@ -396,8 +439,11 @@ private fun DepositOutputConfirmContent(
     onBack: () -> Unit,
     scope: kotlinx.coroutines.CoroutineScope,
     context: Context,
-    hideAmount: Boolean = false
+    hideAmount: Boolean = false,
+    appPreferences: AppPreferences,
+    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU
 ) {
+    var listFontSize by remember { mutableStateOf(appPreferences.listFontSize) }
     var allItems by remember { mutableStateOf<List<DepositOutputItem>>(emptyList()) }
     var outputItems by remember { mutableStateOf<List<DepositOutputItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -413,7 +459,12 @@ private fun DepositOutputConfirmContent(
     ) { uri: Uri? ->
         uri?.let {
             scope.launch {
-                exportDepositCsvToUri(context, it, outputItems.filter { item -> item.isSelected })
+                val selected = outputItems.filter { item -> item.isSelected }
+                if (accountingSoftware == AccountingSoftware.YAYOI) {
+                    exportDepositYayoiCsvToUri(context, it, selected)
+                } else {
+                    exportDepositCsvToUri(context, it, selected)
+                }
             }
         }
     }
@@ -421,7 +472,7 @@ private fun DepositOutputConfirmContent(
     // データ読み込み
     LaunchedEffect(Unit) {
         isLoading = true
-        allItems = loadDepositOutputItems(database)
+        allItems = loadDepositOutputItems(database, accountingSoftware)
         outputItems = allItems
         isLoading = false
     }
@@ -468,6 +519,29 @@ private fun DepositOutputConfirmContent(
                     CircularProgressIndicator()
                 }
             } else {
+                // 出力形式バッジ + フォントサイズコントロール
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutputFormatBadge(accountingSoftware)
+                    }
+                    FontSizeControl(
+                        fontSize = listFontSize,
+                        onDecrease = {
+                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                            appPreferences.listFontSize = listFontSize
+                        },
+                        onIncrease = {
+                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                            appPreferences.listFontSize = listFontSize
+                        }
+                    )
+                }
+
                 // 年選択UI
                 YearSelector(
                     availableYears = availableDepositYears,
@@ -510,7 +584,7 @@ private fun DepositOutputConfirmContent(
                 }
 
                 // ヘッダー行
-                DepositGridHeader()
+                DepositGridHeader(accountingSoftware)
 
                 Divider()
 
@@ -522,6 +596,7 @@ private fun DepositOutputConfirmContent(
                         DepositGridRow(
                             item = item,
                             hideAmount = hideAmount,
+                            fontSize = listFontSize,
                             onToggleSelect = {
                                 outputItems = outputItems.map {
                                     if (it.id == item.id) it.copy(isSelected = !it.isSelected)
@@ -573,7 +648,8 @@ private fun DepositOutputConfirmContent(
  * 預金グリッドヘッダー
  */
 @Composable
-private fun DepositGridHeader() {
+private fun DepositGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU) {
+    val tekiyouLabel = if (accountingSoftware == AccountingSoftware.YAYOI) "科目/メモ" else "摘要/メモ"
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -596,9 +672,9 @@ private fun DepositGridHeader() {
             textAlign = TextAlign.Center,
             modifier = Modifier.weight(1.2f)
         )
-        // 摘要/メモ列
+        // 科目/メモ or 摘要/メモ列
         Text(
-            text = "摘要/メモ",
+            text = tekiyouLabel,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
@@ -622,6 +698,7 @@ private fun DepositGridHeader() {
 private fun DepositGridRow(
     item: DepositOutputItem,
     hideAmount: Boolean = false,
+    fontSize: Float = 14f,
     onToggleSelect: () -> Unit
 ) {
     // 摘要未設定の場合は薄い赤の背景色
@@ -653,7 +730,7 @@ private fun DepositGridRow(
         // 日付列
         Text(
             text = item.date,
-            fontSize = 11.sp,
+            fontSize = fontSize.sp,
             textAlign = TextAlign.Center,
             modifier = Modifier.weight(1.2f)
         )
@@ -663,7 +740,7 @@ private fun DepositGridRow(
         ) {
             Text(
                 text = item.tekiyou.ifEmpty { "（未設定）" },
-                fontSize = 11.sp,
+                fontSize = fontSize.sp,
                 fontWeight = FontWeight.Medium,
                 color = if (item.tekiyou.isEmpty()) Color.Gray else Color.Unspecified,
                 maxLines = 1,
@@ -671,7 +748,7 @@ private fun DepositGridRow(
             )
             Text(
                 text = item.memo,
-                fontSize = 10.sp,
+                fontSize = (fontSize - 1f).sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -691,7 +768,7 @@ private fun DepositGridRow(
         }
         Text(
             text = amountText,
-            fontSize = 11.sp,
+            fontSize = fontSize.sp,
             color = amountColor,
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1f).padding(end = 8.dp)
@@ -702,44 +779,60 @@ private fun DepositGridRow(
 /**
  * 購買出力データを読み込む
  */
-private suspend fun loadPurchaseOutputItems(database: ReceiptDatabase): List<PurchaseOutputItem> {
+private suspend fun loadPurchaseOutputItems(
+    database: ReceiptDatabase,
+    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU
+): List<PurchaseOutputItem> {
     return withContext(Dispatchers.IO) {
         val receiptItems = database.receiptDao().getAllReceiptItems()
         val productMasterDao = database.productMasterDao()
         val rakurakuTekiyouDao = database.rakurakuTekiyouDao()
+        val ocrVariantDao = database.ocrVariantDao()
+        val allYayoiAccounts = if (accountingSoftware == AccountingSoftware.YAYOI)
+            database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
 
-        // 取引日昇順、伝票番号昇順、行番号昇順でソート
         val sortedItems = receiptItems.sortedWith(
             compareBy<ReceiptItem> { it.receiptYear * 10000 + it.receiptMonth * 100 + it.receiptDay }
                 .thenBy { it.sheetNumber }
                 .thenBy { it.itemNumber }
         )
 
-        val ocrVariantDao = database.ocrVariantDao()
-
-        // 小計・合計行を除外してマッピング
         sortedItems
             .filter { !it.productName.contains("小計") && !it.productName.contains("合計") }
             .map { item ->
-                // 商品名からProductMasterを検索（canonicalName完全一致 → OCRバリアント逆引き の順）
                 val productMaster = productMasterDao.getByName(item.productName)
                     ?: ocrVariantDao.getByText(item.productName)
                         ?.let { variant -> productMasterDao.getById(variant.productId) }
-                // ProductMasterのkaikakeTekiyouIdからRakurakuTekiyouを取得
-                val tekiyouName = productMaster?.kaikakeTekiyouId?.let { tekiyouId ->
-                    rakurakuTekiyouDao.getById(tekiyouId)?.tekiyouName
-                } ?: ""
 
-                // 令和年を西暦に変換（令和7年 = 2025年）
                 val westernYear = 2018 + item.receiptYear
+                val date = "%04d/%02d/%02d".format(westernYear, item.receiptMonth, item.receiptDay)
 
-                PurchaseOutputItem(
-                    id = item.id,
-                    date = "%04d/%02d/%02d".format(westernYear, item.receiptMonth, item.receiptDay),
-                    tekiyou = tekiyouName,
-                    memo = item.productName,
-                    amount = item.amount
-                )
+                if (accountingSoftware == AccountingSoftware.YAYOI) {
+                    val account = productMaster?.yayoiAccountId?.let { allYayoiAccounts[it] }
+                    val parentAccount = account?.parentId?.let { allYayoiAccounts[it] }
+                    val mainName = parentAccount?.accountName ?: account?.accountName ?: ""
+                    val subName = if (parentAccount != null) account?.accountName ?: "" else ""
+                    PurchaseOutputItem(
+                        id = item.id,
+                        date = date,
+                        tekiyou = mainName,
+                        memo = item.productName,
+                        amount = item.amount,
+                        yayoiSubAccountName = subName,
+                        defaultTaxCategory = account?.defaultTaxCategory ?: "対象外"
+                    )
+                } else {
+                    val tekiyouName = productMaster?.kaikakeTekiyouId?.let { tekiyouId ->
+                        rakurakuTekiyouDao.getById(tekiyouId)?.tekiyouName
+                    } ?: ""
+                    PurchaseOutputItem(
+                        id = item.id,
+                        date = date,
+                        tekiyou = tekiyouName,
+                        memo = item.productName,
+                        amount = item.amount
+                    )
+                }
             }
     }
 }
@@ -747,41 +840,57 @@ private suspend fun loadPurchaseOutputItems(database: ReceiptDatabase): List<Pur
 /**
  * 預金出力データを読み込む
  */
-private suspend fun loadDepositOutputItems(database: ReceiptDatabase): List<DepositOutputItem> {
+private suspend fun loadDepositOutputItems(
+    database: ReceiptDatabase,
+    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU
+): List<DepositOutputItem> {
     return withContext(Dispatchers.IO) {
         val depositMeisaiList = database.depositMeisaiDao().getAll()
         val matchingRules = database.tekiyouMatchingRuleDao().getAllWithTekiyou()
+        val allYayoiAccounts = if (accountingSoftware == AccountingSoftware.YAYOI)
+            database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
 
-        // 正規化パターン → マッチングルールのマップを作成
         val ruleMap = mutableMapOf<String, MatchingRuleWithTekiyou>()
         for (rule in matchingRules) {
             ruleMap[rule.pattern] = rule
         }
 
-        // 取引日昇順、取引通番昇順でソート
         val sortedItems = depositMeisaiList.sortedWith(
             compareBy<DepositMeisai> { it.transactionDate }
                 .thenBy { it.transactionNumber }
         )
 
         sortedItems.map { meisai ->
-            // 摘要を正規化してマッチングルールを検索
             val normalized = normalizeTekiyou(meisai.tekiyou)
             val isDeposit = meisai.amount >= 0
             val patternKey = normalized + "_" + if (isDeposit) "D" else "W"
             val rule = ruleMap[patternKey]
 
-            // 預金摘要名を取得
-            val tekiyouName = rule?.rakurakuTekiyouName ?: ""
-
-            DepositOutputItem(
-                id = meisai.id,
-                date = meisai.transactionDate,
-                tekiyou = tekiyouName,
-                memo = meisai.tekiyou,
-                deposit = if (meisai.amount >= 0) meisai.amount else null,
-                withdrawal = if (meisai.amount < 0) -meisai.amount else null
-            )
+            if (accountingSoftware == AccountingSoftware.YAYOI) {
+                val account = rule?.yayoiAccountId?.let { allYayoiAccounts[it] }
+                val parentAccount = account?.parentId?.let { allYayoiAccounts[it] }
+                val mainName = parentAccount?.accountName ?: account?.accountName ?: ""
+                val subName = if (parentAccount != null) account?.accountName ?: "" else ""
+                DepositOutputItem(
+                    id = meisai.id,
+                    date = meisai.transactionDate,
+                    tekiyou = mainName,
+                    memo = meisai.tekiyou,
+                    deposit = if (meisai.amount >= 0) meisai.amount else null,
+                    withdrawal = if (meisai.amount < 0) -meisai.amount else null,
+                    yayoiSubAccountName = subName,
+                    defaultTaxCategory = account?.defaultTaxCategory ?: "対象外"
+                )
+            } else {
+                DepositOutputItem(
+                    id = meisai.id,
+                    date = meisai.transactionDate,
+                    tekiyou = rule?.rakurakuTekiyouName ?: "",
+                    memo = meisai.tekiyou,
+                    deposit = if (meisai.amount >= 0) meisai.amount else null,
+                    withdrawal = if (meisai.amount < 0) -meisai.amount else null
+                )
+            }
         }
     }
 }
@@ -882,6 +991,168 @@ private fun escapeCsvField(field: String): String {
         "\"${field.replace("\"", "\"\"")}\""
     } else {
         field
+    }
+}
+
+/** 西暦日付文字列（セパレータ任意）→ 弥生和暦形式（R.yy/MM/dd） */
+private fun toYayoiDate(dateStr: String): String {
+    val parts = dateStr.split(Regex("[-/]"))
+    if (parts.size < 3) return dateStr
+    val year = parts[0].toIntOrNull() ?: return dateStr
+    val month = parts[1].toIntOrNull() ?: return dateStr
+    val day = parts[2].toIntOrNull() ?: return dateStr
+    val isReiwa = year > 2019 || (year == 2019 && month >= 5)
+    return if (isReiwa) {
+        "R.%02d/%02d/%02d".format(year - 2018, month, day)
+    } else {
+        "H.%02d/%02d/%02d".format(year - 1988, month, day)
+    }
+}
+
+private fun qf(s: String) = "\"${s.replace("\"", "\"\"")}\""
+
+private fun buildPurchaseYayoiRow(item: PurchaseOutputItem): String {
+    val cols = Array(25) { "" }
+    cols[0] = toYayoiDate(item.date)           // 伝票日付
+    cols[1] = ""                                // 伝票番号
+    cols[2] = item.memo.take(40)               // 伝票摘要（商品名）
+    cols[3] = ""                                // 借方部門
+    cols[4] = item.tekiyou                     // 借方科目
+    cols[5] = item.yayoiSubAccountName         // 借方補助科目
+    cols[6] = item.defaultTaxCategory          // 借方税区分
+    cols[7] = item.amount.toString()           // 借方金額
+    cols[8] = ""                                // 借方消費税額
+    cols[9] = ""                                // 貸方部門
+    cols[10] = "買掛金"                         // 貸方科目
+    cols[11] = ""                               // 貸方補助科目
+    cols[12] = "対象外"                         // 貸方税区分
+    cols[13] = item.amount.toString()          // 貸方金額
+    cols[14] = ""                               // 貸方消費税額
+    // cols[15..24] = ""
+    return cols.joinToString(",") { qf(it) }
+}
+
+private fun buildDepositYayoiRow(item: DepositOutputItem): String {
+    val cols = Array(25) { "" }
+    cols[0] = toYayoiDate(item.date)
+    cols[1] = ""
+    cols[2] = item.memo.take(40)
+    val isDeposit = item.deposit != null
+    val amount = (item.deposit ?: item.withdrawal ?: 0).toString()
+    if (isDeposit) {
+        // 入金: 借方=普通預金、貸方=売上/雑収入など
+        cols[3] = ""
+        cols[4] = "普通預金"
+        cols[5] = ""
+        cols[6] = "対象外"
+        cols[7] = amount
+        cols[8] = ""
+        cols[9] = ""
+        cols[10] = item.tekiyou
+        cols[11] = item.yayoiSubAccountName
+        cols[12] = item.defaultTaxCategory
+        cols[13] = amount
+        cols[14] = ""
+    } else {
+        // 出金: 借方=費用科目、貸方=普通預金
+        cols[3] = ""
+        cols[4] = item.tekiyou
+        cols[5] = item.yayoiSubAccountName
+        cols[6] = item.defaultTaxCategory
+        cols[7] = amount
+        cols[8] = ""
+        cols[9] = ""
+        cols[10] = "普通預金"
+        cols[11] = ""
+        cols[12] = "対象外"
+        cols[13] = amount
+        cols[14] = ""
+    }
+    return cols.joinToString(",") { qf(it) }
+}
+
+private suspend fun exportPurchaseYayoiCsvToUri(
+    context: Context,
+    uri: Uri,
+    items: List<PurchaseOutputItem>
+) {
+    withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.openOutputStream(uri)?.use { os ->
+                val writer = os.bufferedWriter(Charset.forName("Shift_JIS"))
+                for (item in items) {
+                    writer.write(buildPurchaseYayoiRow(item))
+                    writer.write("\r\n")
+                }
+                writer.flush()
+            }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "仕訳CSVを出力しました（弥生形式）", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+}
+
+private suspend fun exportDepositYayoiCsvToUri(
+    context: Context,
+    uri: Uri,
+    items: List<DepositOutputItem>
+) {
+    withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.openOutputStream(uri)?.use { os ->
+                val writer = os.bufferedWriter(Charset.forName("Shift_JIS"))
+                for (item in items) {
+                    writer.write(buildDepositYayoiRow(item))
+                    writer.write("\r\n")
+                }
+                writer.flush()
+            }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "仕訳CSVを出力しました（弥生形式）", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+}
+
+/**
+ * 出力形式バッジ（弥生=青、らくらく=緑）
+ */
+@Composable
+private fun OutputFormatBadge(accountingSoftware: AccountingSoftware) {
+    val (bgColor, badgeLabel, formatNote) = when (accountingSoftware) {
+        AccountingSoftware.YAYOI -> Triple(Color(0xFF1565C0), "弥生の青色申告", "仕訳CSV（Shift-JIS・25列）")
+        else -> Triple(Color(0xFF2E7D32), "らくらく青色申告", "シンプルCSV（UTF-8）")
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Surface(color = bgColor, shape = MaterialTheme.shapes.small) {
+            Text(
+                text = badgeLabel,
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+            )
+        }
+        Text(
+            text = formatNote,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

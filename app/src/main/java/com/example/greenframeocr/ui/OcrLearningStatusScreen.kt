@@ -42,6 +42,7 @@ import java.util.*
 @Composable
 fun OcrLearningStatusScreen(
     database: ReceiptDatabase,
+    appPreferences: AppPreferences,
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -111,6 +112,7 @@ fun OcrLearningStatusScreen(
     // エクスポート・インポート
     var showMenu by remember { mutableStateOf(false) }
     var isBusy by remember { mutableStateOf(false) }
+    var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val exportLauncher = rememberLauncherForActivityResult(
@@ -218,6 +220,22 @@ fun OcrLearningStatusScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FontSizeControl(
+                    fontSize = listFontSize,
+                    onDecrease = {
+                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                        appPreferences.listFontSize = listFontSize
+                    },
+                    onIncrease = {
+                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                        appPreferences.listFontSize = listFontSize
+                    }
+                )
+            }
             // 統計サマリー
             StatisticsSummary(
                 totalCount = totalCount,
@@ -255,6 +273,7 @@ fun OcrLearningStatusScreen(
                     patterns = recentPatterns,
                     productNameCache = productNameCache,
                     emptyMessage = "まだ学習パターンがありません",
+                    fontSize = listFontSize,
                     onDelete = { pattern -> patternToDelete = pattern; showDeleteDialog = true },
                     onPreset = { pattern -> patternToPreset = pattern; showPresetDialog = true }
                 )
@@ -262,6 +281,7 @@ fun OcrLearningStatusScreen(
                     patterns = mostUsedPatterns,
                     productNameCache = productNameCache,
                     emptyMessage = "まだ学習パターンがありません",
+                    fontSize = listFontSize,
                     onDelete = { pattern -> patternToDelete = pattern; showDeleteDialog = true },
                     onPreset = { pattern -> patternToPreset = pattern; showPresetDialog = true }
                 )
@@ -269,6 +289,7 @@ fun OcrLearningStatusScreen(
                     patterns = nearPromotionPatterns,
                     productNameCache = productNameCache,
                     emptyMessage = "昇格間近のパターンはありません",
+                    fontSize = listFontSize,
                     onDelete = { pattern -> patternToDelete = pattern; showDeleteDialog = true },
                     onPreset = { pattern -> patternToPreset = pattern; showPresetDialog = true }
                 )
@@ -532,6 +553,7 @@ private fun PatternList(
     patterns: List<OcrVariant>,
     productNameCache: Map<Long, String>,
     emptyMessage: String,
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onDelete: (OcrVariant) -> Unit,
     onPreset: (OcrVariant) -> Unit = {}
 ) {
@@ -557,6 +579,7 @@ private fun PatternList(
                 PatternCard(
                     pattern = pattern,
                     productName = productNameCache[pattern.productId] ?: "不明",
+                    fontSize = fontSize,
                     onDelete = { onDelete(pattern) },
                     onPreset = { onPreset(pattern) }
                 )
@@ -572,6 +595,7 @@ private fun PatternList(
 private fun PatternCard(
     pattern: OcrVariant,
     productName: String,
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onDelete: () -> Unit,
     onPreset: () -> Unit = {}
 ) {
@@ -588,7 +612,7 @@ private fun PatternCard(
             ) {
                 Text(
                     text = pattern.variantText,
-                    fontSize = 14.sp,
+                    fontSize = fontSize.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -596,12 +620,12 @@ private fun PatternCard(
                 )
                 Text(
                     text = " → ",
-                    fontSize = 12.sp,
+                    fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
                     text = productName,
-                    fontSize = 12.sp,
+                    fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -693,14 +717,14 @@ private fun PatternCard(
                 }
                 Text(
                     text = hitText,
-                    fontSize = 11.sp,
+                    fontSize = (fontSize - 3f).coerceAtLeast(10f).sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 // 平均スコア
                 Text(
                     text = "スコア: ${"%.2f".format(pattern.avgFinalScore)}",
-                    fontSize = 11.sp,
+                    fontSize = (fontSize - 3f).coerceAtLeast(10f).sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
@@ -708,7 +732,7 @@ private fun PatternCard(
                 if (pattern.autoFailCount > 0) {
                     Text(
                         text = "失敗: ${pattern.autoFailCount}",
-                        fontSize = 11.sp,
+                        fontSize = (fontSize - 3f).coerceAtLeast(10f).sp,
                         color = Color(0xFFF44336),
                         fontWeight = FontWeight.Medium
                     )

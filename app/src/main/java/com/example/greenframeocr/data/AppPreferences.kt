@@ -50,9 +50,16 @@ class AppPreferences(context: Context) {
         // Gemini API キー（一般購買OCR用）
         private const val KEY_GEMINI_API_KEY = "gemini_api_key"
 
+        // 国税庁インボイス照会 アプリケーションID
+        private const val KEY_NTA_APPLICATION_ID = "nta_application_id"
+
         // 連携会計ソフト
         private const val KEY_ACCOUNTING_SOFTWARE = "accounting_software"
         private const val DEFAULT_ACCOUNTING_SOFTWARE = "RAKURAKU"
+
+        // 一覧文字サイズ
+        private const val KEY_LIST_FONT_SIZE = "list_font_size"
+        const val DEFAULT_LIST_FONT_SIZE = 14f
     }
 
     // 年号設定
@@ -111,6 +118,16 @@ class AppPreferences(context: Context) {
     var geminiApiKey: String
         get() = prefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
         set(value) = prefs.edit().putString(KEY_GEMINI_API_KEY, value).apply()
+
+    // 国税庁インボイス照会 アプリケーションID
+    var ntaApplicationId: String
+        get() = prefs.getString(KEY_NTA_APPLICATION_ID, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_NTA_APPLICATION_ID, value).apply()
+
+    // 一覧文字サイズ（PassbookDataScreen / GeneralReceiptListScreen / TekiyouMatchingScreen 共通）
+    var listFontSize: Float
+        get() = prefs.getFloat(KEY_LIST_FONT_SIZE, DEFAULT_LIST_FONT_SIZE)
+        set(value) = prefs.edit().putFloat(KEY_LIST_FONT_SIZE, value.coerceIn(10f, 20f)).apply()
 
     // 連携会計ソフト
     var accountingSoftware: AccountingSoftware

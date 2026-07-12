@@ -53,7 +53,6 @@ fun SettingsScreen(
     appPreferences: AppPreferences,
     onBack: () -> Unit,
     onNavigateToOcrLearningStatus: () -> Unit = {},
-    onNavigateToAccountSettings: () -> Unit = {},
     onThemeChanged: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -61,6 +60,7 @@ fun SettingsScreen(
     val db = remember { ReceiptDatabase.getDatabase(context) }
 
     var selectedAccountingSoftware by remember { mutableStateOf(appPreferences.accountingSoftware) }
+    var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
     var eraYear by remember { mutableIntStateOf(appPreferences.eraYear) }
     var cameraFlash by remember { mutableStateOf(appPreferences.cameraFlash) }
     var minSharpness by remember { mutableIntStateOf(appPreferences.minSharpness) }
@@ -70,6 +70,7 @@ fun SettingsScreen(
     var selectedDarkMode by remember { mutableStateOf(appPreferences.darkMode) }
     var geminiApiKey by remember { mutableStateOf(appPreferences.geminiApiKey) }
     var geminiKeyVisible by remember { mutableStateOf(false) }
+    var ntaApplicationId by remember { mutableStateOf(appPreferences.ntaApplicationId) }
 
     // メッセージ状態
     var allExportMessage by remember { mutableStateOf<String?>(null) }
@@ -300,8 +301,53 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ========== 購買部門 ==========
-            SettingSection(title = "🌾 購買部門")
+            // ========== 表示設定 ==========
+            SettingSection(title = "📱 表示設定")
+
+            SettingItem(
+                title = "一覧文字サイズ",
+                subtitle = "通帳・レシート・摘要マッチング画面の文字サイズ（現在: ${listFontSize.toInt()}sp）"
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (listFontSize > 10f) {
+                                listFontSize -= 1f
+                                appPreferences.listFontSize = listFontSize
+                            }
+                        },
+                        enabled = listFontSize > 10f
+                    ) {
+                        Text("A-", fontSize = 14.sp)
+                    }
+                    Text(
+                        text = "${listFontSize.toInt()}",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.width(32.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    IconButton(
+                        onClick = {
+                            if (listFontSize < 20f) {
+                                listFontSize += 1f
+                                appPreferences.listFontSize = listFontSize
+                            }
+                        },
+                        enabled = listFontSize < 20f
+                    ) {
+                        Text("A+", fontSize = 16.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ========== JA購買伝票 ==========
+            SettingSection(title = "🌾 JA購買伝票")
 
             SettingItem(
                 title = "撮影・入力のデフォルト年",
@@ -408,19 +454,10 @@ fun SettingsScreen(
                 }
             }
 
-            SettingItem(
-                title = "勘定科目設定",
-                subtitle = "らくらく青色申告・弥生会計の勘定科目を管理"
-            ) {
-                TextButton(onClick = onNavigateToAccountSettings) {
-                    Text("表示")
-                }
-            }
-
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ========== 預金部門 ==========
-            SettingSection(title = "🏦 預金部門")
+            // ========== JA預金 ==========
+            SettingSection(title = "🏦 JA預金")
 
             SettingItem(
                 title = "金額を非表示",
@@ -437,8 +474,8 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ========== 一般購買部門 ==========
-            SettingSection(title = "🛒 一般購買部門")
+            // ========== レシート・領収書 ==========
+            SettingSection(title = "🛒 レシート・領収書")
 
             Text(
                 text = "Gemini APIキー",
@@ -467,6 +504,33 @@ fun SettingsScreen(
                         }) {
                             Icon(Icons.Default.Save, contentDescription = "保存")
                         }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "国税庁インボイス照会 アプリケーションID",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+            )
+            Text(
+                text = "登録番号から事業者名を自動取得します。未設定でも動作する場合があります。",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            OutlinedTextField(
+                value = ntaApplicationId,
+                onValueChange = { ntaApplicationId = it },
+                placeholder = { Text("アプリケーションID") },
+                trailingIcon = {
+                    IconButton(onClick = { appPreferences.ntaApplicationId = ntaApplicationId }) {
+                        Icon(Icons.Default.Save, contentDescription = "保存")
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),

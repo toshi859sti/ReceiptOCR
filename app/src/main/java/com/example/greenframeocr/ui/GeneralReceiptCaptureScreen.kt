@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.FlashlightOff
+import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -53,6 +55,8 @@ fun GeneralReceiptCaptureScreen(
     var ocrStarted by remember { mutableStateOf(false) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
     var imageCaptureRef by remember { mutableStateOf<ImageCapture?>(null) }
+    var cameraRef by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
+    var isTorchOn by remember { mutableStateOf(false) }
 
     val recognizer = remember {
         TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
@@ -106,7 +110,7 @@ fun GeneralReceiptCaptureScreen(
 
         try {
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
+            cameraRef = cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 CameraSelector.DEFAULT_BACK_CAMERA,
                 preview,
@@ -179,6 +183,29 @@ fun GeneralReceiptCaptureScreen(
                 }
             }
 
+            // 照明ボタン（左下）
+            FloatingActionButton(
+                onClick = {
+                    cameraRef?.let { cam ->
+                        isTorchOn = !isTorchOn
+                        cam.cameraControl.enableTorch(isTorchOn)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, bottom = 32.dp),
+                containerColor = if (isTorchOn) MaterialTheme.colorScheme.primary
+                                 else MaterialTheme.colorScheme.surface
+            ) {
+                Icon(
+                    imageVector = if (isTorchOn) Icons.Filled.FlashlightOn
+                                  else Icons.Filled.FlashlightOff,
+                    contentDescription = if (isTorchOn) "フラッシュオフ" else "フラッシュオン",
+                    tint = if (isTorchOn) MaterialTheme.colorScheme.onPrimary
+                           else MaterialTheme.colorScheme.onSurface
+                )
+            }
+
             // 下部コントロール（モード切替 + シャッター）
             Column(
                 modifier = Modifier
@@ -208,6 +235,8 @@ fun GeneralReceiptCaptureScreen(
                                 override fun onCaptureSuccess(image: ImageProxy) {
                                     val bitmap: Bitmap = image.toBitmap()
                                     image.close()
+                                    cameraRef?.cameraControl?.enableTorch(false)
+                                    isTorchOn = false
 
                                     when (captureMode) {
                                         CaptureMode.ML_KIT -> {

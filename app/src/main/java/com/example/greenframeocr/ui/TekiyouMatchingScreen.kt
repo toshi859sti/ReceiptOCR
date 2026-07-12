@@ -24,6 +24,11 @@ import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.*
 import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.util.GeminiApiException
+import com.example.greenframeocr.util.GeminiApiKeyMissingException
+import com.example.greenframeocr.util.GeminiQuotaExhaustedException
+import com.example.greenframeocr.util.GeminiRateLimitException
+import com.example.greenframeocr.util.GeminiReceiptClient
 import com.example.greenframeocr.util.importTekiyouFromCsv
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -45,6 +50,7 @@ fun TekiyouMatchingScreen(
     val accountingSoftware = appPreferences.accountingSoftware
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
 
     // State
     var matchingRules by remember { mutableStateOf<List<MatchingRuleWithTekiyou>>(emptyList()) }
@@ -61,11 +67,19 @@ fun TekiyouMatchingScreen(
     var showIndividualDialog by remember { mutableStateOf(false) }
     var selectedMeisai by remember { mutableStateOf<DepositMeisaiWithOverride?>(null) }
     var selectedMeisaiGroupKamoku by remember { mutableStateOf<String?>(null) }
+    var selectedMeisaiGroupYayoiAccountName by remember { mutableStateOf<String?>(null) }
 
     // フィルタ
     var filterType by remember { mutableStateOf<Boolean?>(null) }
     var showOnlyWithData by remember { mutableStateOf(false) }
     var showOnlyUnmatched by remember { mutableStateOf(false) }
+
+    // AI提案（弥生モードのみ）
+    var showAiTekiyouDialog by remember { mutableStateOf(false) }
+    var aiTekiyouSuggestions by remember { mutableStateOf<List<GeminiReceiptClient.TekiyouMatchSuggestion>>(emptyList()) }
+    var aiTekiyouUsageStats by remember { mutableStateOf<GeminiReceiptClient.AiUsageStats?>(null) }
+    var isAiMatching by remember { mutableStateOf(false) }
+    var aiMatchingError by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
 
@@ -143,6 +157,57 @@ fun TekiyouMatchingScreen(
                     }
                 },
                 actions = {
+                    // AI科目提案ボタン（弥生モードのみ）
+                    if (accountingSoftware == AccountingSoftware.YAYOI) {
+                        TextButton(
+                            onClick = {
+                                val unmatched = matchingRules.filter { it.yayoiAccountId == null }
+                                if (unmatched.isEmpty()) {
+                                    aiMatchingError = "未マッチングの摘要がありません"
+                                    return@TextButton
+                                }
+                                if (yayoiAccountList.isEmpty()) {
+                                    aiMatchingError = "弥生勘定科目が登録されていません"
+                                    return@TextButton
+                                }
+                                isAiMatching = true
+                                aiMatchingError = null
+                                scope.launch {
+                                    try {
+                                        val result = GeminiReceiptClient.matchTekiyouToAccounts(
+                                            rules = unmatched,
+                                            accounts = yayoiAccountList,
+                                            apiKey = appPreferences.geminiApiKey
+                                        )
+                                        aiTekiyouSuggestions = result.suggestions
+                                        aiTekiyouUsageStats = result.usageStats
+                                        showAiTekiyouDialog = true
+                                    } catch (e: GeminiApiKeyMissingException) {
+                                        aiMatchingError = e.message
+                                    } catch (e: GeminiQuotaExhaustedException) {
+                                        aiMatchingError = e.message
+                                    } catch (e: GeminiRateLimitException) {
+                                        aiMatchingError = e.message
+                                    } catch (e: GeminiApiException) {
+                                        aiMatchingError = e.message
+                                    } catch (e: Exception) {
+                                        aiMatchingError = "エラー: ${e.message}"
+                                    } finally {
+                                        isAiMatching = false
+                                    }
+                                }
+                            },
+                            enabled = !isAiMatching
+                        ) {
+                            if (isAiMatching) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("提案中...", fontSize = 12.sp)
+                            } else {
+                                Text("AI科目提案", fontSize = 12.sp)
+                            }
+                        }
+                    }
                     IconButton(onClick = {
                         scope.launch {
                             database.depositMeisaiDao().deleteAll()
@@ -165,6 +230,22 @@ fun TekiyouMatchingScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FontSizeControl(
+                    fontSize = listFontSize,
+                    onDecrease = {
+                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                        appPreferences.listFontSize = listFontSize
+                    },
+                    onIncrease = {
+                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                        appPreferences.listFontSize = listFontSize
+                    }
+                )
+            }
             // 統計情報
             Card(
                 modifier = Modifier
@@ -295,6 +376,7 @@ fun TekiyouMatchingScreen(
                             rule = rule,
                             accountingSoftware = accountingSoftware,
                             isExpanded = isExpanded,
+                            fontSize = listFontSize,
                             onToggleExpand = {
                                 if (isExpanded) {
                                     expandedRuleIds = expandedRuleIds - rule.id
@@ -307,10 +389,11 @@ fun TekiyouMatchingScreen(
                                 selectedRule = rule
                                 showEditDialog = true
                             }) else null,
-                            meisaiItems = if (accountingSoftware == AccountingSoftware.RAKURAKU) meisaiByRuleId[rule.id] else null,
-                            onEditIndividual = if (accountingSoftware == AccountingSoftware.RAKURAKU) ({ meisai ->
+                            meisaiItems = meisaiByRuleId[rule.id],
+                            onEditIndividual = if (accountingSoftware != AccountingSoftware.BLUE_RETURN_PREP) ({ meisai ->
                                 selectedMeisai = meisai
                                 selectedMeisaiGroupKamoku = rule.kamoku
+                                selectedMeisaiGroupYayoiAccountName = rule.yayoiAccountName
                                 showIndividualDialog = true
                             }) else null
                         )
@@ -334,8 +417,10 @@ fun TekiyouMatchingScreen(
             },
             onSave = { ruleId, rakurakuTekiyouId, yayoiAccountId ->
                 scope.launch {
-                    if (accountingSoftware == AccountingSoftware.RAKURAKU) {
-                        database.depositMeisaiDao().clearOverridesForRule(ruleId)
+                    when (accountingSoftware) {
+                        AccountingSoftware.RAKURAKU -> database.depositMeisaiDao().clearOverridesForRule(ruleId)
+                        AccountingSoftware.YAYOI -> database.depositMeisaiDao().clearYayoiOverridesForRule(ruleId)
+                        else -> {}
                     }
                     val existingRule = database.tekiyouMatchingRuleDao().getById(ruleId)
                     existingRule?.let {
@@ -354,8 +439,40 @@ fun TekiyouMatchingScreen(
         )
     }
 
-    // 個別オーバーライドダイアログ
-    if (showIndividualDialog && selectedMeisai != null) {
+    // AI提案エラーダイアログ
+    if (aiMatchingError != null) {
+        AlertDialog(
+            onDismissRequest = { aiMatchingError = null },
+            title = { Text("AI提案エラー") },
+            text = { Text(aiMatchingError ?: "") },
+            confirmButton = { TextButton(onClick = { aiMatchingError = null }) { Text("OK") } }
+        )
+    }
+
+    // AI摘要マッチングダイアログ
+    if (showAiTekiyouDialog) {
+        AiTekiyouMatchingDialog(
+            suggestions = aiTekiyouSuggestions,
+            accountList = yayoiAccountList,
+            usageStats = aiTekiyouUsageStats,
+            onDismiss = { showAiTekiyouDialog = false },
+            onSave = { acceptedMap ->
+                scope.launch {
+                    acceptedMap.forEach { (ruleId, accountId) ->
+                        val existingRule = database.tekiyouMatchingRuleDao().getById(ruleId)
+                        existingRule?.let {
+                            database.tekiyouMatchingRuleDao().update(it.copy(yayoiAccountId = accountId))
+                        }
+                    }
+                    loadData()
+                }
+                showAiTekiyouDialog = false
+            }
+        )
+    }
+
+    // 個別オーバーライドダイアログ（らくらく）
+    if (showIndividualDialog && selectedMeisai != null && accountingSoftware == AccountingSoftware.RAKURAKU) {
         IndividualOverrideDialog(
             meisai = selectedMeisai!!,
             groupKamoku = selectedMeisaiGroupKamoku,
@@ -378,6 +495,32 @@ fun TekiyouMatchingScreen(
             }
         )
     }
+
+    // 個別オーバーライドダイアログ（弥生）
+    if (showIndividualDialog && selectedMeisai != null && accountingSoftware == AccountingSoftware.YAYOI) {
+        IndividualYayoiOverrideDialog(
+            meisai = selectedMeisai!!,
+            groupAccountName = selectedMeisaiGroupYayoiAccountName,
+            yayoiAccountList = yayoiAccountList,
+            flaggedList = yayoiAccountList.filter { it.usedForDeposit },
+            onDismiss = {
+                showIndividualDialog = false
+                selectedMeisai = null
+            },
+            onSave = { meisaiId, accountId ->
+                val ruleId = selectedMeisai?.matchingRuleId
+                scope.launch {
+                    database.depositMeisaiDao().updateOverrideYayoiAccount(meisaiId, accountId)
+                    if (ruleId != null) {
+                        val items = database.depositMeisaiDao().getAllWithOverrideByRuleId(ruleId)
+                        meisaiByRuleId = meisaiByRuleId + (ruleId to items)
+                    }
+                }
+                showIndividualDialog = false
+                selectedMeisai = null
+            }
+        )
+    }
 }
 
 /**
@@ -388,6 +531,7 @@ private fun MatchingRuleCard(
     rule: MatchingRuleWithTekiyou,
     accountingSoftware: AccountingSoftware,
     isExpanded: Boolean,
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onToggleExpand: () -> Unit,
     onEditGroup: (() -> Unit)?,
     meisaiItems: List<DepositMeisaiWithOverride>?,
@@ -437,7 +581,7 @@ private fun MatchingRuleCard(
                 ) {
                     Text(
                         text = typeLabel,
-                        fontSize = 11.sp,
+                        fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                         fontWeight = FontWeight.Bold,
                         color = typeColor,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
@@ -461,7 +605,7 @@ private fun MatchingRuleCard(
                     Text(
                         text = rule.normalizedTekiyou,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
+                        fontSize = fontSize.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -469,7 +613,7 @@ private fun MatchingRuleCard(
                         if (rule.sampleText.isNotEmpty() && rule.sampleText != rule.normalizedTekiyou) {
                             Text(
                                 text = "例: ${rule.sampleText}",
-                                fontSize = 11.sp,
+                                fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -479,7 +623,7 @@ private fun MatchingRuleCard(
                         }
                         Text(
                             text = "${rule.matchCount}件",
-                            fontSize = 11.sp,
+                            fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -505,7 +649,7 @@ private fun MatchingRuleCard(
                     when {
                         isBrp -> Text(
                             "Windows側で管理",
-                            fontSize = 11.sp,
+                            fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2
                         )
@@ -513,13 +657,13 @@ private fun MatchingRuleCard(
                             Text(
                                 rule.yayoiAccountName ?: "",
                                 fontWeight = FontWeight.Medium,
-                                fontSize = 13.sp,
+                                fontSize = (fontSize - 1f).coerceAtLeast(10f).sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 rule.yayoiAccountCode ?: "",
-                                fontSize = 11.sp,
+                                fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1
                             )
@@ -528,13 +672,13 @@ private fun MatchingRuleCard(
                             Text(
                                 rule.rakurakuTekiyouName ?: "",
                                 fontWeight = FontWeight.Medium,
-                                fontSize = 13.sp,
+                                fontSize = (fontSize - 1f).coerceAtLeast(10f).sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 rule.kamoku ?: "",
-                                fontSize = 11.sp,
+                                fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -542,7 +686,7 @@ private fun MatchingRuleCard(
                         }
                         else -> Text(
                             "未設定",
-                            fontSize = 13.sp,
+                            fontSize = (fontSize - 1f).coerceAtLeast(10f).sp,
                             color = MaterialTheme.colorScheme.error
                         )
                     }
@@ -579,7 +723,7 @@ private fun MatchingRuleCard(
                         meisaiItems.isEmpty() -> {
                             Text(
                                 text = "データなし",
-                                fontSize = 13.sp,
+                                fontSize = (fontSize - 1f).coerceAtLeast(10f).sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(16.dp)
                             )
@@ -588,7 +732,9 @@ private fun MatchingRuleCard(
                             meisaiItems.forEach { meisai ->
                                 DepositMeisaiItemRow(
                                     meisai = meisai,
-                                    groupKamoku = rule.kamoku,
+                                    groupLabel = if (accountingSoftware == AccountingSoftware.YAYOI)
+                                        rule.yayoiAccountName else rule.kamoku,
+                                    isYayoi = accountingSoftware == AccountingSoftware.YAYOI,
                                     onClick = onEditIndividual?.let { { onEditIndividual(meisai) } } ?: {}
                                 )
                             }
@@ -606,11 +752,19 @@ private fun MatchingRuleCard(
 @Composable
 private fun DepositMeisaiItemRow(
     meisai: DepositMeisaiWithOverride,
-    groupKamoku: String?,
+    groupLabel: String?,   // グループのデフォルトラベル（kamoku または yayoi accountName）
+    isYayoi: Boolean,
     onClick: () -> Unit
 ) {
-    val isOverridden = meisai.overrideTekiyouId != null
-    val effectiveKamoku = if (isOverridden) meisai.overrideKamoku else groupKamoku
+    val isOverridden = if (isYayoi) meisai.overrideYayoiAccountId != null else meisai.overrideTekiyouId != null
+    val effectiveLabel = when {
+        isYayoi && meisai.overrideYayoiAccountId != null -> buildString {
+            append(meisai.overrideYayoiAccountName ?: "")
+            meisai.overrideYayoiAccountCode?.takeIf { it.isNotEmpty() }?.let { append("（$it）") }
+        }
+        !isYayoi && meisai.overrideTekiyouId != null -> meisai.overrideKamoku
+        else -> groupLabel
+    }
     val amountColor = if (meisai.amount >= 0) Color(0xFF4CAF50) else Color(0xFFE53935)
 
     Row(
@@ -657,7 +811,7 @@ private fun DepositMeisaiItemRow(
         // 有効勘定科目（オーバーライド時は色を変えてアイコン表示）
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = effectiveKamoku ?: "未設定",
+                text = effectiveLabel ?: "未設定",
                 fontSize = 11.sp,
                 color = if (isOverridden) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
                 maxLines = 1,
@@ -1242,6 +1396,379 @@ private suspend fun extractAndCreateRules(database: ReceiptDatabase) {
             Unit
         }
     }
+}
+
+/**
+ * 個別オーバーライドダイアログ（弥生モード）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun IndividualYayoiOverrideDialog(
+    meisai: DepositMeisaiWithOverride,
+    groupAccountName: String?,
+    yayoiAccountList: List<YayoiAccount>,
+    flaggedList: List<YayoiAccount>,
+    onDismiss: () -> Unit,
+    onSave: (meisaiId: Int, accountId: Long?) -> Unit
+) {
+    val hasFlagged = flaggedList.isNotEmpty()
+    var showAll by remember { mutableStateOf(!hasFlagged) }
+    var selectedAccountId by remember { mutableStateOf(meisai.overrideYayoiAccountId) }
+    var searchText by remember { mutableStateOf("") }
+    var selectedCategoryA by remember { mutableStateOf<String?>(null) }
+
+    val categoryAList = remember(yayoiAccountList) {
+        yayoiAccountList.map { it.categoryA }.distinct().filter { it.isNotBlank() }.sorted()
+    }
+
+    val baseList = if (showAll) yayoiAccountList else flaggedList
+
+    val filtered = remember(baseList, selectedCategoryA, searchText, showAll) {
+        baseList.filter { acc ->
+            (showAll.not() || selectedCategoryA == null || acc.categoryA == selectedCategoryA) &&
+            (searchText.isEmpty() ||
+             acc.accountName.contains(searchText, ignoreCase = true) ||
+             (acc.accountCode?.contains(searchText, ignoreCase = true) == true) ||
+             acc.searchKeyAlpha.contains(searchText, ignoreCase = true))
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("個別変更（弥生）", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "${meisai.transactionDate}  ${meisai.tekiyou}",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "保存するとグループ設定に関わらずこの明細にのみ適用されます",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // フラグ/全科目トグル
+                if (hasFlagged) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = !showAll,
+                            onClick = { showAll = false; selectedCategoryA = null },
+                            label = { Text("預金フラグのみ (${flaggedList.size}件)", fontSize = 12.sp) }
+                        )
+                        FilterChip(
+                            selected = showAll,
+                            onClick = { showAll = true },
+                            label = { Text("全科目", fontSize = 12.sp) }
+                        )
+                    }
+                }
+
+                if (showAll) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = selectedCategoryA == null,
+                                onClick = { selectedCategoryA = null },
+                                label = { Text("全て", fontSize = 12.sp) }
+                            )
+                        }
+                        items(categoryAList.size) { idx ->
+                            val cat = categoryAList[idx]
+                            FilterChip(
+                                selected = selectedCategoryA == cat,
+                                onClick = { selectedCategoryA = if (selectedCategoryA == cat) null else cat },
+                                label = { Text(cat, fontSize = 12.sp) }
+                            )
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = searchText,
+                    onValueChange = { searchText = it },
+                    label = { Text("検索") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, "検索") }
+                )
+
+                Divider()
+
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    // グループのデフォルトに戻す
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedAccountId = null }
+                                .background(
+                                    if (selectedAccountId == null) MaterialTheme.colorScheme.primaryContainer
+                                    else Color.Transparent
+                                )
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = selectedAccountId == null, onClick = { selectedAccountId = null })
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text("グループのデフォルトに戻す", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (groupAccountName != null) {
+                                    Text(
+                                        text = groupAccountName,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    items(filtered, key = { it.id }) { account ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedAccountId = account.id }
+                                .background(
+                                    if (selectedAccountId == account.id) MaterialTheme.colorScheme.primaryContainer
+                                    else Color.Transparent
+                                )
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedAccountId == account.id,
+                                onClick = { selectedAccountId = account.id }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(account.accountName, fontWeight = FontWeight.Medium)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    account.accountCode?.let {
+                                        Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    Text(
+                                        "${account.categoryA} / ${account.categoryB}",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (account.searchKeyAlpha.isNotEmpty()) {
+                                Text(
+                                    account.searchKeyAlpha,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(meisai.id, selectedAccountId) }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
+    )
+}
+
+/**
+ * 通帳摘要→弥生科目 AI提案ダイアログ
+ */
+@Composable
+private fun AiTekiyouMatchingDialog(
+    suggestions: List<GeminiReceiptClient.TekiyouMatchSuggestion>,
+    accountList: List<YayoiAccount>,
+    usageStats: GeminiReceiptClient.AiUsageStats?,
+    onDismiss: () -> Unit,
+    onSave: (Map<Int, Long>) -> Unit
+) {
+    data class SuggestionState(
+        val ruleId: Int,
+        val tekiyou: String,
+        val accountId: Long,
+        val accountName: String,
+        val accountCode: String?,
+        val reason: String,
+        var accepted: Boolean = true
+    )
+
+    val accountMap = remember(accountList) { accountList.associateBy { it.id } }
+
+    val states = remember(suggestions) {
+        suggestions.map { s ->
+            val account = accountMap[s.suggestedAccountId]
+            androidx.compose.runtime.mutableStateOf(
+                SuggestionState(
+                    ruleId = s.ruleId,
+                    tekiyou = s.normalizedTekiyou,
+                    accountId = s.suggestedAccountId,
+                    accountName = account?.accountName ?: "不明",
+                    accountCode = account?.accountCode,
+                    reason = s.reason,
+                    accepted = true
+                )
+            )
+        }
+    }
+
+    val acceptedCount = states.count { it.value.accepted }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("AI 科目提案（通帳摘要）", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                if (states.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "${states.size}件の提案（${acceptedCount}件承認中）",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(
+                                onClick = { states.forEach { it.value = it.value.copy(accepted = true) } },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) { Text("全承認", fontSize = 12.sp) }
+                            TextButton(
+                                onClick = { states.forEach { it.value = it.value.copy(accepted = false) } },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) { Text("全解除", fontSize = 12.sp) }
+                        }
+                    }
+                }
+            }
+        },
+        text = {
+            if (states.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "未マッチング摘要に対する提案が見つかりませんでした。",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 440.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(states.size) { idx ->
+                        val state by states[idx]
+                        Surface(
+                            color = if (state.accepted)
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                            else
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { states[idx].value = state.copy(accepted = !state.accepted) }
+                                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Checkbox(
+                                    checked = state.accepted,
+                                    onCheckedChange = { states[idx].value = state.copy(accepted = it) },
+                                    modifier = Modifier.size(20.dp).padding(top = 2.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        state.tekiyou,
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text("→", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                        Text(
+                                            buildString {
+                                                append(state.accountName)
+                                                state.accountCode?.takeIf { it.isNotEmpty() }
+                                                    ?.let { append("（$it）") }
+                                            },
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    if (state.reason.isNotEmpty()) {
+                                        Text(
+                                            state.reason,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Column(horizontalAlignment = Alignment.End) {
+                if (usageStats != null) {
+                    Text(
+                        text = usageStats.toDisplayString(),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
+                Row {
+                    TextButton(onClick = onDismiss) { Text("キャンセル") }
+                    TextButton(
+                        onClick = {
+                            val accepted = states
+                                .filter { it.value.accepted }
+                                .associate { it.value.ruleId to it.value.accountId }
+                            onSave(accepted)
+                        },
+                        enabled = acceptedCount > 0
+                    ) { Text("${acceptedCount}件を保存") }
+                }
+            }
+        },
+        dismissButton = null
+    )
 }
 
 /**

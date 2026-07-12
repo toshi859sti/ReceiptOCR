@@ -25,7 +25,7 @@ fun DepositMenuScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("預金部門") },
+                title = { Text("JA預金") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -50,7 +50,7 @@ fun DepositMenuScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "預金部門",
+                text = "JA預金",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary

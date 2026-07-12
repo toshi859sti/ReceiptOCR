@@ -25,9 +25,10 @@ import com.example.greenframeocr.util.toCanonicalKey
         OcrFallbackLog::class,
         OcrExplicitJoin::class,
         GeneralReceipt::class,
-        GeneralReceiptItem::class
+        GeneralReceiptItem::class,
+        InvoiceStore::class
     ],
-    version = 21,
+    version = 25,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -44,6 +45,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun ocrFallbackLogDao(): OcrFallbackLogDao
     abstract fun ocrExplicitJoinDao(): OcrExplicitJoinDao
     abstract fun generalReceiptDao(): GeneralReceiptDao
+    abstract fun invoiceStoreDao(): InvoiceStoreDao
 
     companion object {
         @Volatile
@@ -752,6 +754,50 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 24 → 25（品目 除外フラグ追加）
+        private val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE general_receipt_items ADD COLUMN isExcluded INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        // マイグレーション: version 23 → 24（登録番号キャッシュ追加）
+        private val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE general_receipts ADD COLUMN registrationNumber TEXT NOT NULL DEFAULT ''"
+                )
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS invoice_stores (
+                        registrationNumber TEXT NOT NULL PRIMARY KEY,
+                        storeName TEXT NOT NULL,
+                        address TEXT NOT NULL DEFAULT '',
+                        cachedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+
+        // マイグレーション: version 22 → 23（general_receipt_items に yayoiAccountId 追加）
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE general_receipt_items ADD COLUMN yayoiAccountId INTEGER DEFAULT NULL"
+                )
+            }
+        }
+
+        // マイグレーション: version 21 → 22（弥生個別オーバーライド列追加）
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE deposit_meisai ADD COLUMN overrideYayoiAccountId INTEGER DEFAULT NULL"
+                )
+            }
+        }
+
         // マイグレーション: version 20 → 21（連携会計ソフト対応：product_master/tekiyou_matching_rules に yayoiAccountId 追加）
         private val MIGRATION_20_21 = object : Migration(20, 21) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -969,7 +1015,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
                     .fallbackToDestructiveMigration()  // 開発中はデータ破棄を許可
                     .build()
                 INSTANCE = instance

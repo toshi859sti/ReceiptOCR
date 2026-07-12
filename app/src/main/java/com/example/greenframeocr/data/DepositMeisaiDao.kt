@@ -59,13 +59,23 @@ interface DepositMeisaiDao {
     @Query("UPDATE deposit_meisai SET overrideTekiyouId = NULL WHERE matchingRuleId = :ruleId")
     suspend fun clearOverridesForRule(ruleId: Int)
 
-    /** 指定グループの明細を個別オーバーライド情報付きで取得 */
+    /** 個別オーバーライド弥生科目を設定（accountId=nullでクリア） */
+    @Query("UPDATE deposit_meisai SET overrideYayoiAccountId = :accountId WHERE id = :meisaiId")
+    suspend fun updateOverrideYayoiAccount(meisaiId: Int, accountId: Long?)
+
+    /** グループ全件の弥生個別オーバーライドをクリア（グループ全件上書き時に使用） */
+    @Query("UPDATE deposit_meisai SET overrideYayoiAccountId = NULL WHERE matchingRuleId = :ruleId")
+    suspend fun clearYayoiOverridesForRule(ruleId: Int)
+
+    /** 指定グループの明細を個別オーバーライド情報付きで取得（らくらく摘要・弥生科目の両方をJOIN） */
     @Query("""
         SELECT dm.id, dm.transactionDate, dm.transactionNumber, dm.tekiyou, dm.amount,
-               dm.matchingRuleId, dm.overrideTekiyouId,
-               t.tekiyouName AS overrideTekiyouName, t.kamoku AS overrideKamoku
+               dm.matchingRuleId, dm.overrideTekiyouId, dm.overrideYayoiAccountId,
+               t.tekiyouName AS overrideTekiyouName, t.kamoku AS overrideKamoku,
+               y.accountName AS overrideYayoiAccountName, y.accountCode AS overrideYayoiAccountCode
         FROM deposit_meisai dm
         LEFT JOIN rakuraku_tekiyou t ON dm.overrideTekiyouId = t.id
+        LEFT JOIN yayoi_accounts y ON dm.overrideYayoiAccountId = y.id
         WHERE dm.matchingRuleId = :ruleId
         ORDER BY dm.transactionDate ASC, dm.transactionNumber ASC
     """)
@@ -80,7 +90,12 @@ data class DepositMeisaiWithOverride(
     val tekiyou: String,
     val amount: Int,
     val matchingRuleId: Int?,
+    // らくらく個別オーバーライド
     val overrideTekiyouId: Int?,
     val overrideTekiyouName: String?,
-    val overrideKamoku: String?
+    val overrideKamoku: String?,
+    // 弥生個別オーバーライド
+    val overrideYayoiAccountId: Long?,
+    val overrideYayoiAccountName: String?,
+    val overrideYayoiAccountCode: String?
 )

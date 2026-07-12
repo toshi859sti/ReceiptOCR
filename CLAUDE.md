@@ -131,7 +131,7 @@ fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult
 ### ML Kit 文字高さ（最小 100px）
 40px 以下で精度が急落する。透視変換解像度を下げてはいけない。
 
-### Room DB バージョン（現在 v20）
+### Room DB バージョン（現在 v25）
 バージョンアップ時は `ReceiptDatabase.kt` にマイグレーションを追加すること。
 `fallbackToDestructiveMigration()` は開発中のみ有効。本番リリース前に削除。
 

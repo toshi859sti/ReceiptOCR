@@ -31,9 +31,10 @@
 
 ## 未実装・将来対応
 
-- [ ] `AccountSettingsScreen` が `Navigation.kt` に未接続
-  - ファイルは実装済み（`AccountSettingsScreen.kt`）
-  - `SettingsScreen` からの遷移ルートを追加すれば動作する
+- [ ] `NtaInvoiceClient`（国税庁インボイス照会）の API 仕様が未検証（2026-07-12）
+  - `API_BASE_URL` およびレスポンスJSONのフィールド名（`code`/`announcement`/`name`/`address`）は公式ドキュメントとの突合が未実施
+  - アプリケーションID未設定時に実際に動作するかも未確認
+  - 実機でのネットワーク照会テストが必要
 - [ ] `RakurakuTekiyouScreen` が `SettingsScreen` から遷移できるか未確認
 - [ ] 弥生会計・らくらく青色申告との直接連携
   - 現状は CSV ファイル出力のみ。API 連携は未実装

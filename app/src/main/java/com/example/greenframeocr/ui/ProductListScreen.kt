@@ -27,7 +27,9 @@ import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.*
 import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.util.GeminiApiException
 import com.example.greenframeocr.util.GeminiApiKeyMissingException
+import com.example.greenframeocr.util.GeminiQuotaExhaustedException
 import com.example.greenframeocr.util.GeminiRateLimitException
 import com.example.greenframeocr.util.GeminiReceiptClient
 import com.example.greenframeocr.util.withComputedKey
@@ -81,9 +83,11 @@ fun ProductListScreen(
     var recalculateResult by remember { mutableStateOf<String?>(null) }
     var showAiMatchingDialog by remember { mutableStateOf(false) }
     var aiSuggestions by remember { mutableStateOf<List<GeminiReceiptClient.AccountMatchSuggestion>>(emptyList()) }
+    var aiUsageStats by remember { mutableStateOf<GeminiReceiptClient.AiUsageStats?>(null) }
     var isAiMatching by remember { mutableStateOf(false) }
     var aiMatchingError by remember { mutableStateOf<String?>(null) }
     var isRecalculating by remember { mutableStateOf(false) }
+    var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
 
     val categories = listOf("一般購買", "給油所", "農業機械")
 
@@ -215,32 +219,37 @@ fun ProductListScreen(
                 actions = {
                     // AI提案ボタン（弥生モードのみ）
                     if (accountingSoftware == AccountingSoftware.YAYOI) {
-                        IconButton(
+                        TextButton(
                             onClick = {
                                 val unmatched = allProducts.filter { it.yayoiAccountId == null }
                                 if (unmatched.isEmpty()) {
                                     aiMatchingError = "未マッチングの品目がありません"
-                                    return@IconButton
+                                    return@TextButton
                                 }
                                 val accounts = if (yayoiFlaggedList.isNotEmpty()) yayoiFlaggedList else yayoiAccountList
                                 if (accounts.isEmpty()) {
                                     aiMatchingError = "弥生勘定科目が登録されていません"
-                                    return@IconButton
+                                    return@TextButton
                                 }
                                 isAiMatching = true
                                 aiMatchingError = null
                                 scope.launch {
                                     try {
-                                        val suggestions = GeminiReceiptClient.matchProductsToAccounts(
+                                        val result = GeminiReceiptClient.matchProductsToAccounts(
                                             productNames = unmatched.map { it.canonicalName to it.category },
                                             accounts = accounts,
                                             apiKey = appPreferences.geminiApiKey
                                         )
-                                        aiSuggestions = suggestions
+                                        aiSuggestions = result.suggestions
+                                        aiUsageStats = result.usageStats
                                         showAiMatchingDialog = true
                                     } catch (e: GeminiApiKeyMissingException) {
                                         aiMatchingError = e.message
+                                    } catch (e: GeminiQuotaExhaustedException) {
+                                        aiMatchingError = e.message
                                     } catch (e: GeminiRateLimitException) {
+                                        aiMatchingError = e.message
+                                    } catch (e: GeminiApiException) {
                                         aiMatchingError = e.message
                                     } catch (e: Exception) {
                                         aiMatchingError = "エラー: ${e.message}"
@@ -252,9 +261,11 @@ fun ProductListScreen(
                             enabled = !isAiMatching
                         ) {
                             if (isAiMatching) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("提案中...", fontSize = 12.sp)
                             } else {
-                                Icon(Icons.Default.AutoAwesome, "AI提案")
+                                Text("AI科目提案", fontSize = 12.sp)
                             }
                         }
                     }
@@ -288,6 +299,22 @@ fun ProductListScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FontSizeControl(
+                    fontSize = listFontSize,
+                    onDecrease = {
+                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                        appPreferences.listFontSize = listFontSize
+                    },
+                    onIncrease = {
+                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                        appPreferences.listFontSize = listFontSize
+                    }
+                )
+            }
             // 検索バー
             OutlinedTextField(
                 value = searchQuery,
@@ -355,10 +382,12 @@ fun ProductListScreen(
                 // 摘要フィルタ
                 Text("絞込:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TekiyouFilter.values().forEach { filter ->
+                    val chipLabel = if (filter == TekiyouFilter.MISSING && accountingSoftware == AccountingSoftware.YAYOI)
+                        "科目未設定" else filter.label
                     FilterChip(
                         selected = tekiyouFilter == filter,
                         onClick = { tekiyouFilter = filter },
-                        label = { Text(filter.label, fontSize = 12.sp) }
+                        label = { Text(chipLabel, fontSize = 12.sp) }
                     )
                 }
             }
@@ -393,13 +422,10 @@ fun ProductListScreen(
                         product = product,
                         matchLabel = matchLabel,
                         accountingSoftware = accountingSoftware,
+                        fontSize = listFontSize,
                         onClick = {
                             selectedProduct = product
                             showEditDialog = true
-                        },
-                        onDelete = {
-                            selectedProduct = product
-                            showDeleteDialog = true
                         },
                         onMerge = {
                             selectedProduct = product
@@ -435,6 +461,11 @@ fun ProductListScreen(
                 }
                 showEditDialog = false
                 selectedProduct = null
+            },
+            onDelete = {
+                // 編集ダイアログを閉じて削除確認ダイアログへ
+                showEditDialog = false
+                showDeleteDialog = true
             }
         )
     }
@@ -607,6 +638,7 @@ fun ProductListScreen(
             suggestions = aiSuggestions,
             allProducts = allProducts,
             accountMap = accountMap,
+            usageStats = aiUsageStats,
             onDismiss = { showAiMatchingDialog = false },
             onSave = { acceptedMap ->
                 scope.launch {
@@ -631,6 +663,7 @@ private fun AiMatchingDialog(
     suggestions: List<GeminiReceiptClient.AccountMatchSuggestion>,
     allProducts: List<ProductMaster>,
     accountMap: Map<Long, YayoiAccount>,
+    usageStats: GeminiReceiptClient.AiUsageStats?,
     onDismiss: () -> Unit,
     onSave: (Map<Long, Long>) -> Unit
 ) {
@@ -783,17 +816,30 @@ private fun AiMatchingDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = {
-                    val accepted = states
-                        .filter { it.value.accepted }
-                        .associate { it.value.productId to it.value.accountId }
-                    onSave(accepted)
-                },
-                enabled = acceptedCount > 0
-            ) { Text("${acceptedCount}件を保存") }
+            Column(horizontalAlignment = Alignment.End) {
+                if (usageStats != null) {
+                    Text(
+                        text = usageStats.toDisplayString(),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
+                Row {
+                    TextButton(onClick = onDismiss) { Text("キャンセル") }
+                    TextButton(
+                        onClick = {
+                            val accepted = states
+                                .filter { it.value.accepted }
+                                .associate { it.value.productId to it.value.accountId }
+                            onSave(accepted)
+                        },
+                        enabled = acceptedCount > 0
+                    ) { Text("${acceptedCount}件を保存") }
+                }
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
+        dismissButton = null
     )
 }
 
@@ -805,8 +851,8 @@ private fun ProductListItem(
     product: ProductMaster,
     matchLabel: String?,
     accountingSoftware: AccountingSoftware,
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onClick: () -> Unit,
-    onDelete: () -> Unit,
     onMerge: () -> Unit
 ) {
     Row(
@@ -821,7 +867,7 @@ private fun ProductListItem(
             Text(
                 text = product.canonicalName,
                 fontWeight = FontWeight.Medium,
-                fontSize = 15.sp,
+                fontSize = (fontSize + 1f).sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -836,13 +882,13 @@ private fun ProductListItem(
                 CategoryChip(product.category)
                 Text(
                     text = "使用: ${product.frequencyCount}回",
-                    fontSize = 12.sp,
+                    fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 if (product.isCertified) {
                     Text(
                         text = "確定",
-                        fontSize = 10.sp,
+                        fontSize = (fontSize - 4f).coerceAtLeast(10f).sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1565C0),
                         modifier = Modifier
@@ -865,7 +911,7 @@ private fun ProductListItem(
             val isUnset = matchLabel == null
             Text(
                 text = "$labelPrefix$labelText",
-                fontSize = 12.sp,
+                fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                 color = when {
                     isBrp -> MaterialTheme.colorScheme.onSurfaceVariant
                     isUnset -> MaterialTheme.colorScheme.error
@@ -879,13 +925,6 @@ private fun ProductListItem(
                 Icons.Default.MergeType,
                 contentDescription = "統合",
                 tint = MaterialTheme.colorScheme.secondary
-            )
-        }
-        IconButton(onClick = onDelete) {
-            Icon(
-                Icons.Default.Delete,
-                contentDescription = "削除",
-                tint = MaterialTheme.colorScheme.error
             )
         }
     }
@@ -927,7 +966,8 @@ private fun ProductEditDialog(
     yayoiFlaggedList: List<YayoiAccount>,
     categories: List<String>,
     onDismiss: () -> Unit,
-    onSave: (ProductMaster) -> Unit
+    onSave: (ProductMaster) -> Unit,
+    onDelete: (() -> Unit)? = null
 ) {
     var name by remember { mutableStateOf(product?.canonicalName ?: "") }
     var category by remember { mutableStateOf(product?.category ?: categories.first()) }
@@ -1099,8 +1139,16 @@ private fun ProductEditDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("キャンセル")
+            Row {
+                if (onDelete != null) {
+                    TextButton(
+                        onClick = onDelete,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) { Text("削除") }
+                }
+                TextButton(onClick = onDismiss) { Text("キャンセル") }
             }
         }
     )

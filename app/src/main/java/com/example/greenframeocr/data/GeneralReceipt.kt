@@ -11,5 +11,6 @@ data class GeneralReceipt(
     val total: Int = 0,
     val rawOcrText: String = "",
     val geminiUsed: Boolean = false,
+    val registrationNumber: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )

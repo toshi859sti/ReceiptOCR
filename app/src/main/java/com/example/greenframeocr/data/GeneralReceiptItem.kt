@@ -21,5 +21,7 @@ data class GeneralReceiptItem(
     val itemName: String = "",
     val price: Int = 0,
     val category: String = "未分類",
-    val tekiyouId: Int? = null
+    val tekiyouId: Int? = null,
+    val yayoiAccountId: Long? = null,
+    val isExcluded: Boolean = false
 )

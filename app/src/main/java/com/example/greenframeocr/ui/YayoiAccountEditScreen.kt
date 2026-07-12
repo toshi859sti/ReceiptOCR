@@ -20,11 +20,27 @@ import kotlinx.coroutines.launch
 
 private val TAX_CATEGORIES = listOf("対象外", "課対仕入10", "課対仕入8", "課税売上", "非課税")
 
+@Composable
+private fun ReadOnlyField(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(2.dp))
+        Text(value.ifBlank { "—" }, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
 // categoryA から借貸区分を自動算出（勘定科目グループで完全に決まる）
 private fun computeDebitCredit(catA: String): String = when (catA) {
     "資産", "経費" -> "借"
     "負債", "資本", "収入" -> "貸"
     else -> ""
+}
+
+// categoryA から税区分のデフォルト値を推定（新規追加時のみ使用）
+private fun computeDefaultTaxCategory(catA: String): String = when (catA) {
+    "収入" -> "課税売上"
+    "経費" -> "課対仕入10"
+    else   -> "対象外"  // 資産・負債・資本
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -200,20 +216,17 @@ fun YayoiAccountEditScreen(
                         existingCatA.forEach { cat ->
                             DropdownMenuItem(
                                 text = { Text(cat) },
-                                onClick = { categoryA = cat; expandedCatA = false }
+                                onClick = {
+                                    categoryA = cat
+                                    defaultTaxCat = computeDefaultTaxCategory(cat)
+                                    expandedCatA = false
+                                }
                             )
                         }
                     }
                 }
             } else {
-                OutlinedTextField(
-                    value = categoryA,
-                    onValueChange = {},
-                    label = { Text("区分A (大分類)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    readOnly = true,
-                    singleLine = true
-                )
+                ReadOnlyField("区分A (大分類)", categoryA, Modifier.fillMaxWidth())
             }
 
             // 借貸区分（区分Aから自動算出・読み取り専用）
@@ -267,14 +280,7 @@ fun YayoiAccountEditScreen(
                     }
                 }
             } else {
-                OutlinedTextField(
-                    value = categoryB,
-                    onValueChange = {},
-                    label = { Text("区分B (中分類)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    readOnly = true,
-                    singleLine = true
-                )
+                ReadOnlyField("区分B (中分類)", categoryB, Modifier.fillMaxWidth())
             }
 
             // 税区分
@@ -303,46 +309,50 @@ fun YayoiAccountEditScreen(
                 }
             }
 
-            // 親科目（補助科目として登録する場合）
-            ExposedDropdownMenuBox(
-                expanded = expandedParent,
-                onExpandedChange = { expandedParent = it }
-            ) {
-                val parentLabel = selectedParentId
-                    ?.let { pid -> parentAccounts.find { it.id == pid }?.accountName ?: "（ID: $pid）" }
-                    ?: "なし（親科目）"
-                OutlinedTextField(
-                    value = parentLabel,
-                    onValueChange = {},
-                    label = { Text("親科目（補助科目の場合）") },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedParent) },
-                    readOnly = true
-                )
-                ExposedDropdownMenu(
+            // 親科目（新規追加時はドロップダウン、既存は読み取り専用テキスト）
+            val parentLabel = selectedParentId
+                ?.let { pid -> parentAccounts.find { it.id == pid }?.accountName ?: "（ID: $pid）" }
+                ?: "なし（親科目）"
+            if (isNew) {
+                ExposedDropdownMenuBox(
                     expanded = expandedParent,
-                    onDismissRequest = { expandedParent = false }
+                    onExpandedChange = { expandedParent = it }
                 ) {
-                    DropdownMenuItem(
-                        text = { Text("なし（親科目）") },
-                        onClick = { selectedParentId = null; expandedParent = false }
+                    OutlinedTextField(
+                        value = parentLabel,
+                        onValueChange = {},
+                        label = { Text("親科目（補助科目の場合）") },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedParent) },
+                        readOnly = true
                     )
-                    parentAccounts.forEach { parent ->
+                    ExposedDropdownMenu(
+                        expanded = expandedParent,
+                        onDismissRequest = { expandedParent = false }
+                    ) {
                         DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(parent.accountName)
-                                    Text(
-                                        "${parent.categoryA} > ${parent.categoryB}",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            },
-                            onClick = { selectedParentId = parent.id; expandedParent = false }
+                            text = { Text("なし（親科目）") },
+                            onClick = { selectedParentId = null; expandedParent = false }
                         )
+                        parentAccounts.forEach { parent ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(parent.accountName)
+                                        Text(
+                                            "${parent.categoryA} > ${parent.categoryB}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                onClick = { selectedParentId = parent.id; expandedParent = false }
+                            )
+                        }
                     }
                 }
+            } else {
+                ReadOnlyField("親科目", parentLabel, Modifier.fillMaxWidth())
             }
 
             Divider()

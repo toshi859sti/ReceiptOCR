@@ -26,7 +26,7 @@ fun PurchaseMenuScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("購買部門") },
+                title = { Text("JA購買伝票") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -51,7 +51,7 @@ fun PurchaseMenuScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "購買部門",
+                text = "JA購買伝票",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary

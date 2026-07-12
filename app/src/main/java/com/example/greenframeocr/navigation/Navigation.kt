@@ -35,7 +35,6 @@ import com.example.greenframeocr.ui.ReceiptInputScreen
 import com.example.greenframeocr.ui.SettingsScreen
 import com.example.greenframeocr.ui.SheetEditorScreen
 import com.example.greenframeocr.ui.TekiyouMatchingScreen
-import com.example.greenframeocr.ui.AccountSettingsScreen
 import com.example.greenframeocr.ui.BookkeepingMenuScreen
 import com.example.greenframeocr.ui.RakurakuAccountSettingsScreen
 import com.example.greenframeocr.ui.YayoiAccountEditScreen
@@ -45,6 +44,7 @@ import com.example.greenframeocr.ui.GeneralReceiptCaptureScreen
 import com.example.greenframeocr.ui.GeneralReceiptConfirmScreen
 import com.example.greenframeocr.ui.GeneralReceiptListScreen
 import com.example.greenframeocr.ui.GeneralReceiptOutputScreen
+import com.example.greenframeocr.ui.InvoiceStoreListScreen
 import com.example.greenframeocr.ui.YearSummaryScreen
 import com.example.greenframeocr.ui.YokinTekiyouScreen
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
@@ -72,10 +72,6 @@ sealed class Screen(val route: String) {
     object RakurakuTekiyou : Screen("rakuraku_tekiyou")
     object DebugCapture : Screen("debug_capture")
     object YearSummary : Screen("year_summary")
-    object AccountSettings : Screen("account_settings?initialTab={initialTab}") {
-        val route0 = "account_settings?initialTab=0"
-        val route1 = "account_settings?initialTab=1"
-    }
     object BookkeepingMenu : Screen("bookkeeping_menu")
     object YayoiAccountSettings : Screen("yayoi_account_settings")
     object RakurakuAccountSettings : Screen("rakuraku_account_settings")
@@ -88,6 +84,7 @@ sealed class Screen(val route: String) {
     object GeneralReceiptConfirm : Screen("general_receipt_confirm")
     object GeneralReceiptList : Screen("general_receipt_list")
     object GeneralReceiptOutput : Screen("general_receipt_output")
+    object InvoiceStoreList : Screen("invoice_store_list")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
         fun createRoute(year: Int, month: Int): String {
             return "monthly_summary/$year/$month"
@@ -175,6 +172,7 @@ fun ReceiptNavGraph(
         composable(Screen.YearSummary.route) {
             YearSummaryScreen(
                 database = database,
+                appPreferences = appPreferences,
                 onNavigateToMonth = { year, month ->
                     navController.navigate(Screen.MonthlySummary.createRoute(year, month))
                 },
@@ -202,6 +200,7 @@ fun ReceiptNavGraph(
         composable(Screen.KaikakeTekiyou.route) {
             KaikakeTekiyouScreen(
                 database = database,
+                appPreferences = appPreferences,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -322,9 +321,6 @@ fun ReceiptNavGraph(
                 onThemeChanged = onThemeChanged,
                 onNavigateToOcrLearningStatus = {
                     navController.navigate(Screen.OcrLearningStatus.route)
-                },
-                onNavigateToAccountSettings = {
-                    navController.navigate(Screen.AccountSettings.route0)
                 }
             )
         }
@@ -364,24 +360,6 @@ fun ReceiptNavGraph(
             )
         }
 
-        // 勘定科目設定画面（initialTab: 0=らくらく, 1=弥生）
-        composable(
-            route = Screen.AccountSettings.route,
-            arguments = listOf(
-                navArgument("initialTab") { type = NavType.IntType; defaultValue = 0 }
-            )
-        ) { backStackEntry ->
-            val initialTab = backStackEntry.arguments?.getInt("initialTab") ?: 0
-            AccountSettingsScreen(
-                database = database,
-                onBack = { navController.popBackStack() },
-                onNavigateToYayoiEdit = { accountId ->
-                    navController.navigate(Screen.YayoiAccountEdit.createRoute(accountId))
-                },
-                initialTab = initialTab
-            )
-        }
-
         // 弥生勘定科目編集画面（accountId = -1 で新規、parentId = -1 で単独作成）
         composable(
             route = Screen.YayoiAccountEdit.route,
@@ -404,6 +382,7 @@ fun ReceiptNavGraph(
         composable(Screen.OcrLearningStatus.route) {
             OcrLearningStatusScreen(
                 database = database,
+                appPreferences = appPreferences,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -421,6 +400,7 @@ fun ReceiptNavGraph(
         composable(Screen.RakurakuTekiyou.route) {
             RakurakuTekiyouScreen(
                 database = database,
+                appPreferences = appPreferences,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -440,7 +420,17 @@ fun ReceiptNavGraph(
                 onBack = { navController.popBackStack() },
                 onNavigateToCapture = { navController.navigate(Screen.GeneralReceiptCapture.route) },
                 onNavigateToList = { navController.navigate(Screen.GeneralReceiptList.route) },
-                onNavigateToOutput = { navController.navigate(Screen.GeneralReceiptOutput.route) }
+                onNavigateToOutput = { navController.navigate(Screen.GeneralReceiptOutput.route) },
+                onNavigateToStoreList = { navController.navigate(Screen.InvoiceStoreList.route) }
+            )
+        }
+
+        // 登録番号・店舗一覧画面
+        composable(Screen.InvoiceStoreList.route) {
+            InvoiceStoreListScreen(
+                viewModel = generalReceiptViewModel,
+                appPreferences = appPreferences,
+                onBack = { navController.popBackStack() }
             )
         }
 
@@ -474,6 +464,7 @@ fun ReceiptNavGraph(
         composable(Screen.GeneralReceiptList.route) {
             GeneralReceiptListScreen(
                 viewModel = generalReceiptViewModel,
+                appPreferences = appPreferences,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -482,6 +473,7 @@ fun ReceiptNavGraph(
         composable(Screen.GeneralReceiptOutput.route) {
             GeneralReceiptOutputScreen(
                 viewModel = generalReceiptViewModel,
+                appPreferences = appPreferences,
                 onBack = { navController.popBackStack() }
             )
         }
