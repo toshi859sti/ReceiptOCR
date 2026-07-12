@@ -133,7 +133,8 @@ fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult
 
 ### Room DB バージョン（現在 v25）
 バージョンアップ時は `ReceiptDatabase.kt` にマイグレーションを追加すること。
-`fallbackToDestructiveMigration()` は開発中のみ有効。本番リリース前に削除。
+`fallbackToDestructiveMigration()` は削除済み（2026-07-12）。
+スキーマ変更時にマイグレーションを書き忘れるとデータ消失ではなく**起動時クラッシュ**になる。
 
 ### Navigation に未接続の画面（要対応）
 `AccountSettingsScreen.kt` は実装済みだが `Navigation.kt` の NavHost に未登録。

@@ -50,14 +50,15 @@ object NtaInvoiceClient {
                 .addHeader("Accept", "application/json")
                 .get()
                 .build()
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                Log.w("NtaInvoiceClient", "HTTP ${response.code} for $registrationNumber")
-                return@withContext null
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("NtaInvoiceClient", "HTTP ${response.code} for $registrationNumber")
+                    return@withContext null
+                }
+                val body = response.body?.string() ?: return@withContext null
+                Log.d("NtaInvoiceClient", "Response: ${body.take(300)}")
+                parseResponse(registrationNumber, body)
             }
-            val body = response.body?.string() ?: return@withContext null
-            Log.d("NtaInvoiceClient", "Response: ${body.take(300)}")
-            parseResponse(registrationNumber, body)
         } catch (e: Exception) {
             Log.e("NtaInvoiceClient", "Lookup failed for $registrationNumber: ${e.message}")
             null

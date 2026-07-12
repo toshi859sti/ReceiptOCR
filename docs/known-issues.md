@@ -24,8 +24,9 @@
   - 非対応デバイスでは自動フォールバックするが精度低下の可能性あり
 - `Utils.bitmapToMat` は RGBA 4ch を返す
   - OpenCV 処理前に `COLOR_RGBA2BGR` 変換が必須。忘れると色チャンネル不一致でマスク精度が劣化する
-- `fallbackToDestructiveMigration()` が有効
-  - 開発中のみ有効にしている。本番リリース前に必ず削除すること
+- `fallbackToDestructiveMigration()` は削除済み（2026-07-12）
+  - 以後、DBスキーマ変更時はマイグレーション追加が必須
+  - マイグレーションを書き忘れるとデータ消失ではなく**起動時クラッシュ**になる点に注意
 
 ---
 
@@ -65,5 +66,3 @@
   - ログが蓄積し続ける。定期的なクリーンアップ機能が未実装
 - `correction_logs` テーブル
   - 同上。容量管理の仕組みが必要
-- `fallbackToDestructiveMigration()` を本番前に削除する必要あり
-  - `ReceiptDatabase.kt` に明示的に TODO コメントを入れるべき

@@ -14,6 +14,7 @@ import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.InvoiceStore
 import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.data.YayoiAccount
+import com.example.greenframeocr.util.CsvUtils
 import com.example.greenframeocr.util.GeminiApiException
 import com.example.greenframeocr.util.GeminiApiKeyMissingException
 import com.example.greenframeocr.util.GeminiQuotaExhaustedException
@@ -428,7 +429,16 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                     val account = item.yayoiAccountId?.let { accountMap[it] }
                     val accountName = account?.accountName ?: ""
                     val accountCode = account?.accountCode ?: ""
-                    appendLine("$date,$store,${item.itemName},${item.price},$accountName,$accountCode")
+                    appendLine(
+                        listOf(
+                            date,
+                            store,
+                            item.itemName,
+                            item.price.toString(),
+                            accountName,
+                            accountCode
+                        ).joinToString(",") { CsvUtils.escapeCsvField(it) }
+                    )
                 }
             }
         }

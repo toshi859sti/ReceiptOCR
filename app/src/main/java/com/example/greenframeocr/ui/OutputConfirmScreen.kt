@@ -25,7 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.*
-import java.nio.charset.Charset
+import com.example.greenframeocr.util.CsvUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -983,33 +983,11 @@ private suspend fun exportDepositCsvToUri(context: Context, uri: Uri, items: Lis
     }
 }
 
-/**
- * CSVフィールドをエスケープ
- */
-private fun escapeCsvField(field: String): String {
-    return if (field.contains(",") || field.contains("\"") || field.contains("\n")) {
-        "\"${field.replace("\"", "\"\"")}\""
-    } else {
-        field
-    }
-}
+private fun escapeCsvField(field: String): String = CsvUtils.escapeCsvField(field)
 
-/** 西暦日付文字列（セパレータ任意）→ 弥生和暦形式（R.yy/MM/dd） */
-private fun toYayoiDate(dateStr: String): String {
-    val parts = dateStr.split(Regex("[-/]"))
-    if (parts.size < 3) return dateStr
-    val year = parts[0].toIntOrNull() ?: return dateStr
-    val month = parts[1].toIntOrNull() ?: return dateStr
-    val day = parts[2].toIntOrNull() ?: return dateStr
-    val isReiwa = year > 2019 || (year == 2019 && month >= 5)
-    return if (isReiwa) {
-        "R.%02d/%02d/%02d".format(year - 2018, month, day)
-    } else {
-        "H.%02d/%02d/%02d".format(year - 1988, month, day)
-    }
-}
+private fun toYayoiDate(dateStr: String): String = CsvUtils.toYayoiDate(dateStr)
 
-private fun qf(s: String) = "\"${s.replace("\"", "\"\"")}\""
+private fun qf(s: String) = CsvUtils.quoteField(s)
 
 private fun buildPurchaseYayoiRow(item: PurchaseOutputItem): String {
     val cols = Array(25) { "" }
@@ -1079,7 +1057,7 @@ private suspend fun exportPurchaseYayoiCsvToUri(
     withContext(Dispatchers.IO) {
         try {
             context.contentResolver.openOutputStream(uri)?.use { os ->
-                val writer = os.bufferedWriter(Charset.forName("Shift_JIS"))
+                val writer = os.bufferedWriter(CsvUtils.yayoiCharset())
                 for (item in items) {
                     writer.write(buildPurchaseYayoiRow(item))
                     writer.write("\r\n")
@@ -1105,7 +1083,7 @@ private suspend fun exportDepositYayoiCsvToUri(
     withContext(Dispatchers.IO) {
         try {
             context.contentResolver.openOutputStream(uri)?.use { os ->
-                val writer = os.bufferedWriter(Charset.forName("Shift_JIS"))
+                val writer = os.bufferedWriter(CsvUtils.yayoiCharset())
                 for (item in items) {
                     writer.write(buildDepositYayoiRow(item))
                     writer.write("\r\n")

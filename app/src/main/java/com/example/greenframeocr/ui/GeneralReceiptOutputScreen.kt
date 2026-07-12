@@ -25,12 +25,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.util.CsvUtils
 import com.example.greenframeocr.viewmodel.GeneralReceiptOutputItem
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -430,18 +430,7 @@ private fun filterGeneralReceiptByDateRange(
 
 // ─── 弥生出力（25列・Shift-JIS・CRLF）─────────────────────────────────────
 
-private fun toYayoiDate(dateStr: String): String {
-    val parts = dateStr.split("-")
-    if (parts.size != 3) return dateStr
-    val year = parts[0].toIntOrNull() ?: return dateStr
-    val month = parts[1].toIntOrNull() ?: return dateStr
-    val day = parts[2].toIntOrNull() ?: return dateStr
-    return if (year > 2019 || (year == 2019 && month >= 5)) {
-        "R.%02d/%02d/%02d".format(year - 2018, month, day)
-    } else {
-        "H.%02d/%02d/%02d".format(year - 1988, month, day)
-    }
-}
+private fun toYayoiDate(dateStr: String): String = CsvUtils.toYayoiDate(dateStr)
 
 private fun buildYayoiRow(item: GeneralReceiptOutputItem): String {
     val memo = item.itemName.take(40)
@@ -472,7 +461,7 @@ private fun buildYayoiRow(item: GeneralReceiptOutputItem): String {
         "0",                          // 付箋2
         "no"                          // 調整
     )
-    return fields.joinToString(",") { f -> "\"${f.replace("\"", "\"\"")}\"" }
+    return fields.joinToString(",") { f -> CsvUtils.quoteField(f) }
 }
 
 private suspend fun exportYayoiCsvToUri(
@@ -482,9 +471,8 @@ private suspend fun exportYayoiCsvToUri(
 ) {
     withContext(Dispatchers.IO) {
         try {
-            val sjis = Charset.forName("Shift_JIS")
             context.contentResolver.openOutputStream(uri)?.use { stream ->
-                val writer = stream.bufferedWriter(sjis)
+                val writer = stream.bufferedWriter(CsvUtils.yayoiCharset())
                 for (item in items) {
                     writer.write(buildYayoiRow(item))
                     writer.write("\r\n")
@@ -538,7 +526,4 @@ private suspend fun exportRakurakuCsvToUri(
     }
 }
 
-private fun escapeCsvField(field: String): String =
-    if (field.contains(",") || field.contains("\"") || field.contains("\n")) {
-        "\"${field.replace("\"", "\"\"")}\""
-    } else field
+private fun escapeCsvField(field: String): String = CsvUtils.escapeCsvField(field)

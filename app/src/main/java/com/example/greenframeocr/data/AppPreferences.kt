@@ -10,8 +10,34 @@ class AppPreferences(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    // APIキー等の秘匿情報専用ファイル。backup_rules.xml / data_extraction_rules.xml で
+    // 自動バックアップから除外しているため、キーが Google のサーバーに上がらない
+    private val securePrefs: SharedPreferences =
+        context.getSharedPreferences(SECURE_PREFS_NAME, Context.MODE_PRIVATE)
+
+    init {
+        migrateSecretsToSecurePrefs()
+    }
+
+    /** 旧バージョンで通常prefsに保存していた秘匿情報を秘匿ファイルへ一度だけ移す */
+    private fun migrateSecretsToSecurePrefs() {
+        val editor = securePrefs.edit()
+        var migrated = false
+        for (key in listOf(KEY_GEMINI_API_KEY, KEY_NTA_APPLICATION_ID)) {
+            if (!securePrefs.contains(key) && prefs.contains(key)) {
+                editor.putString(key, prefs.getString(key, ""))
+                migrated = true
+            }
+        }
+        if (migrated) {
+            editor.apply()
+            prefs.edit().remove(KEY_GEMINI_API_KEY).remove(KEY_NTA_APPLICATION_ID).apply()
+        }
+    }
+
     companion object {
         private const val PREFS_NAME = "receipt_ocr_preferences"
+        private const val SECURE_PREFS_NAME = "receipt_ocr_secrets"
 
         // 年号設定
         private const val KEY_ERA_YEAR = "era_year"
@@ -114,15 +140,15 @@ class AppPreferences(context: Context) {
         } catch (_: IllegalArgumentException) { AppThemePreset.GREEN }
         set(value) = prefs.edit().putString(KEY_THEME_PRESET, value.name).apply()
 
-    // Gemini API キー
+    // Gemini API キー（秘匿ファイル・バックアップ除外）
     var geminiApiKey: String
-        get() = prefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_GEMINI_API_KEY, value).apply()
+        get() = securePrefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
+        set(value) = securePrefs.edit().putString(KEY_GEMINI_API_KEY, value).apply()
 
-    // 国税庁インボイス照会 アプリケーションID
+    // 国税庁インボイス照会 アプリケーションID（秘匿ファイル・バックアップ除外）
     var ntaApplicationId: String
-        get() = prefs.getString(KEY_NTA_APPLICATION_ID, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_NTA_APPLICATION_ID, value).apply()
+        get() = securePrefs.getString(KEY_NTA_APPLICATION_ID, "") ?: ""
+        set(value) = securePrefs.edit().putString(KEY_NTA_APPLICATION_ID, value).apply()
 
     // 一覧文字サイズ（PassbookDataScreen / GeneralReceiptListScreen / TekiyouMatchingScreen 共通）
     var listFontSize: Float

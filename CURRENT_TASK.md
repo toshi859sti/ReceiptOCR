@@ -256,3 +256,56 @@ v21 → **v25**（4マイグレーション追加：21→22, 22→23, 23→24, 2
 ### 新たに発覚した問題・制約
 - `NtaInvoiceClient` の `API_BASE_URL` とレスポンスJSONフィールド名（`code`/`announcement`/`name`/`address`）は国税庁公式ドキュメントとの突合が未実施（推測実装）。`docs/known-issues.md` に転記済み
 - アプリケーションID未設定時に動作するかどうかも未検証
+
+---
+
+## 追加作業（2026-07-12）：プロジェクト解析で発見したリスクの修正
+
+### 目的・背景
+コード全体の解析で「データが壊れる・漏れる」系のリスクを5件特定し、優先度順に修正。
+
+### 今回完了したこと
+
+**① CSV共有ユーティリティ `util/CsvUtils.kt` 新設・エスケープ漏れ修正**
+- `escapeCsvField` / `quoteField` / `toYayoiDate` / `yayoiCharset` を集約
+- `OutputConfirmScreen.kt`・`GeneralReceiptOutputScreen.kt` に重複していた同名関数を CsvUtils 委譲に置換
+  （`toYayoiDate` は区切り文字 `-`/`/` 両対応の堅牢な方に統一）
+- **バグ修正**: `GeneralReceiptViewModel.buildCsvForExport` が生の文字列連結でカンマ入り商品名・店舗名で列ずれしていた → エスケープ適用
+
+**② 弥生CSVの文字コードを Shift_JIS → windows-31j に変更**
+- `Charset.forName("Shift_JIS")` は ①・㈱ 等の機種依存文字を無警告で `?` に化けさせる
+- `CsvUtils.yayoiCharset()`（windows-31j 優先、非対応環境のみ Shift_JIS フォールバック）に統一（3箇所）
+
+**③ APIキーのバックアップ除外**
+- `AppPreferences`: `geminiApiKey`・`ntaApplicationId` を秘匿専用ファイル `receipt_ocr_secrets` に分離
+  - 旧ファイルからの一度きり自動移行（`migrateSecretsToSecurePrefs()`）付き
+- `res/xml/backup_rules.xml`（API≤30）・`data_extraction_rules.xml`（API31+）で秘匿ファイルをバックアップ・端末間転送から除外
+- `AndroidManifest.xml` に `fullBackupContent` / `dataExtractionRules` 属性を追加（テンプレートXMLはあったが未参照だった）
+
+**④ `fallbackToDestructiveMigration()` 削除**
+- 実データ蓄積段階に入ったため前倒しで削除。以後マイグレーション書き忘れは起動時クラッシュになる
+- `docs/known-issues.md`・`CLAUDE.md` の記述も更新（CLAUDE.md はユーザー確認済み）
+
+**⑤ ユニットテスト新設（プロジェクト初）**
+- `app/src/test/java/com/example/greenframeocr/util/CsvUtilsTest.kt`
+  - CSVエスケープ、和暦変換（令和境界 2019/4/30↔5/1）、機種依存文字エンコード
+- `app/src/test/java/com/example/greenframeocr/util/NtaInvoiceClientTest.kt`
+  - 登録番号抽出（正常系・OCRテキスト埋め込み・桁不足・小文字）
+
+**⑥ `NtaInvoiceClient.lookup()` のレスポンス未クローズ修正**
+- `execute().use { }` に変更（HTTPエラー時のコネクションリーク解消）
+
+### 完了条件
+- [x] `./gradlew testDebugUnitTest assembleDebug` 成功（BUILD SUCCESSFUL・テスト19件全成功、2026-07-12）
+
+### 未完了・中断した理由
+なし（実機動作確認は次回）
+
+### 次回セッションで最初にやること
+実機動作確認（前セッション分と合わせて）：
+1. アプリ更新後に Gemini APIキー・NTAアプリケーションIDが消えていないか（secure_prefs 移行の確認）
+2. 弥生CSV出力で ①・㈱ 等を含むデータが正しく出るか
+3. カンマ入り商品名でレシートCSVの列がずれないか
+
+### 新たに発覚した問題・制約
+- destructiveMigration 削除により、今後のスキーマ変更はマイグレーション必須（漏れると起動時クラッシュ）
