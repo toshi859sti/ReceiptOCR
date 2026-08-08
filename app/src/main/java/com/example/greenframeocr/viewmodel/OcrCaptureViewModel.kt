@@ -8,9 +8,8 @@ import com.example.greenframeocr.data.ReceiptDao
 import com.example.greenframeocr.data.ReceiptItem
 import com.example.greenframeocr.data.SheetData
 import com.example.greenframeocr.util.Category
+import com.example.greenframeocr.util.GeminiReceiptClient
 import com.example.greenframeocr.util.GreenFrameDetector
-import com.example.greenframeocr.util.OCRProcessor
-import com.example.greenframeocr.util.UnderlyingBaseProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,13 +22,14 @@ import kotlinx.coroutines.withContext
  *
  * 処理フロー:
  * GreenFrame検出 → 透視変換後画像(dewarpedBitmap) →
- * OCRProcessor.processUnderlayingBase()（旧ArUco方式高精度パイプライン）→
+ * GeminiReceiptClient.parseJaSheetFromImage()（列クロップTwo-Pass方式）→
  * ParsedRow リスト → DB保存
  */
 class OcrCaptureViewModel(
     private val dao: ReceiptDao,
     private val issueYear: Int,
-    private val issueMonth: Int
+    private val issueMonth: Int,
+    private val geminiApiKey: String
 ) : ViewModel() {
 
     // -------------------------------------------------------------------
@@ -60,6 +60,7 @@ class OcrCaptureViewModel(
     sealed class CaptureStep {
         object Initial    : CaptureStep()
         object Capturing  : CaptureStep()
+        data class Preview(val detectionResult: GreenFrameDetector.DetectionResult) : CaptureStep()
         object Processing : CaptureStep()
         data class Complete(val rows: List<ParsedRow>) : CaptureStep()
     }
@@ -95,8 +96,30 @@ class OcrCaptureViewModel(
     }
 
     /**
-     * GreenFrameDetector の結果を受け取り、旧ArUco方式パイプラインで OCR 処理する。
-     * dewarpedBitmap（透視変換後の全体画像）を使用し、行分割は OCR 後に行う。
+     * カメラ撮影完了時の入り口。形状品質が基準を満たしていれば確認画面をスキップして
+     * そのままOCR処理へ進み、満たしていなければTransformPreviewScreenで確認を挟む。
+     */
+    fun onDetectionResult(result: GreenFrameDetector.DetectionResult) {
+        val valid = GreenFrameDetector.isValidShape(result)
+        val angles = result.captureInfo.cornerAngles
+        val maxDeviation = if (angles.size == 4) angles.maxOf { Math.abs(it - 90.0) } else -1.0
+        Log.d(TAG, "isValidShape=$valid maxDeviation=${"%.2f".format(maxDeviation)}° angles=$angles → ${if (valid) "スキップして直接OCRへ" else "TransformPreviewScreenへ"}")
+        if (valid) {
+            processDetectionResult(result)
+        } else {
+            _currentStep.value = CaptureStep.Preview(result)
+        }
+    }
+
+    /** TransformPreviewScreenで「撮り直す」を選んだ場合。伝票番号は保持したままカメラへ戻る */
+    fun retryFromPreview() {
+        _currentStep.value = CaptureStep.Capturing
+        _errorMessage.value = null
+    }
+
+    /**
+     * GreenFrameDetector の結果を受け取り、Gemini Vision API（列クロップTwo-Pass方式）で
+     * OCR 処理する。dewarpedBitmap（透視変換後の全体画像）を使用する。
      */
     fun processDetectionResult(result: GreenFrameDetector.DetectionResult) {
         viewModelScope.launch {
@@ -110,12 +133,11 @@ class OcrCaptureViewModel(
                 }
 
                 val rows = withContext(Dispatchers.Default) {
-                    // mm→px比率: 伝票幅 203mm に対するピクセル数
-                    val mmToPixelRatio = dewarpedBitmap.width / 203.0
-                    Log.d(TAG, "dewarpedBitmap: ${dewarpedBitmap.width}×${dewarpedBitmap.height}, mmRatio=${"%.2f".format(mmToPixelRatio)}")
-
-                    val ocrResult = OCRProcessor.processUnderlayingBase(dewarpedBitmap, mmToPixelRatio)
-                    mapToParsedRows(ocrResult)
+                    val geminiResult = GeminiReceiptClient.parseJaSheetFromImage(dewarpedBitmap, geminiApiKey)
+                    if (!geminiResult.dateColumnAligned) {
+                        Log.w(TAG, "取引日列のアラインメントが取れませんでした（要確認）")
+                    }
+                    mapGeminiResultToParsedRows(geminiResult)
                 }
 
                 Log.d(TAG, "OCR完了: ${rows.size}行")
@@ -124,7 +146,7 @@ class OcrCaptureViewModel(
 
             } catch (e: Exception) {
                 Log.e(TAG, "OCR処理エラー", e)
-                _errorMessage.value = "OCR処理エラー: ${e.message}"
+                _errorMessage.value = e.message ?: "OCR処理エラー"
                 _currentStep.value = CaptureStep.Initial
             }
         }
@@ -223,36 +245,6 @@ class OcrCaptureViewModel(
     // -------------------------------------------------------------------
 
     /**
-     * OCRProcessor.ProcessUnderlayingBaseResult → ParsedRow リスト に変換
-     */
-    private fun mapToParsedRows(
-        ocrResult: OCRProcessor.ProcessUnderlayingBaseResult
-    ): List<ParsedRow> {
-        // rowsWithCategories は (ReceiptRow, categoryString) のペアリスト
-        return ocrResult.rowsWithCategories.mapIndexed { index, (row, category) ->
-            val isSubtotal = row.rowType == UnderlyingBaseProcessor.RowType.SUBTOTAL
-            val isMonthlyTotal = row.rowType == UnderlyingBaseProcessor.RowType.MONTHLY_TOTAL
-
-            // 小計行・月合計行の「金額」は categorySum から取得
-            val amount = if (isSubtotal || isMonthlyTotal) row.categorySum else row.amount
-
-            ParsedRow(
-                rowIndex      = index,
-                date          = row.date,
-                productName   = row.itemName,
-                branch        = null,
-                quantity      = row.quantity?.toIntOrNull(),
-                unitPrice     = null,
-                amount        = amount,
-                isAmountValid = amount != null,
-                category      = category,
-                isSubtotal    = isSubtotal,
-                isMonthlyTotal = isMonthlyTotal
-            )
-        }
-    }
-
-    /**
      * OCR取得の日付テキスト → (year, month, day) に変換
      * 入力例: "060130"（令和6年1月30日）
      */
@@ -275,5 +267,81 @@ class OcrCaptureViewModel(
 
     companion object {
         private const val TAG = "OcrCaptureViewModel"
+
+        /**
+         * GeminiReceiptClient.JaSheetParseResult → ParsedRow リストに変換する。
+         * ReceiptInputScreen.kt の CameraView からも呼ばれる共通処理。
+         */
+        fun mapGeminiResultToParsedRows(result: GeminiReceiptClient.JaSheetParseResult): List<ParsedRow> {
+            val categorized = assignJaSheetCategories(result.rows)
+            return categorized.mapIndexed { index, (row, category) ->
+                val isSubtotal = row.rowType == "SUBTOTAL"
+                val isMonthlyTotal = row.rowType == "MONTHLY_TOTAL"
+
+                // 小計行・月合計行の「金額」は categorySum から取得
+                val amount = if (isSubtotal || isMonthlyTotal) row.categorySum else row.amount
+
+                ParsedRow(
+                    rowIndex      = index,
+                    date          = row.dateRaw,
+                    productName   = row.itemName,
+                    branch        = null,
+                    quantity      = row.quantity?.toInt(),
+                    unitPrice     = null,
+                    amount        = amount,
+                    isAmountValid = amount != null,
+                    category      = category,
+                    isSubtotal    = isSubtotal,
+                    isMonthlyTotal = isMonthlyTotal
+                )
+            }
+        }
+
+        /**
+         * 小計行の区分名からカテゴリを仮判定する（OCR時点の簡易判定）。
+         * 通常行の最終カテゴリは保存後に CategoryRecalculator が月全体を見て確定させるため、
+         * ここでは util/UnderlyingBaseProcessor.assignCategories() と同じ簡易ロジックを踏襲する。
+         */
+        private fun assignJaSheetCategories(
+            rows: List<GeminiReceiptClient.JaSheetRow>
+        ): List<Pair<GeminiReceiptClient.JaSheetRow, String>> {
+            val subtotalIndices = mutableListOf<Pair<Int, String>>()
+            rows.forEachIndexed { index, row ->
+                if (row.rowType == "SUBTOTAL") {
+                    val name = row.itemName
+                    val category = when {
+                        name.contains("一般購買") || name.contains("一般買") ||
+                        name.contains("一般講買") || name.contains("ー般購買") ||
+                        name.contains("般購買") || name.contains("般講買") -> Category.GENERAL
+
+                        name.contains("給油所") || name.contains("給値所") ||
+                        name.contains("給造所") || name.contains("給治所") ||
+                        name.contains("給抽所") -> Category.GAS_STATION
+
+                        name.contains("農業機械") || name.contains("展業慢城") ||
+                        name.contains("農来") || name.contains("農発検") ||
+                        name.contains("農業") -> Category.AGRICULTURAL
+
+                        else -> Category.UNCLASSIFIED
+                    }
+                    subtotalIndices.add(index to category)
+                }
+            }
+
+            val firstSubtotalIndex = subtotalIndices.firstOrNull()?.first
+            return rows.mapIndexed { index, row ->
+                val category = when (row.rowType) {
+                    "SUBTOTAL" -> subtotalIndices.find { it.first == index }?.second ?: Category.UNCLASSIFIED
+                    "NORMAL" -> when {
+                        firstSubtotalIndex == null -> Category.UNCLASSIFIED
+                        index < firstSubtotalIndex -> Category.UNCLASSIFIED
+                        else -> "未定"
+                    }
+                    "MONTHLY_TOTAL" -> "月合計"
+                    else -> Category.UNCLASSIFIED
+                }
+                row to category
+            }
+        }
     }
 }

@@ -4,6 +4,9 @@ import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -17,7 +20,7 @@ import java.util.concurrent.TimeUnit
 class GeminiRateLimitException : Exception("APIのレート制限に達しました。しばらく待ってから再試行してください。")
 class GeminiQuotaExhaustedException : Exception("Gemini APIの無料枠の上限に達しました。Google AI Studio（aistudio.google.com）で利用状況をご確認ください。")
 class GeminiApiKeyMissingException : Exception("Gemini APIキーが設定されていません。設定画面で入力してください。")
-class GeminiApiException(code: Int, detail: String = "") : Exception(
+class GeminiApiException(val code: Int, detail: String = "") : Exception(
     when (code) {
         403 -> "APIキーが無効または権限がありません（HTTP 403）。設定画面でAPIキーをご確認ください。"
         500, 503 -> "Gemini APIサーバーエラーが発生しました（HTTP $code）。しばらく待ってから再試行してください。"
@@ -504,4 +507,360 @@ $ocrText
             null
         }
     }
+
+    // -----------------------------------------------------------------------
+    // JA購買伝票OCR（Two-Pass方式）
+    //
+    // Phase0スパイクテストで確認した「取引日列だけを単独クロップして送信すると
+    // 全体画像方式より安定する」という結果に基づき、以下2回のAPI呼び出しを並列実行し、
+    // 行インデックスでマージする：
+    //   1. 全体画像コール：商品名・数量・税込金額・分類計・取引日(生の6桁数字)を取得
+    //   2. 取引日列クロップコール：取引日列だけを2倍拡大して送信し、生の6桁数字を取得
+    // 2つの行数が一致しない場合は dateColumnAligned=false を返し、呼び出し側で
+    // 伝票全体を要確認扱いにするなどのフォールバックを行うこと。
+    // -----------------------------------------------------------------------
+
+    private const val JA_SHEET_MODEL = "gemini-3.5-flash-lite"
+    private const val JA_SHEET_MAIN_RESIZE_PX = 2000
+    private const val JA_SHEET_MAX_RETRIES = 3
+
+    /** JA伝票の1行分（Gemini生レスポンス。年/月/日への変換・カテゴリ判定は呼び出し側で行う） */
+    data class JaSheetRow(
+        val rowType: String,       // "NORMAL" | "SUBTOTAL" | "MONTHLY_TOTAL"
+        val dateRaw: String,       // 6桁の生数字（例:"071008"）。空文字列=日付欄なし
+        val itemName: String,
+        val quantity: Double?,
+        val amount: Int?,
+        val categorySum: Int?,     // SUBTOTAL行のみ
+        val remarks: String,
+        val confidence: String     // "high" | "medium" | "low"
+    )
+
+    data class JaSheetParseResult(
+        val rows: List<JaSheetRow>,
+        val usageStats: AiUsageStats?,
+        /** falseの場合、取引日列クロップの行数が本体行数と一致しなかった（dateRawは全体画像コールの値のまま） */
+        val dateColumnAligned: Boolean
+    )
+
+    suspend fun parseJaSheetFromImage(dewarpedBitmap: Bitmap, apiKey: String): JaSheetParseResult =
+        withContext(Dispatchers.IO) {
+            if (apiKey.isBlank()) throw GeminiApiKeyMissingException()
+
+            coroutineScope {
+                val mainDeferred = async {
+                    callWithRetry { requestJaSheetMain(dewarpedBitmap, apiKey) }
+                }
+                val dateDeferred = async {
+                    callWithRetry { requestJaSheetDateColumn(dewarpedBitmap, apiKey) }
+                }
+
+                val (mainRows, mainUsage) = mainDeferred.await()
+                val (dates, dateUsage) = dateDeferred.await()
+
+                val (mergedRows, aligned) = alignDateColumn(mainRows, dates)
+
+                JaSheetParseResult(
+                    rows = mergedRows,
+                    usageStats = mergeUsageStats(mainUsage, dateUsage),
+                    dateColumnAligned = aligned
+                )
+            }
+        }
+
+    /** 指数バックオフ付きリトライ。5xx/429/通信エラーのみ最大 JA_SHEET_MAX_RETRIES 回まで再試行する */
+    private suspend fun <T> callWithRetry(block: suspend () -> T): T {
+        var attempt = 0
+        while (true) {
+            try {
+                return block()
+            } catch (e: GeminiApiKeyMissingException) {
+                throw e
+            } catch (e: GeminiQuotaExhaustedException) {
+                throw e
+            } catch (e: GeminiApiException) {
+                if (e.code != 500 && e.code != 503) throw e
+                attempt++
+                if (attempt >= JA_SHEET_MAX_RETRIES) throw e
+                delay(1000L shl (attempt - 1))
+            } catch (e: GeminiRateLimitException) {
+                attempt++
+                if (attempt >= JA_SHEET_MAX_RETRIES) throw e
+                delay(1000L shl (attempt - 1))
+            } catch (e: java.io.IOException) {
+                attempt++
+                if (attempt >= JA_SHEET_MAX_RETRIES) throw e
+                delay(1000L shl (attempt - 1))
+            }
+        }
+    }
+
+    /**
+     * 全体画像コールの行リストに、取引日列クロップコールの結果をマージする。
+     *
+     * 単純な件数一致（同数なら順番にそのまま割り当て）に加え、実測で確認された既知の
+     * 省略パターンに対する再アラインメントを行う：列クロップコールは指示に反して
+     * 日付欄が空欄の行（SUBTOTAL/MONTHLY_TOTAL、伝票の仕様上必ず日付欄を持たない）を
+     * 配列から省略することがある。NORMAL行の数と列クロップの件数が一致する場合は、
+     * NORMAL行にだけ順番に割り当て直すことで救済する（2026-08-09実機確認で確認済みの
+     * パターン。SUBTOTAL/MONTHLY_TOTAL行のdateRawは空文字列で確定させる）。
+     * それでも一致しない場合は元の全体画像コールのdateRawをそのまま使い、
+     * aligned=falseを返して呼び出し側でのフォールバック判断に委ねる。
+     */
+    private fun alignDateColumn(mainRows: List<JaSheetRow>, dates: List<String>): Pair<List<JaSheetRow>, Boolean> {
+        if (dates.size == mainRows.size) {
+            return mainRows.mapIndexed { i, row -> row.copy(dateRaw = dates[i]) } to true
+        }
+
+        val normalRowCount = mainRows.count { it.rowType == "NORMAL" }
+        if (dates.size == normalRowCount) {
+            var dateIdx = 0
+            val realigned = mainRows.map { row ->
+                if (row.rowType == "NORMAL") {
+                    val d = dates[dateIdx]
+                    dateIdx++
+                    row.copy(dateRaw = d)
+                } else {
+                    row.copy(dateRaw = "")
+                }
+            }
+            Log.w("GeminiReceiptClient", "JA sheet date column re-aligned by skipping non-NORMAL rows (main=${mainRows.size} date=${dates.size} normalRows=$normalRowCount)")
+            return realigned to true
+        }
+
+        Log.w("GeminiReceiptClient", "JA sheet date column misalignment (unrecoverable): main=${mainRows.size} date=${dates.size}")
+        Log.w("GeminiReceiptClient", "main rowTypes: ${mainRows.map { it.rowType }}")
+        Log.w("GeminiReceiptClient", "main dateRaw : ${mainRows.map { it.dateRaw }}")
+        Log.w("GeminiReceiptClient", "date column  : $dates")
+        return mainRows to false
+    }
+
+    private fun mergeUsageStats(a: AiUsageStats?, b: AiUsageStats?): AiUsageStats? {
+        if (a == null && b == null) return null
+        return AiUsageStats(
+            promptTokens = (a?.promptTokens ?: 0) + (b?.promptTokens ?: 0),
+            candidatesTokens = (a?.candidatesTokens ?: 0) + (b?.candidatesTokens ?: 0),
+            totalTokens = (a?.totalTokens ?: 0) + (b?.totalTokens ?: 0)
+        )
+    }
+
+    private fun requestJaSheetMain(dewarpedBitmap: Bitmap, apiKey: String): Pair<List<JaSheetRow>, AiUsageStats?> {
+        val resized = scaleBitmap(dewarpedBitmap, JA_SHEET_MAIN_RESIZE_PX)
+        val base64Image = bitmapToBase64Jpeg(resized)
+
+        val requestBody = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("inlineData", JSONObject().apply {
+                                put("mimeType", "image/jpeg")
+                                put("data", base64Image)
+                            })
+                        })
+                        put(JSONObject().apply { put("text", buildJaSheetMainPrompt()) })
+                    })
+                })
+            })
+            put("generationConfig", JSONObject().apply {
+                put("responseMimeType", "application/json")
+                put("temperature", 0)
+            })
+        }
+
+        val body = executeJaSheetHttp(requestBody, apiKey)
+        return parseJaSheetMainResponse(body)
+    }
+
+    private fun requestJaSheetDateColumn(dewarpedBitmap: Bitmap, apiKey: String): Pair<List<String>, AiUsageStats?> {
+        val cropped = cropDateColumn(dewarpedBitmap)
+        val base64Image = bitmapToBase64Jpeg(cropped)
+
+        val requestBody = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("inlineData", JSONObject().apply {
+                                put("mimeType", "image/jpeg")
+                                put("data", base64Image)
+                            })
+                        })
+                        put(JSONObject().apply { put("text", buildJaSheetDateColumnPrompt()) })
+                    })
+                })
+            })
+            put("generationConfig", JSONObject().apply {
+                put("responseMimeType", "application/json")
+                put("temperature", 0)
+            })
+        }
+
+        val body = executeJaSheetHttp(requestBody, apiKey)
+        return parseJaSheetDateColumnResponse(body)
+    }
+
+    /**
+     * 取引日列だけを切り出す。docs/OCR_SPEC.md の列定義（取引日: 5.5〜20.0mm）に
+     * 左右マージンを加え、通常行/小計行(56.5〜120.5mm)＋月合計行(121.0〜135.0mm)を
+     * まとめてカバーする範囲を2倍拡大して返す。
+     */
+    private fun cropDateColumn(dewarpedBitmap: Bitmap): Bitmap {
+        val mmToPxX = dewarpedBitmap.width / 203.0
+        val mmToPxY = dewarpedBitmap.height / 148.0
+        val x = ((5.5 * mmToPxX) - 10).toInt().coerceIn(0, dewarpedBitmap.width - 1)
+        val yStart = ((56.5 * mmToPxY) - 5).toInt().coerceIn(0, dewarpedBitmap.height - 1)
+        val xEnd = ((20.0 * mmToPxX) + 10).toInt().coerceIn(x + 1, dewarpedBitmap.width)
+        val yEnd = ((135.0 * mmToPxY) + 5).toInt().coerceIn(yStart + 1, dewarpedBitmap.height)
+
+        val cropped = Bitmap.createBitmap(dewarpedBitmap, x, yStart, xEnd - x, yEnd - yStart)
+        return Bitmap.createScaledBitmap(cropped, cropped.width * 2, cropped.height * 2, true)
+    }
+
+    private fun bitmapToBase64Jpeg(bitmap: Bitmap): String {
+        val stream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+        return Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+    }
+
+    private fun executeJaSheetHttp(requestBody: JSONObject, apiKey: String): String {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$JA_SHEET_MODEL:generateContent?key=$apiKey"
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) {
+                Log.e("GeminiReceiptClient", "JA sheet HTTP ${response.code}: $body")
+                throwApiError(response.code, body)
+            }
+            return body
+        }
+    }
+
+    private fun extractGeminiText(responseBody: String): Pair<String, AiUsageStats?> {
+        val root = JSONObject(responseBody)
+        val usageStats = parseUsageStats(root)
+        val text = root.getJSONArray("candidates")
+            .getJSONObject(0)
+            .getJSONObject("content")
+            .getJSONArray("parts")
+            .getJSONObject(0)
+            .getString("text")
+        return text to usageStats
+    }
+
+    private fun parseJaSheetMainResponse(responseBody: String): Pair<List<JaSheetRow>, AiUsageStats?> {
+        val (text, usage) = extractGeminiText(responseBody)
+        val json = JSONObject(text)
+        val arr = json.getJSONArray("rows")
+        val rows = (0 until arr.length()).map { i ->
+            val obj = arr.getJSONObject(i)
+            JaSheetRow(
+                rowType = obj.optString("rowType", "NORMAL"),
+                dateRaw = obj.optString("dateRaw", ""),
+                itemName = obj.optString("itemName", ""),
+                quantity = if (obj.has("quantity") && !obj.isNull("quantity")) obj.optDouble("quantity") else null,
+                amount = if (obj.has("amount") && !obj.isNull("amount")) obj.optInt("amount") else null,
+                categorySum = if (obj.has("categorySum") && !obj.isNull("categorySum")) obj.optInt("categorySum") else null,
+                remarks = obj.optString("remarks", ""),
+                confidence = obj.optString("confidence", "medium")
+            )
+        }
+        return rows to usage
+    }
+
+    private fun parseJaSheetDateColumnResponse(responseBody: String): Pair<List<String>, AiUsageStats?> {
+        val (text, usage) = extractGeminiText(responseBody)
+        val json = JSONObject(text)
+        val arr = json.getJSONArray("dates")
+        val dates = (0 until arr.length()).map { arr.optString(it, "") }
+        return dates to usage
+    }
+
+    private fun buildJaSheetMainPrompt(): String = """
+あなたはOCR専門のアシスタントです。以下の画像は、JA(農業協同組合)の「購買代金請求明細書」を
+透視変換した表組み部分です。表は左から次の列で構成されます。
+
+1. 取引日(6桁の連続した数字で印字されている。例: 071008)
+2. 商品名(農薬・肥料・資材・ガソリン等。規格や容量を含む)
+3. 取扱支店(読み取り不要)
+4. 数量(整数または小数。返品行は数量がマイナスになる、または備考に「返品」と書かれる)
+5. 税込単価(読み取り不要)
+6. 税込金額(円の整数。マイナスの場合あり)
+7. 分類計(「* 小計(分類名)」という行にのみ記載される、その区分の合計金額)
+8. 入金・窓口(読み取り不要)
+9. 備考(車両番号等の補足。空欄が多い)
+
+通常の取引行(NORMAL)のほかに、「* 小計(一般購買)」「* 小計(給油所)」のような小計行(SUBTOTAL)が
+含まれることがあります。また、明細の最後に「合計(税込)」という行が印字されている場合は、
+月計行(MONTHLY_TOTAL)として必ず出力してください（画像に実際に見えているのに省略しないこと）。
+ただし、複数ページに分かれた伝票の2ページ目以降など、そのページに「合計(税込)」行が
+印字されていない場合は、無理に作り出さず出力しないでください（画像に見えている行だけを
+書き写すこと）。小計行が存在せず、取引行の直後に合計(税込)へ到達する伝票もあります。
+その場合は無理にSUBTOTAL行を作らず、取引行の次にMONTHLY_TOTAL行(合計(税込))を置いてください。
+
+画像内の全ての行を上から順に、以下のJSON形式だけで返してください。前置き・説明文・
+Markdown装飾(```json など)は一切付けないでください。
+
+{
+  "rows": [
+    {
+      "rowType": "NORMAL または SUBTOTAL または MONTHLY_TOTAL",
+      "dateRaw": "取引日欄に印字されている数字をそのまま6桁の文字列で出力(例:071008)。
+                  変換・整形は一切せず、見えている文字をそのまま書き写すこと。
+                  読み取れない・欄が空の場合は空文字列",
+      "itemName": "商品名。SUBTOTAL行の場合は分類名(例:一般購買、給油所)。
+                   MONTHLY_TOTAL行の場合は「合計(税込)」",
+      "quantity": 数値またはnull,
+      "amount": 税込金額の整数(マイナスの場合は負の値)、またはnull,
+      "categorySum": "SUBTOTAL行は分類計の整数、MONTHLY_TOTAL行は合計(税込)の金額の整数。
+                      NORMAL行はnull",
+      "remarks": "備考欄。空なら空文字列",
+      "confidence": "high、medium、lowのいずれか"
+    }
+  ]
+}
+
+注意:
+- dateRawは絶対にMM/DD形式などに変換しないでください。画像に印字されている数字の並びを
+  そのまま6桁の文字列として書き写すことだけに専念してください（この列は別途高解像度で
+  再確認するため、ここでは大まかな読み取りで構いません）。
+- 数量列に小数点が印字されていなくても、ガソリン等の給油量は小数(例: 29.20)である場合があります。
+  金額を単価で割った値と整合するか検算し、整合するなら小数として解釈してください。
+- 返品行は数量・金額をマイナス値にしてください。
+- 取扱支店・税込単価・入金・窓口列の値は出力に含めないでください。
+- 明細の最上部にある「前月請求」「前月入金」等のヘッダー部（今回の取引行とは無関係な
+  過去の請求サマリー）が空欄の場合は、無理に値を作らず読み取り対象から除外してください。
+- 明細末尾の「合計(税込)」行（MONTHLY_TOTAL）は、画像内に実際に印字されている場合のみ
+  出力してください。複数ページの伝票でこのページには印字されていない場合は、
+  存在しない行として扱い、無理に出力しないでください。
+""".trimIndent()
+
+    private fun buildJaSheetDateColumnPrompt(): String = """
+この画像は、JA(農業協同組合)の「購買代金請求明細書」から取引日列だけを縦に切り出した部分です。
+取引日は6桁の連続した数字で印字されています(例: 071008)。表には横罫線がなく、行と行の間は
+白いスペースのみで区切られています。
+
+画像内に見える日付の並びを、上から順にすべて配列で返してください。小計行・月合計行など
+日付が印字されていない行(空欄)は空文字列 "" としてください。
+
+以下のJSON形式だけで返してください。前置き・説明文・Markdown装飾は一切付けないでください。
+
+{
+  "dates": ["071008", "", "071009"]
+}
+
+注意:
+- 各値は必ず6桁の数字をそのまま書き写してください。MM/DD形式などへの変換・整形・区切り記号の
+  挿入は絶対にしないでください。見えている文字の並びをそのまま出力することだけに専念してください。
+- 読み取れない・かすれている場合も、最も近いと判断した数字を6桁で出力してください。
+- 空欄行を省略せず、見えている行の数だけ配列要素を出力してください(欠落・重複させない)。
+""".trimIndent()
 }

@@ -1,6 +1,7 @@
 package com.example.greenframeocr.ui
 
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -225,6 +226,7 @@ fun ReceiptInputScreen(
     // カメラとデータグリッドを排他的に表示
     if (showCamera) {
         CameraView(
+            geminiApiKey = appPreferences.geminiApiKey,
             onOcrComplete = { parsedRows ->
                 val result = convertParsedRowsToRowData(
                     parsedRows = parsedRows,
@@ -1427,54 +1429,80 @@ private fun GridDataCell(
  */
 @Composable
 private fun CameraView(
+    geminiApiKey: String,
     onOcrComplete: (List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>) -> Unit,
     onCancel: () -> Unit
 ) {
+    val context = LocalContext.current
     val ocrScope = rememberCoroutineScope()
     var isProcessingOcr by remember { mutableStateOf(false) }
+    // isValidShape() がNGだった撮影結果。nullでない間はTransformPreviewScreenを表示する
+    var previewDetectionResult by remember {
+        mutableStateOf<com.example.greenframeocr.util.GreenFrameDetector.DetectionResult?>(null)
+    }
+
+    fun runOcr(detectionResult: com.example.greenframeocr.util.GreenFrameDetector.DetectionResult) {
+        isProcessingOcr = true
+        ocrScope.launch {
+            try {
+                val dewarped = detectionResult.dewarpedBitmap
+                val parsed = if (dewarped != null) {
+                    val geminiResult = com.example.greenframeocr.util.GeminiReceiptClient
+                        .parseJaSheetFromImage(dewarped, geminiApiKey)
+                    if (!geminiResult.dateColumnAligned) {
+                        android.util.Log.w("ReceiptInputScreen", "取引日列のアラインメントが取れませんでした（要確認）")
+                    }
+                    com.example.greenframeocr.viewmodel.OcrCaptureViewModel.mapGeminiResultToParsedRows(geminiResult)
+                } else emptyList()
+                onOcrComplete(parsed)
+            } catch (e: Exception) {
+                Toast.makeText(context, e.message ?: "OCR処理エラー", Toast.LENGTH_LONG).show()
+            } finally {
+                isProcessingOcr = false
+            }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        CameraScreenForOcr(
-            onOcrComplete = { detectionResult ->
-                isProcessingOcr = true
-                ocrScope.launch {
-                    try {
-                        val dewarped = detectionResult.dewarpedBitmap
-                        val parsed = if (dewarped != null) {
-                            val mmRatio = dewarped.width / 203.0
-                            val ocrResult = com.example.greenframeocr.util.OCRProcessor.processUnderlayingBase(dewarped, mmRatio)
-                            ocrResult.rowsWithCategories.mapIndexed { index, (row, category) ->
-                                val isSubtotal     = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.SUBTOTAL
-                                val isMonthlyTotal = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.MONTHLY_TOTAL
-                                val amount = if (isSubtotal || isMonthlyTotal) row.categorySum else row.amount
-                                com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow(
-                                    rowIndex = index, date = row.date, productName = row.itemName,
-                                    branch = null, quantity = row.quantity?.toIntOrNull(),
-                                    unitPrice = null, amount = amount,
-                                    isAmountValid = amount != null,
-                                    category = category, isSubtotal = isSubtotal,
-                                    isMonthlyTotal = isMonthlyTotal
-                                )
-                            }
-                        } else emptyList()
-                        onOcrComplete(parsed)
-                    } finally {
-                        isProcessingOcr = false
+        val preview = previewDetectionResult
+        when {
+            // isProcessingOcr を最優先で分岐しないと、送信直後にCameraScreenForOcrへ
+            // 一瞬戻ってライブカメラ映像が見えてしまう（内部でcameraViewModel.resetToPreview()
+            // が走るため）。OCR処理中は常にこのスピナーを表示する。
+            isProcessingOcr -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("OCR処理中...")
                     }
                 }
-            },
-            onCancel = onCancel,
-            modifier = Modifier.fillMaxSize()
-        )
-
-        if (isProcessingOcr) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
+            }
+            preview != null -> {
+                TransformPreviewScreen(
+                    detectionResult = preview,
+                    onSend = {
+                        previewDetectionResult = null
+                        runOcr(preview)
+                    },
+                    onRetry = { previewDetectionResult = null }
+                )
+            }
+            else -> {
+                CameraScreenForOcr(
+                    onOcrComplete = { detectionResult ->
+                        if (com.example.greenframeocr.util.GreenFrameDetector.isValidShape(detectionResult)) {
+                            runOcr(detectionResult)
+                        } else {
+                            previewDetectionResult = detectionResult
+                        }
+                    },
+                    onCancel = onCancel,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         }
 

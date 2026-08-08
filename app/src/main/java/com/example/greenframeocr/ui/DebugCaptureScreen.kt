@@ -32,6 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.util.GeminiReceiptClient
 import com.example.greenframeocr.util.GreenFrameDetector
 import com.example.greenframeocr.util.OCRProcessor
 import com.example.greenframeocr.util.UnderlyingBaseProcessor
@@ -268,6 +270,11 @@ private fun DebugResultView(
     val scope = rememberCoroutineScope()
     var saveMessage by remember { mutableStateOf("") }
 
+    // Gemini OCR（Phase2動作確認用）
+    var isGeminiRunning by remember { mutableStateOf(false) }
+    var geminiResult by remember { mutableStateOf<GeminiReceiptClient.JaSheetParseResult?>(null) }
+    var geminiError by remember { mutableStateOf<String?>(null) }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -397,6 +404,69 @@ private fun DebugResultView(
                             fontSize = 13.sp,
                             color = androidx.compose.ui.graphics.Color(0xFFE65100)
                         )
+                    }
+                }
+            }
+        }
+
+        // ⑦ Gemini OCR（Phase2動作確認用・列クロップTwo-Pass方式）
+        item {
+            DebugSection("⑦ Gemini OCR（テスト・列クロップTwo-Pass）") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            val dewarped = result.dewarpedBitmap
+                            if (dewarped == null) {
+                                geminiError = "透視変換画像がありません"
+                                return@Button
+                            }
+                            val apiKey = AppPreferences(context).geminiApiKey
+                            geminiError = null
+                            geminiResult = null
+                            isGeminiRunning = true
+                            scope.launch {
+                                try {
+                                    val res = withContext(Dispatchers.IO) {
+                                        GeminiReceiptClient.parseJaSheetFromImage(dewarped, apiKey)
+                                    }
+                                    geminiResult = res
+                                } catch (e: Exception) {
+                                    geminiError = e.message ?: e.toString()
+                                } finally {
+                                    isGeminiRunning = false
+                                }
+                            }
+                        },
+                        enabled = !isGeminiRunning
+                    ) {
+                        Text(if (isGeminiRunning) "送信中..." else "Geminiに送信")
+                    }
+
+                    geminiError?.let { err ->
+                        Text(err, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                    }
+
+                    geminiResult?.let { res ->
+                        Text(
+                            text = "行数: ${res.rows.size}  日付列アラインメント: ${if (res.dateColumnAligned) "OK" else "不一致（要フォールバック）"}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (res.dateColumnAligned) androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                                    else androidx.compose.ui.graphics.Color(0xFFE65100)
+                        )
+                        res.usageStats?.let { usage ->
+                            Text(usage.toDisplayString(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            res.rows.forEachIndexed { i, row ->
+                                Text(
+                                    "Row $i [${row.rowType}] date=${row.dateRaw} item=${row.itemName} " +
+                                        "qty=${row.quantity} amt=${row.amount} catSum=${row.categorySum} " +
+                                        "conf=${row.confidence}",
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -48,9 +48,17 @@ fun OcrCaptureScreen(
         is OcrCaptureViewModel.CaptureStep.Capturing -> {
             CameraScreenForOcr(
                 onOcrComplete = { detectionResult ->
-                    viewModel.processDetectionResult(detectionResult)
+                    viewModel.onDetectionResult(detectionResult)
                 },
                 onCancel = { viewModel.reset() }
+            )
+        }
+        is OcrCaptureViewModel.CaptureStep.Preview -> {
+            val step = currentStep as OcrCaptureViewModel.CaptureStep.Preview
+            TransformPreviewScreen(
+                detectionResult = step.detectionResult,
+                onSend = { viewModel.processDetectionResult(step.detectionResult) },
+                onRetry = { viewModel.retryFromPreview() }
             )
         }
         is OcrCaptureViewModel.CaptureStep.Processing -> {

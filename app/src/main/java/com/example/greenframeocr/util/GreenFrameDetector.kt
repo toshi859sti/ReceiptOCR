@@ -50,6 +50,21 @@ object GreenFrameDetector {
         val errorMessage: String = ""
     )
 
+    // コーナー内角の90°からの最大許容ズレ（度）。DebugCaptureScreenの表示閾値と揃えている。
+    private const val MAX_CORNER_ANGLE_DEVIATION = 1.5
+
+    /**
+     * 透視変換結果がそのままGemini送信に足る形状品質かを判定する。
+     * falseの場合はTransformPreviewScreenで確認を挟む。
+     */
+    fun isValidShape(result: DetectionResult): Boolean {
+        if (!result.success || result.dewarpedBitmap == null) return false
+        val angles = result.captureInfo.cornerAngles
+        if (angles.size != 4) return false
+        val maxDeviation = angles.maxOf { Math.abs(it - 90.0) }
+        return maxDeviation <= MAX_CORNER_ANGLE_DEVIATION
+    }
+
     data class FieldROI(val name: String, val rect: RectF)
 
     val DETAIL_ROIS = listOf(

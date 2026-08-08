@@ -27,6 +27,13 @@
 - `fallbackToDestructiveMigration()` は削除済み（2026-07-12）
   - 以後、DBスキーマ変更時はマイグレーション追加が必須
   - マイグレーションを書き忘れるとデータ消失ではなく**起動時クラッシュ**になる点に注意
+- `OcrCaptureScreen`/`OcrCaptureViewModel`は実質的に主動線ではない（2026-08-09発見）
+  - `SheetEditorScreen`の「再OCR」ボタンからのみ到達する経路
+  - 実際にユーザーが使う撮影導線（伝票データ→編集→伝票追加→撮影）は
+    `ReceiptInputScreen.kt`内の独自`CameraView`実装（`showCamera`状態＋非公開`CameraView`
+    コンポーザブル）を使っている
+  - 撮影・OCR処理まわりに手を入れる際は、`OcrCaptureViewModel`側だけ直しても本番導線には
+    反映されない点に注意。両方の経路を確認すること
 
 ---
 
