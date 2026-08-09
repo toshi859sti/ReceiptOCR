@@ -248,6 +248,7 @@ fun ReceiptNavGraph(
             val viewModel: OcrCaptureViewModel = viewModel(
                 factory = OcrCaptureViewModelFactory(
                     dao = dao,
+                    productMasterDao = database.productMasterDao(),
                     issueYear = appPreferences.eraYear,
                     issueMonth = appPreferences.currentIssueMonth,
                     geminiApiKey = appPreferences.geminiApiKey
@@ -560,6 +561,7 @@ private fun PlaceholderScreen(
  */
 class OcrCaptureViewModelFactory(
     private val dao: ReceiptDao,
+    private val productMasterDao: com.example.greenframeocr.data.ProductMasterDao,
     private val issueYear: Int,
     private val issueMonth: Int,
     private val geminiApiKey: String
@@ -567,7 +569,7 @@ class OcrCaptureViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(OcrCaptureViewModel::class.java)) {
-            return OcrCaptureViewModel(dao, issueYear, issueMonth, geminiApiKey) as T
+            return OcrCaptureViewModel(dao, productMasterDao, issueYear, issueMonth, geminiApiKey) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

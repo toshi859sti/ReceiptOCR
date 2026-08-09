@@ -1129,7 +1129,7 @@ private fun ProductEditDialog(
                             kaikakeTekiyouId = if (accountingSoftware == AccountingSoftware.YAYOI) product?.kaikakeTekiyouId else selectedTekiyouId,
                             yayoiAccountId = if (accountingSoftware == AccountingSoftware.YAYOI) selectedYayoiAccountId else product?.yayoiAccountId,
                             isCertified = true
-                        )
+                        ).withComputedKey()
                         onSave(newProduct)
                     }
                 },

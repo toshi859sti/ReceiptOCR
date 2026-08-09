@@ -87,6 +87,8 @@ fun ReceiptInputScreen(
     var ocrDuplicateSubtotalCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showUnclassifiedBlockDialog by remember { mutableStateOf(false) }
     var showValidationMismatchDialog by remember { mutableStateOf(false) }
+    // 取引日列の再アラインメントが取れなかった場合の要確認警告（強制ブロックはしない）
+    var showDateAlignmentWarning by remember { mutableStateOf(false) }
 
     // カメラ表示状態
     var showCamera by remember { mutableStateOf(false) }
@@ -196,6 +198,24 @@ fun ReceiptInputScreen(
         )
     }
 
+    if (showDateAlignmentWarning) {
+        AlertDialog(
+            onDismissRequest = { showDateAlignmentWarning = false },
+            title = { Text("取引日をご確認ください") },
+            text = {
+                Text(
+                    "取引日列の読み取りを確認できませんでした。まれに月がずれて読み取られる" +
+                        "ことがあるため、今回撮影した伝票の各行の取引日をご確認ください。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showDateAlignmentWarning = false }) {
+                    Text("確認しました")
+                }
+            }
+        )
+    }
+
     if (showDeleteConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = false },
@@ -246,7 +266,8 @@ fun ReceiptInputScreen(
     if (showCamera) {
         CameraView(
             geminiApiKey = appPreferences.geminiApiKey,
-            onOcrComplete = { parsedRows ->
+            productMasterDao = database.productMasterDao(),
+            onOcrComplete = { parsedRows, dateColumnAligned ->
                 val result = convertParsedRowsToRowData(
                     parsedRows = parsedRows,
                     sheetNumber = currentSheetNumber,
@@ -294,6 +315,9 @@ fun ReceiptInputScreen(
                 }
                 allSheetsData = recalculateCategoriesInMemory(tempSheetsData)
                 showCamera = false
+                if (!dateColumnAligned) {
+                    showDateAlignmentWarning = true
+                }
             },
             onCancel = {
                 showCamera = false
@@ -1478,7 +1502,8 @@ private fun GridDataCell(
 @Composable
 private fun CameraView(
     geminiApiKey: String,
-    onOcrComplete: (List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>) -> Unit,
+    productMasterDao: com.example.greenframeocr.data.ProductMasterDao,
+    onOcrComplete: (List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>, Boolean) -> Unit,
     onCancel: () -> Unit
 ) {
     val ocrScope = rememberCoroutineScope()
@@ -1497,15 +1522,20 @@ private fun CameraView(
         ocrScope.launch {
             try {
                 val dewarped = detectionResult.dewarpedBitmap
+                var dateColumnAligned = true
                 val parsed = if (dewarped != null) {
                     val geminiResult = com.example.greenframeocr.util.GeminiReceiptClient
                         .parseJaSheetFromImage(dewarped, geminiApiKey)
-                    if (!geminiResult.dateColumnAligned) {
+                    dateColumnAligned = geminiResult.dateColumnAligned
+                    if (!dateColumnAligned) {
                         android.util.Log.w("ReceiptInputScreen", "取引日列のアラインメントが取れませんでした（要確認）")
                     }
-                    com.example.greenframeocr.viewmodel.OcrCaptureViewModel.mapGeminiResultToParsedRows(geminiResult)
+                    com.example.greenframeocr.viewmodel.OcrCaptureViewModel.applyProductMasterCorrection(
+                        com.example.greenframeocr.viewmodel.OcrCaptureViewModel.mapGeminiResultToParsedRows(geminiResult),
+                        productMasterDao
+                    )
                 } else emptyList()
-                onOcrComplete(parsed)
+                onOcrComplete(parsed, dateColumnAligned)
             } catch (e: Exception) {
                 ocrError = (e.message ?: "OCR処理エラー") to detectionResult
             } finally {

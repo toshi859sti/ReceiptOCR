@@ -4,12 +4,14 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.greenframeocr.data.ProductMasterDao
 import com.example.greenframeocr.data.ReceiptDao
 import com.example.greenframeocr.data.ReceiptItem
 import com.example.greenframeocr.data.SheetData
 import com.example.greenframeocr.util.Category
 import com.example.greenframeocr.util.GeminiReceiptClient
 import com.example.greenframeocr.util.GreenFrameDetector
+import com.example.greenframeocr.util.toCanonicalKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +29,7 @@ import kotlinx.coroutines.withContext
  */
 class OcrCaptureViewModel(
     private val dao: ReceiptDao,
+    private val productMasterDao: ProductMasterDao,
     private val issueYear: Int,
     private val issueMonth: Int,
     private val geminiApiKey: String
@@ -64,7 +67,8 @@ class OcrCaptureViewModel(
         data class Preview(val detectionResult: GreenFrameDetector.DetectionResult) : CaptureStep()
         object Processing : CaptureStep()
         data class Error(val message: String, val detectionResult: GreenFrameDetector.DetectionResult) : CaptureStep()
-        data class Complete(val rows: List<ParsedRow>) : CaptureStep()
+        /** dateColumnAligned=falseの場合、取引日列の再アラインメントが取れず要確認（強制ブロックはしない） */
+        data class Complete(val rows: List<ParsedRow>, val dateColumnAligned: Boolean = true) : CaptureStep()
     }
 
     // -------------------------------------------------------------------
@@ -133,17 +137,20 @@ class OcrCaptureViewModel(
                     return@launch
                 }
 
-                val rows = withContext(Dispatchers.Default) {
-                    val geminiResult = GeminiReceiptClient.parseJaSheetFromImage(dewarpedBitmap, geminiApiKey)
-                    if (!geminiResult.dateColumnAligned) {
-                        Log.w(TAG, "取引日列のアラインメントが取れませんでした（要確認）")
-                    }
-                    mapGeminiResultToParsedRows(geminiResult)
+                val geminiResult = withContext(Dispatchers.Default) {
+                    GeminiReceiptClient.parseJaSheetFromImage(dewarpedBitmap, geminiApiKey)
                 }
+                if (!geminiResult.dateColumnAligned) {
+                    Log.w(TAG, "取引日列のアラインメントが取れませんでした（要確認）")
+                }
+                val rows = applyProductMasterCorrection(
+                    mapGeminiResultToParsedRows(geminiResult),
+                    productMasterDao
+                )
 
                 Log.d(TAG, "OCR完了: ${rows.size}行")
                 _parsedRows.value = rows
-                _currentStep.value = CaptureStep.Complete(rows)
+                _currentStep.value = CaptureStep.Complete(rows, geminiResult.dateColumnAligned)
 
             } catch (e: Exception) {
                 Log.e(TAG, "OCR処理エラー", e)
@@ -268,6 +275,30 @@ class OcrCaptureViewModel(
 
     companion object {
         private const val TAG = "OcrCaptureViewModel"
+
+        /**
+         * NORMAL行の商品名を購買品リスト（product_master）と照合し、一致すれば登録済みの
+         * canonicalName に差し替える。全角/半角スペース・英数字幅・半角カナの違いを吸収する
+         * ため、product_master に事前計算済みの canonicalKey 列で比較する
+         * （表示文字列自体は書き換えない。OCR側の商品名だけその場で toCanonicalKey() する）。
+         * SUBTOTAL/MONTHLY_TOTAL行は商品名ではないため対象外。
+         * ReceiptInputScreen.kt の CameraView からも呼ばれる共通処理。
+         */
+        suspend fun applyProductMasterCorrection(
+            rows: List<ParsedRow>,
+            productMasterDao: ProductMasterDao
+        ): List<ParsedRow> {
+            val canonicalNameByKey = productMasterDao.getAll()
+                .associate { it.canonicalKey to it.canonicalName }
+            return rows.map { row ->
+                if (row.isSubtotal || row.isMonthlyTotal || row.productName.isNullOrBlank()) {
+                    row
+                } else {
+                    val matched = canonicalNameByKey[toCanonicalKey(row.productName)]
+                    if (matched != null && matched != row.productName) row.copy(productName = matched) else row
+                }
+            }
+        }
 
         /**
          * GeminiReceiptClient.JaSheetParseResult → ParsedRow リストに変換する。

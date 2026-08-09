@@ -49,7 +49,8 @@ JA購買伝票OCRパイプライン Gemini Vision API移行（Phase 0・1・2完
 - [x] 実機の本番導線で複数枚撮影・動作確認（日付・商品名・金額・小計・合計すべて正常）
 - [x] `SettingsScreen`への課金有効化キー推奨の注意文言追加
 - [x] `docs/development-guidelines.md`へのGoogle Cloud Console設定手順追記
-- [x] API失敗時の専用エラーUI・再試行ボタン
+- [x] API失敗時の専用エラーUI・再試行ボタン（2026-08-09実機確認済み：通信エラー時に
+      正しくブロック・再試行・撮り直し・キャンセルすべて動作）
 
 ### Phase 4：検算バリデーション・confidence表示（一部着手）
 - [x] `receipt_items` に `ocrConfidence` カラム追加（`MIGRATION_25_26`、v25→v26）
@@ -255,13 +256,101 @@ Phase4はDBスキーマ・confidenceデータフロー・UI表示（バッジ）
 （詳細は上記「今回完了したこと」参照）。
 
 ### 次回セッションで最初にやること
-1. `OcrErrorScreen`（再試行・撮り直すボタン）をGemini API呼び出し失敗パターン
-   （APIキー空・機内モード等）で実機動作確認する（今回はまだ未実施）
+1. 実機で「購買品リストとの照合による表記統一」機能をGemini API実行込みで動作確認する
+   （今回はビルド・起動確認のみで、実際のAPI呼び出しでの動作は未確認）
 2. しばらく実機で複数枚・複数パターン（返品行・SUBTOTALなし伝票・複雑な商品名等）を撮影し、
    本番導線でのGemini結果の安定性を継続確認する（今回確認できたのは数枚のみ）
-3. `dateColumnAligned=false`（再アラインメントでも救済できない場合）の伝票をどう扱うか
-   （現状は全体画像コールの値をそのまま使うだけで、UI上の警告表示は未実装）
-4. Phase4残タスク：伝票内の要確認行のみを抽出する一覧・一括確認モード
+3. Phase4残タスク：伝票内の要確認行のみを抽出する一覧・一括確認モード
+
+### 2026-08-09（続き12）：Gemini OCR結果の商品名を購買品リストと照合して表記統一
+ユーザーから「Geminiの読み取り結果は全角/半角スペースを区別できないが、商品名の同一判定を
+どう扱うか」という質問を受け、調査の上で実装した。
+
+**背景**：OCRはスペース幅を視覚的に判別できない（ML Kit・Gemini問わずOCR全般の構造的限界）。
+ML Kit時代は`ProductNameCorrectorV3.normalizeForCompare()`が比較前に全角/半角スペースを
+問答無用で除去していたが、この学習システム（`ocr_variants`等）はPhase6で削除予定であり、
+Gemini経路には現状この種の正規化が一切なかった（`OcrCaptureViewModel`・
+`GeminiReceiptClient`のどこも`productMasterDao`を呼んでいなかった）。
+
+**実装**：`OcrCaptureViewModel.applyProductMasterCorrection()`を新設。GeminiのNORMAL行の
+商品名を`toCanonicalKey()`で正規化し、`product_master.canonicalKey`（既存の事前計算列）と
+照合、一致すれば登録済みの`canonicalName`にその場で差し替える（SUBTOTAL/MONTHLY_TOTAL行は
+対象外）。主導線`ReceiptInputScreen.kt`のCameraViewと副次画面`OcrCaptureScreen`の両方から
+呼ばれるよう、`OcrCaptureViewModel`・`OcrCaptureViewModelFactory`・`Navigation.kt`に
+`productMasterDao`を配線。処理コストは無視できるレベル（product_master現在103件、DB読込＋
+103件のマップ構築＋行数分のハッシュ参照で数ミリ秒。Gemini API呼び出し自体が4〜20秒かかる
+のに対して誤差）。
+
+**ユーザー指摘で発見した既存バグ2件（今回の実装とは独立、修正済み）**：
+1. `product_master.canonicalKey`は元々事前計算列として存在していた（MIGRATION_16_17）のに、
+   最初の実装ではそれを使わず毎回`toCanonicalKey()`を再計算していた。既存列を直接読む方式に修正
+2. `ProductListScreen.kt`の`ProductEditDialog`保存処理（商品名編集時）が`.withComputedKey()`を
+   呼んでおらず、**商品名を編集するたびに`canonicalKey`が空文字列にリセットされていた**
+   （複数の編集済み商品が`""`キーで衝突し、OCR照合が誤爆しうる状態だった）。`.withComputedKey()`
+   呼び出しを追加して修正
+
+**確認できていた既存機能**：`ProductListScreen`で商品名をリネームすると
+`receiptDao().updateProductNameInReceiptItems(oldName, newName)`で過去の伝票データにも
+遡って反映される。ただし完全一致文字列でのUPDATEのため、表記ゆれのある過去データ
+（今回の照合機能導入前に登録された分）までは追随しない。
+
+**設計判断（ユーザー確認済み）**：`ReceiptItem.productName`は現在プレーン文字列で、
+`product_master.id`へのFK列は存在しない（`ReceiptRowData.productMasterId`はUI内にあるが
+`saveMonthData()`で捨てられている）。FK化で表記ゆれ問題を構造的に解消する案も検討したが、
+過去データ移行・全参照箇所の書き換え・SUBTOTAL/TOTAL行の特別扱いが必要な大規模リファクタと
+判断し、**今回は見送り、文字列＋canonicalKey照合の継続を採用**。Gemini移行が一段落してから
+改めて検討する。
+
+`./gradlew compileDebugKotlin`・`assembleDebug`でビルド確認、実機にインストールして
+正常起動を確認済み。実際にGemini APIを呼んでの照合動作確認（表記統一が実際に働くか）は
+コスト面から今回は未実施。
+
+### 2026-08-09（続き11）：dateColumnAligned=false警告を実機確認（完了、実際に発生）
+ユーザーが機内モードを解除しネットワーク復旧後、同じ紙のJA伝票（令和7年11月分）を
+本番導線で再撮影。**1回目の実撮影で偶然`dateColumnAligned=false`が発生し、新設した
+「取引日をご確認ください」ダイアログが実機で正しく表示された**（意図的な誘発ではなく
+自然発生）。商品名・金額はすべて正確に読み取れていた（グレーシア乳剤250ml→11,770円 等、
+紙面と一致）。「確認しました」ボタンでダイアログを閉じ、グリッドは正常に編集可能な状態を
+維持。テストデータは「キャンセル」で破棄し、0/0の状態に復元（実データへの影響なし）。
+これでPhase4の残タスクのうち`dateColumnAligned=false`対応も実機で発火することを確認できた。
+
+**訂正（ユーザー指摘）**：確認直後、表示された取引日が「08/01/xx」（令和8年1月）で
+伝票の実際の印字「令和7年11月」とずれていたことを「既知の月ずれ誤読を実際に検出できた
+証拠」と記録したが、これは誤りだった。撮影時に「年月固定」チェックボックスがONだった
+ため、`ReceiptInputScreen.kt`の`convertParsedRowsToRowData()`内`fixYearMonth`処理により
+Geminiが返した年月を無視して日にちだけを取り出し、年月は常に画面選択中の「令和8年1月」に
+強制上書きする仕様が正しく動作していただけ（該当コード：`fixYearMonth && digits.length >= 2
+-> "%02d/%02d/%02d".format(defaultYear % 100, defaultMonth, day)`）。`dateColumnAligned=false`
+ダイアログ自体が発火した事実（Geminiの2回のAPI呼び出し間で行数が不一致だったという別の
+内部シグナル）は変わらないが、「表示日付のずれ」をその根拠として結び付けたのは誤り。
+Geminiが実際に返した生の取引日（年月）はこのテストでは確認できていない。
+
+### 2026-08-09（続き10）：dateColumnAligned=false時のUI警告表示を実装
+これまで`dateColumnAligned=false`（取引日列クロップと全体画像の行数不一致で再アラインメント
+できなかった場合）はログ出力のみで、`OcrCaptureViewModel`・`ReceiptInputScreen.kt`
+どちらの経路でもUIに一切表示されていなかった。以下を実装：
+- `OcrCaptureViewModel.CaptureStep.Complete`に`dateColumnAligned: Boolean = true`を追加し、
+  `OcrCaptureScreen.kt`の`CompleteScreen`に警告バナー（`TransformPreviewScreen`と同じ
+  tertiaryContainer・Warningアイコンの意匠）を追加
+- 主導線`ReceiptInputScreen.kt`の`CameraView`の`onOcrComplete`コールバックに
+  `Boolean`（dateColumnAligned）パラメータを追加し、falseの場合は伝票データ画面に
+  「取引日をご確認ください」ダイアログを表示（強制ブロックはしない、確認促しのみ）
+- 検算不一致ブロックと違い、これは「疑わしいが誤りと確定していない」シグナルのため、
+  `ocrConfidence == "low"`バッジと同じ「警告するが止めない」方針を踏襲
+
+### 2026-08-09（続き9）：実機でOcrErrorScreenの失敗パターンを動作確認（完了）
+ユーザーが機内モードを意図的にONにした状態で、本番の撮影導線（伝票データ→編集→撮影）から
+実際の紙のJA伝票にカメラを向けて撮影。ネットワーク接続不可により
+`Unable to resolve host "generativelanguage.googleapis.com"`のIOExceptionが発生し、
+`OcrErrorScreen`が正しく表示されることを確認：
+- エラーメッセージ（実際の例外内容）がカードに表示される
+- 「再試行（同じ画像で送信）」→ 撮り直しなしで同じ画像のまま再送信 → 同じエラーで
+  `OcrErrorScreen`に戻ることを確認（撮影済み画像を破棄しない設計が意図通り機能）
+- 「撮り直す」→ ライブカメラ画面に戻ることを確認（その後自動撮影が走り再度失敗→
+  `OcrErrorScreen`に戻る一連の流れも確認）
+- 「キャンセル」→ 編集画面に戻ることを確認
+テスト用に追加した伝票は「クリア」→「キャンセル」で破棄し、0/0の状態に復元。実データへの
+影響なし。これでPhase2「API失敗時の専用エラーUI・再試行ボタン」が実機で完全に動作確認できた。
 
 ### 2026-08-09（続き8）：実機で検算不一致ブロックを動作確認（完了）
 `ReceiptInputScreen.kt`（`令和8年1月`・テスト用に伝票追加→クリア後に破棄、実データへの影響なし）で

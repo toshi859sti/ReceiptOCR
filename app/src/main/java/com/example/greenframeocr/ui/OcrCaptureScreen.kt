@@ -75,8 +75,10 @@ fun OcrCaptureScreen(
             )
         }
         is OcrCaptureViewModel.CaptureStep.Complete -> {
+            val step = currentStep as OcrCaptureViewModel.CaptureStep.Complete
             CompleteScreen(
                 rows = parsedRows,
+                dateColumnAligned = step.dateColumnAligned,
                 onSave = {
                     scope.launch {
                         val success = viewModel.saveData()
@@ -313,6 +315,7 @@ private fun CompleteScreen(
     onRetry: () -> Unit,
     onBack: () -> Unit = {},
     errorMessage: String?,
+    dateColumnAligned: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -326,6 +329,35 @@ private fun CompleteScreen(
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 16.dp)
         )
+
+        if (!dateColumnAligned) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "取引日の読み取りを確認できませんでした。まれに月がずれて読み取られる" +
+                            "ことがあるため、各行の取引日をご確認ください。",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
+        }
 
         errorMessage?.let {
             Card(
