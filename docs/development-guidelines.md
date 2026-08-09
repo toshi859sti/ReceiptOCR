@@ -134,6 +134,35 @@ Add adaptive icon: white icon on dark green background (#0E6C48)
 
 ---
 
+## Gemini API キー設定手順（課金有効化キー）
+
+JA購買伝票OCR（`GeminiReceiptClient`）はユーザー個別の Gemini APIキー方式（設定画面で入力・
+`AppPreferences.geminiApiKey` に保存）。無料枠キーは入力画像・出力内容が Google 側のモデル
+改善に利用され得るため、伝票の取引先情報を扱う本アプリでは **課金有効化キー（従量課金制）を
+推奨する**（設定画面にも注意文言を表示済み）。
+
+以下は Google Cloud Console での課金有効化キー取得手順（2026-08-09 実施時の実務メモ）。
+
+1. [Google Cloud Console](https://console.cloud.google.com/) で新規プロジェクトを作成する
+   （既存の無関係な Firebase プロジェクト等を流用しない。混在すると請求管理が煩雑になる）
+2. 「お支払い」→「請求先アカウント」で新規の請求先アカウントを作成する
+   （プロジェクト作成とは別画面。ここが分かりにくいので注意）
+3. 請求先アカウントを「従量課金制フルアカウント」にアップグレードする
+   （無料トライアルのままだと API が利用できない場合がある）
+4. 前払いクレジットをチャージする（少額で開始し、利用量を見ながら追加する）
+5. 「予算とアラート」で月間の予算アラートを設定する（想定外の高額請求を防ぐため）
+6. プロジェクトを対象の請求先アカウントに紐付ける
+7. [Google AI Studio](https://aistudio.google.com/) または Cloud Console の
+   「APIとサービス」→「認証情報」から、手順1で作成したプロジェクト配下で APIキーを発行する
+8. アプリの設定画面（`SettingsScreen` の「Gemini APIキー」欄）に発行したキーを入力・保存する
+
+**料金の目安**（2026-08-08 実測、Phase0 検証時点）:
+- `gemini-3.6-flash`：JA伝票1枚あたり約 ¥5〜6（全行正解・約20秒/回）
+- `gemini-3.5-flash-lite`：JA伝票1枚あたり約 ¥0.6（数量列以外は完全正解・約4秒/回）
+- 本番採用は `gemini-3.5-flash-lite`（数量列はCSV出力で未使用のため精度要件から除外）
+
+---
+
 ## パフォーマンスガイドライン
 
 - `GreenFrameDetector.process()` は UI スレッドで呼ばない（`Dispatchers.Default` で実行）

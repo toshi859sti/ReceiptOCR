@@ -335,30 +335,63 @@ ML Kit版は保存時点では簡易的な仮カテゴリ（SUBTOTAL行の区分
 ## Phase 4：検算バリデーション・confidence表示
 
 ### DBスキーマ変更（Room DB v25→v26、2026-08-07 時点の最新バージョンで確定）
-- [ ] `receipt_items` テーブルに `ocrConfidence` カラム追加（String、nullable、
-      値: "high"/"medium"/"low"）
-- [ ] マイグレーションスクリプトを `ReceiptDatabase.kt` に追加（`MIGRATION_25_26`）
-- [ ] `fallbackToDestructiveMigration()` はすでに削除済み（2026-07-12）。マイグレーション
+- [x] `receipt_items` テーブルに `ocrConfidence` カラム追加（String、nullable、
+      値: "high"/"medium"/"low"）2026-08-09実装
+- [x] マイグレーションスクリプトを `ReceiptDatabase.kt` に追加（`MIGRATION_25_26`）
+- [x] `fallbackToDestructiveMigration()` はすでに削除済み（2026-07-12）。マイグレーション
       書き忘れは起動時クラッシュになるため、追加時は必ずテストすること
+      （2026-08-09、既存データ入りの実機でv25→v26マイグレーションを実機確認済み。
+      クラッシュなく起動し既存データも保持）
 
 ### 判定ロジック（2026-08-07 方針確定：confidenceは主指標にしない）
-- [ ] 既存の小計・合計整合性チェック（検算バリデーション）をGemini結果に対しても実行し、
-      **これを唯一の強制ブロック条件とする**
-- [ ] `ocrConfidence`（Geminiの自己申告）は補助的な参考情報にとどめる。LLMの自己評価
+- [x] 既存の小計・合計整合性チェック（検算バリデーション、`ValidationUtils.validateSheet()`）
+      は、`OcrCaptureViewModel.saveData()` がML Kit時代と同じ`SheetData`
+      （subtotalGeneral/Gas/Agri・totalFromInput）を組み立てているため、**コード変更なしで
+      Gemini結果に対してもすでに機能している**（`SheetEditorScreen`の小計セクションで
+      不一致が赤表示される）。2026-08-09確認
+- [x] **重大な発見（2026-08-09）**：`SheetEditorScreen`/`SheetEditorViewModel`は実質的に
+      主導線ではなく、`Screen.OcrCapture`→`OcrCaptureScreen`経由の再OCR専用画面だった
+      （Phase1で発見済みの`CameraView`の件と同根の問題）。実際の主導線
+      （伝票データ→編集→月単位で保存）は`ReceiptInputScreen.kt`が独自に持つ
+      `ReceiptRowData`・`validateAllSheetsData()`・`saveMonthData()`という、
+      `ValidationUtils`/`ReceiptItem`とは別系統の実装だった。このため強制ブロックは
+      `SheetEditorScreen`ではなく`ReceiptInputScreen.kt`の「決定」ボタン
+      （`saveMonthData()`呼び出し前）に実装する必要があった
+- [x] `ReceiptInputScreen.kt`の「決定」ボタンに強制ブロックを実装。ブロック条件は
+      `hasUnresolvedMismatch()`：カテゴリ別小計または合計について、
+      **入力値（OCR/手入力）が0でない かつ 計算値と一致しない かつ 罫線補正
+      （`tryStripRuleDigit`、既存の「罫線が数字'1'に誤読される」既知パターンの補正）でも
+      説明が付かない**場合のみブロックする。入力値が0（＝小計行がそもそも検出/入力されて
+      いない状態）はブロック対象外とした。理由：SUBTOTAL行が印字されない伝票パターンが
+      実在すること（2026-08-08の実機検証で確認済み）と、未検出をブロックすると
+      「印字されていない数字を仕方なく捏造入力する」という悪い誘因を生むため。
+      既存の`hasUnclassified`（未分類行ブロック）チェックと同じ`return@Button`パターンで
+      実装し、ブロック時は`AlertDialog`で理由を表示する
+- [x] 上記を検算不一致の強制ブロック条件として実装完了（`OutputConfirmScreen`ではなく
+      `ReceiptInputScreen.kt`の月次保存操作＝実質的な唯一の確定操作をブロックする形で実現）
+- [x] `ocrConfidence`（Geminiの自己申告）は補助的な参考情報にとどめる。LLMの自己評価
       confidenceはキャリブレーションが悪いことが知られており、確定操作を強制ブロックする
-      根拠には使わない
-- [ ] 表示ルール：
-      - 検算不一致（金額） → 赤バッジ・`OutputConfirmScreen` での確定操作を
-        強制ブロック（青色申告データの整合性を優先）
-      - `ocrConfidence == "low"` → 黄バッジ・確認は推奨だがスキップ可能（あくまで参考表示）
-      - それ以外 → バッジなし
+      根拠には使わない（`ocrConfidence == "low"`は黄バッジ表示のみで確定はブロックしない
+      実装にした）
+- [x] 表示ルール：`ocrConfidence == "low"` → 黄バッジ・確認は推奨だがスキップ可能
+      （あくまで参考表示）を実装。「検算不一致→強制ブロック」は上記の通り実装・実機確認済み
+      （2026-08-09、意図的に小計不一致を作って「決定」ボタンがブロックされることを確認）
 
 ### UI変更
-- [ ] `SheetEditorScreen` の行リストにバッジ表示を追加
-- [ ] `ItemEditDialog` を開いた際、要確認理由（「小計と¥120差異」「読み取り不確実」等）を
-      一言添えて表示
-- [ ] 伝票内の要確認行のみを抽出する一覧・一括確認モードを追加（要確認0件なら
-      ワンタップで全体確定できるようにする）
+- [x] `SheetEditorScreen`（再OCR専用の副次画面）の行リストにバッジ表示を追加（`EditableRow`
+      左端の黄色ドット、`ocrConfidence == "low"`の行のみ）2026-08-09実装
+- [x] `ItemEditDialog` を開いた際、要確認理由を一言添えて表示（「⚠ 読み取り不確実（AIの
+      自己申告確信度: low）。内容をご確認ください。」）。「小計と¥120差異」のような
+      小計差異ベースの理由文言は、小計不一致がSheetData単位（伝票全体）であり
+      個別ReceiptItemに紐づく情報ではないため対象外とした
+- [x] **主導線`ReceiptInputScreen.kt`のデータグリッドにも同じバッジを追加**（上記の
+      「重大な発見」参照。こちらが実際にユーザーが使う画面）。`ReceiptRowData`に
+      `ocrConfidence`を追加し、`convertParsedRowsToRowData()`（OCR直後）・
+      `convertReceiptItemsToRows()`（DB再読込時）・`saveMonthData()`（保存時）の
+      3箇所で伝搬。`DataGrid`のヘッダー行・`DataRow`に16dp固定幅のバッジ列を追加
+      （左右で列がずれないよう、ヘッダー側にも同幅のスペーサーを追加）
+- [ ] 伝票内の要確認行のみを抽出する一覧・一括確認モードは未実装（要確認0件ならワンタップで
+      全体確定できるようにする機能）
 
 ---
 

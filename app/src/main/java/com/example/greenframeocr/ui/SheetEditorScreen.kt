@@ -477,6 +477,16 @@ private fun EditableRow(
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // 要確認バッジ（Geminiの自己申告confidenceが"low"の行のみ。強制ブロックはせず参考表示に留める）
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(
+                    color = if (item.ocrConfidence == "low") Color(0xFFFFC107) else Color.Transparent,
+                    shape = androidx.compose.foundation.shape.CircleShape
+                )
+        )
+        Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = ValidationUtils.formatDate(item.receiptMonth, item.receiptDay),
             modifier = Modifier.weight(1f),
@@ -658,6 +668,15 @@ private fun ItemEditDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // 要確認理由（Geminiの自己申告confidenceが低い行のみ。あくまで参考情報）
+                if (item.ocrConfidence == "low") {
+                    Text(
+                        text = "⚠ 読み取り不確実（AIの自己申告確信度: low）。内容をご確認ください。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+
                 // 日付
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

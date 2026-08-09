@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -489,6 +490,34 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "無料枠のAPIキーは入力画像・出力内容がGoogle側のモデル改善に" +
+                            "利用される場合があります。JA購買伝票には取引先情報が含まれるため、" +
+                            "Google Cloud Consoleで請求先アカウントを設定した「課金有効化キー」の" +
+                            "使用を推奨します（設定手順は開発ガイドライン参照）。",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
             OutlinedTextField(
                 value = geminiApiKey,
                 onValueChange = { geminiApiKey = it },

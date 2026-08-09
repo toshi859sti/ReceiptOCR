@@ -1,7 +1,7 @@
 # CURRENT_TASK.md
 
 ## 作業タイトル
-JA購買伝票OCRパイプライン Gemini Vision API移行（Phase 0・1・2完了、本番導線Gemini化済み）
+JA購買伝票OCRパイプライン Gemini Vision API移行（Phase 0・1・2完了、Phase4一部着手）
 
 ## 目的・背景
 詳細計画は `docs/TASK_gemini_ocr_migration.md` を参照。ML Kit日本語モデルの精度が
@@ -47,9 +47,30 @@ JA購買伝票OCRパイプライン Gemini Vision API移行（Phase 0・1・2完
 - [x] `OcrCaptureViewModel`・`ReceiptInputScreen.kt`の`CameraView`をGemini呼び出しに置き換え
 - [x] カテゴリ仮判定ロジック（`assignJaSheetCategories()`、ML Kit版と同じ簡易方式）
 - [x] 実機の本番導線で複数枚撮影・動作確認（日付・商品名・金額・小計・合計すべて正常）
-- [ ] `SettingsScreen`への課金有効化キー推奨の注意文言追加（未着手）
-- [ ] `docs/development-guidelines.md`へのGoogle Cloud Console設定手順追記（未着手）
-- [ ] API失敗時の専用エラーUI・再試行ボタン（現状はToast/errorMessageの簡易表示のみ）
+- [x] `SettingsScreen`への課金有効化キー推奨の注意文言追加
+- [x] `docs/development-guidelines.md`へのGoogle Cloud Console設定手順追記
+- [x] API失敗時の専用エラーUI・再試行ボタン
+
+### Phase 4：検算バリデーション・confidence表示（一部着手）
+- [x] `receipt_items` に `ocrConfidence` カラム追加（`MIGRATION_25_26`、v25→v26）
+- [x] `OcrCaptureViewModel.ParsedRow`・`saveData()` でGeminiの`confidence`を
+      `ReceiptItem.ocrConfidence`に保存
+- [x] 既存の`ValidationUtils.validateSheet()`（小計整合性検算）がGemini結果にも
+      コード変更なしで機能することを確認（`SheetEditorScreen`で不一致を赤表示）
+- [x] `SheetEditorScreen`（再OCR専用の副次画面）の行リストに要確認バッジを追加
+- [x] `ItemEditDialog`に要確認理由の一言表示を追加
+- [x] **重大な発見**：`SheetEditorScreen`は主導線ではなく、実際の主導線
+      `ReceiptInputScreen.kt`は独自の`ReceiptRowData`/`validateAllSheetsData()`/
+      `saveMonthData()`という別系統の実装だった。バッジ表示・検算ブロックとも
+      こちらにも実装が必要と判明し、追加実装した
+- [x] `ReceiptInputScreen.kt`のデータグリッドにも要確認バッジを追加（`ocrConfidence`を
+      `ReceiptRowData`に追加し、OCR直後・DB再読込時・保存時の3箇所で伝搬）
+- [x] `ReceiptInputScreen.kt`の「決定」ボタンに検算不一致の強制ブロックを実装
+      （`hasUnresolvedMismatch()`。入力値が0＝未検出の場合と、罫線誤読の既知パターンで
+      説明が付く場合はブロック対象外）
+- [x] **実機動作確認済み**（2026-08-09）：検算不一致ブロック・DBマイグレーション
+      （既存データ入り端末での無停止起動）・バッジ列レイアウトを確認
+- [ ] 伝票内の要確認行のみを抽出する一覧・一括確認モード（未実装）
 
 ## 完了条件
 - Gemini Vision APIでJA伝票の実サンプルを読み取り、精度がML Kit＋補正ロジックと
@@ -167,21 +188,97 @@ JA購買伝票OCRパイプライン Gemini Vision API移行（Phase 0・1・2完
     プロンプトに「合計行は必ず存在する」という誤った前提を書いてしまい、ユーザー指摘で
     訂正（複数ページ伝票では2ページ目以降に合計行自体が存在しないため）
   - 詳細は `docs/TASK_gemini_ocr_migration.md` Phase1・Phase2セクション参照
+- 2026-08-09（続き4）：Phase2残タスクのうち2点を完了。`SettingsScreen`のGemini APIキー欄に
+  課金有効化キー推奨の注意カード（`tertiaryContainer`・`Warning`アイコン、
+  `TransformPreviewScreen`と同じ意匠）を追加。`docs/development-guidelines.md`に
+  「Gemini API キー設定手順（課金有効化キー）」節を新設し、プロジェクト作成〜請求先アカウント
+  作成〜課金アップグレード〜予算アラート設定〜APIキー発行の手順と、実測料金目安
+  （`gemini-3.6-flash`約¥5〜6/枚・`gemini-3.5-flash-lite`約¥0.6/枚）を記載。
+  `./gradlew compileDebugKotlin`でコンパイル確認済み。
+- 2026-08-09（続き5）：Phase2最後の残タスク「API失敗時の専用エラーUI・再試行ボタン」を実装し、
+  **Phase2完全完了**。`OcrCaptureViewModel.CaptureStep`に`Error(message, detectionResult)`を
+  新設し、透視変換失敗・Gemini API例外（`GeminiRateLimitException`等の既存の日本語メッセージを
+  そのまま活用）の両方をこのステップに集約。`OcrCaptureScreen.kt`に共有の`OcrErrorScreen`
+  composable（errorContainerカード＋「再試行（同じ画像で送信）」「撮り直す」「キャンセル」の
+  3ボタン）を新設し、`OcrCaptureScreen`本体と本番導線`ReceiptInputScreen.kt`の`CameraView`
+  両方から利用する形に統一。従来`CameraView`はToastで一瞬表示して素通りするだけで、失敗時は
+  常に撮り直しを強制していたが、「再試行」ボタンで撮影済み画像を破棄せず同じ画像のまま
+  再送信できるようにした（ネットワーク瞬断など一過性エラーでの撮り直しストレスを軽減）。
+  未使用になった`Toast`importと`context`変数を削除。`./gradlew compileDebugKotlin`で
+  コンパイル確認済み（実機での失敗パターン再現確認は未実施）。
+- 2026-08-09（続き6）：Phase4に一部着手（DBスキーマ・データフロー・基本UI表示のみ）。
+  `ReceiptItem`に`ocrConfidence: String?`を追加し、`ReceiptDatabase.kt`に
+  `MIGRATION_25_26`（`ALTER TABLE receipt_items ADD COLUMN ocrConfidence TEXT`、v25→v26）
+  を実装。`OcrCaptureViewModel.ParsedRow`にconfidenceを追加し、`mapGeminiResultToParsedRows()`
+  ・`saveData()`でGeminiの`JaSheetRow.confidence`を`ReceiptItem.ocrConfidence`まで
+  伝搬させた。**重要な発見**：既存の`ValidationUtils.validateSheet()`（小計・合計整合性の
+  検算バリデーション）は`SheetData`と`ReceiptItem`の`category`/`amount`のみを見る設計のため、
+  `OcrCaptureViewModel.saveData()`がML Kit時代と同じ形で`SheetData`を組み立てている以上、
+  **コード変更なしですでにGemini結果に対しても機能している**（`SheetEditorScreen`の
+  小計セクションで不一致が赤表示される）ことを確認した。UI側は`SheetEditorScreen.kt`の
+  `EditableRow`に要確認バッジ（`ocrConfidence=="low"`の行に黄色ドット）、`ItemEditDialog`に
+  要確認理由の一言表示を追加。`./gradlew compileDebugKotlin`でコンパイル確認済み
+  （実機でのマイグレーション動作確認・バッジ表示確認は未実施）。
+  **今回は着手しなかったもの**：①検算不一致時に`OutputConfirmScreen`での確定操作を
+  強制ブロックする仕組み（一般レシート含む共有画面への変更で影響範囲が広く、設計判断が
+  必要なため見送った）、②伝票内の要確認行のみを抽出する一覧・一括確認モード。
+  詳細は`docs/TASK_gemini_ocr_migration.md`Phase4セクション参照。
+- 2026-08-09（続き7）：ユーザーから「不完全な伝票は保存すべきでない」という強い方針指摘を
+  受け、強制ブロックの設計・実装を進める過程で**重大な発見**：`SheetEditorScreen`は
+  Phase1で発見済みの`CameraView`の件と同根で、実は主導線ではなかった。実際にユーザーが
+  使う編集・保存画面は`ReceiptInputScreen.kt`が独自に持つ月単位の`ReceiptRowData`グリッド
+  ＋`validateAllSheetsData()`＋`saveMonthData()`で、`ValidationUtils`/`ReceiptItem`とは
+  完全に別系統の実装だった。このため（続き6）で`SheetEditorScreen`に入れたバッジ表示は
+  副次的な再OCR画面にしか効いておらず、`OcrCaptureViewModel.saveData()`に入れた
+  `ocrConfidence`保存処理も主導線では一度も呼ばれていないことが判明。
+  `ReceiptInputScreen.kt`側に同じ内容を実装し直した：
+  - `ReceiptRowData`に`ocrConfidence`を追加し、`convertParsedRowsToRowData()`
+    （OCR直後）・`convertReceiptItemsToRows()`（DB再読込時）・`saveMonthData()`
+    （保存時）の3箇所で伝搬
+  - `DataGrid`のヘッダー行・`DataRow`に16dp固定幅の要確認バッジ列を追加
+    （左右で列がずれないよう、ヘッダー側にも同幅のスペーサーを追加）
+  - 検算不一致の強制ブロックを「決定」ボタンに実装。`hasUnresolvedMismatch()`で、
+    カテゴリ別小計・合計それぞれについて「入力値が0でない（＝検出/入力済み）」かつ
+    「計算値と一致しない」かつ「罫線誤読の既知パターン（`tryStripRuleDigit`、罫線が
+    数字'1'に誤読される既知の補正）でも説明が付かない」場合のみブロックする設計にした。
+    入力値0（小計行未検出）を除外したのは、SUBTOTAL行が印字されない伝票パターンが
+    実在すること（2026-08-08実機検証で確認済み）と、未検出を機械的にブロックすると
+    「印字されていない数字を仕方なく捏造入力する」という悪い誘因を生むため
+  - 既存の`hasUnclassified`（未分類行ブロック）と同じ`return@Button`パターンで実装し、
+    ブロック時は専用の`AlertDialog`を表示
+  - `./gradlew compileDebugKotlin`でコンパイル確認済み（実機でのブロック動作確認は未実施）
 
 ### 未完了・中断した理由
-Phase0・1・2は実機確認まで完了し、本番導線がGemini化された。Phase2の残タスク（設定画面の
-注意文言・development-guidelines.mdへの手順追記・専用エラーUI）と、Phase4（confidence表示・
-DBマイグレーションv25→v26）はまだ未着手。
+Phase0・1・2は実機確認まで完了し、本番導線がGemini化された。**Phase2は全タスク完了**。
+Phase4はDBスキーマ・confidenceデータフロー・UI表示（バッジ）・検算不一致の強制ブロックまで
+完了（主導線`ReceiptInputScreen.kt`に実装済み）。一括確認モードのみ未着手
+（詳細は上記「今回完了したこと」参照）。
 
 ### 次回セッションで最初にやること
-1. しばらく実機で複数枚・複数パターン（返品行・SUBTOTALなし伝票・複雑な商品名等）を撮影し、
+1. `OcrErrorScreen`（再試行・撮り直すボタン）をGemini API呼び出し失敗パターン
+   （APIキー空・機内モード等）で実機動作確認する（今回はまだ未実施）
+2. しばらく実機で複数枚・複数パターン（返品行・SUBTOTALなし伝票・複雑な商品名等）を撮影し、
    本番導線でのGemini結果の安定性を継続確認する（今回確認できたのは数枚のみ）
-2. Phase2残タスク：`SettingsScreen`への課金有効化キー推奨の注意文言、
-   `docs/development-guidelines.md`へのGoogle Cloud Console設定手順追記
-3. Phase4着手：`ocrConfidence`カラム追加（DBマイグレーションv25→v26）、確認画面へのバッジ表示、
-   検算バリデーション（小計整合性）をGemini結果に対しても実行する仕組み
-4. `dateColumnAligned=false`（再アラインメントでも救済できない場合）の伝票をどう扱うか
+3. `dateColumnAligned=false`（再アラインメントでも救済できない場合）の伝票をどう扱うか
    （現状は全体画像コールの値をそのまま使うだけで、UI上の警告表示は未実装）
+4. Phase4残タスク：伝票内の要確認行のみを抽出する一覧・一括確認モード
+
+### 2026-08-09（続き8）：実機で検算不一致ブロックを動作確認（完了）
+`ReceiptInputScreen.kt`（`令和8年1月`・テスト用に伝票追加→クリア後に破棄、実データへの影響なし）で
+「あああ／500円」（NORMAL・一般購買）＋「小計（一般購買）／1,000円」（SUBTOTAL）という
+意図的な不一致データを直接入力モードで作成し、「決定」ボタンをタップ。
+**「小計・合計が一致していません」ダイアログが正しく表示されブロックされることを確認**。
+同時に「合計」欄も入力値0（未入力）で不一致表示になっていたが、`hasUnresolvedMismatch()`の
+設計通りこちらはブロック理由に含まれず、「一般購買」小計の不一致のみが理由でブロックされる
+ことも確認できた（＝未検出値をブロック対象外とする線引きが意図通り機能）。
+「キャンセル」でテストデータを保存せず破棄し、0/0伝票の状態に復元。
+DBマイグレーション（v25→v26、既存データ入り端末で無停止起動）・バッジ列のレイアウト
+（ヘッダー/データ行のズレなし）も合わせて実機確認済み。
+adb操作の実務メモ：Git Bash環境では`adb pull`等のパス引数が`/sdcard/...`のまま
+MSYS側のパス変換に巻き込まれるため`MSYS_NO_PATHCONV=1`を付けること。
+Compose画面の要素タップ座標は`adb shell uiautomator dump`の`bounds`から機械的に
+算出する方が、スクリーンショット画像上の目視換算より大幅に正確（今回何度か目視換算で
+ミスタップした）。
 
 ### 新たに発覚した問題・制約
 - Gemini API課金有効化の実務手順が複雑だった（請求先アカウント新規作成・プロジェクトの
@@ -197,10 +294,17 @@ DBマイグレーションv25→v26）はまだ未着手。
   日本語コメントを含むスクリプトで構文エラーになる。検証用スクリプトを書く際はBOM付きUTF-8で
   保存すること
 - `adb`は初回接続時に端末側でUSBデバッグ許可のダイアログ確認が必要（「unauthorized」状態になる）
-- **`OcrCaptureScreen`/`OcrCaptureViewModel`は実質的に主動線ではない**（`SheetEditorScreen`の
-  「再OCR」ボタンからのみ到達）。実際にユーザーが使う撮影導線は`ReceiptInputScreen.kt`内の
-  独自`CameraView`実装。今後この画面のOCR呼び出し部分に手を入れる際は、両方の経路を
-  意識すること（Phase2以降のGemini呼び出し組み込みでも同様の見落としに注意）
+- **`OcrCaptureScreen`/`OcrCaptureViewModel`・`SheetEditorScreen`/`SheetEditorViewModel`は
+  実質的に主動線ではない**（`SheetEditorScreen`の「再OCR」ボタンからのみ到達する副次画面の
+  組）。実際にユーザーが撮影・編集・保存に使う画面は`ReceiptInputScreen.kt`単体で、撮影用の
+  独自`CameraView`実装に加えて、編集・検証・保存もすべて独自の`ReceiptRowData`/
+  `validateAllSheetsData()`/`saveMonthData()`で完結しており、`ValidationUtils`・
+  `SheetEditorViewModel`とは別系統。2026-08-09、Phase4のバッジ表示・検算ブロックを
+  `SheetEditorScreen`側に実装してから「主導線に効いていない」と気づき、
+  `ReceiptInputScreen.kt`側に実装し直す手戻りが発生した。**今後この2画面のどちらかに
+  手を入れる際は、必ずもう一方（`ReceiptInputScreen.kt`が主・`SheetEditorScreen`が副）
+  にも同じ変更が要るか確認すること**（Phase1のカメラ確認フロー・Phase2のGemini呼び出し
+  組み込み・Phase4のconfidence表示/検算ブロックと、これで3回連続で同じ見落としをしている）
 - Compose環境で「Aの状態をnullにしてBの分岐に戻す」系の実装は、B側に副作用のある
   `LaunchedEffect`（今回は`cameraViewModel.resetToPreview()`）があると意図せず再実行されて
   ちらつき等の不具合を生みやすい。状態分岐の優先順位（今回は`isProcessingOcr`を最優先に）に

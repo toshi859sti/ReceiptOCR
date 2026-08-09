@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -63,6 +64,15 @@ fun OcrCaptureScreen(
         }
         is OcrCaptureViewModel.CaptureStep.Processing -> {
             ProcessingScreen(message = "OCR処理中...")
+        }
+        is OcrCaptureViewModel.CaptureStep.Error -> {
+            val step = currentStep as OcrCaptureViewModel.CaptureStep.Error
+            OcrErrorScreen(
+                message = step.message,
+                onRetry = { viewModel.processDetectionResult(step.detectionResult) },
+                onRetake = { viewModel.retryFromPreview() },
+                onCancel = onBack
+            )
         }
         is OcrCaptureViewModel.CaptureStep.Complete -> {
             CompleteScreen(
@@ -213,6 +223,81 @@ private fun ProcessingScreen(
             CircularProgressIndicator(modifier = Modifier.size(64.dp))
             Spacer(modifier = Modifier.height(16.dp))
             Text(text = message, fontSize = 18.sp)
+        }
+    }
+}
+
+// ============================================================
+// OCR失敗画面（Gemini API失敗時の専用エラーUI）
+// ============================================================
+
+/**
+ * OCR処理（Gemini API呼び出し）が失敗した際に表示する専用エラー画面。
+ * 撮影済みの画像を破棄せずに保持し、「再試行」で同じ画像のまま再送信できる。
+ * ネットワーク瞬断など一過性のエラーで撮り直しを強制されるストレスを避けるため。
+ */
+@Composable
+fun OcrErrorScreen(
+    message: String,
+    onRetry: () -> Unit,
+    onRetake: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = Icons.Default.Warning,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(48.dp)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "OCR処理に失敗しました",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer
+            )
+        ) {
+            Text(
+                text = message,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.padding(16.dp)
+            )
+        }
+        Button(
+            onClick = onRetry,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+        ) {
+            Icon(Icons.Default.Refresh, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("再試行（同じ画像で送信）", fontSize = 16.sp)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        OutlinedButton(
+            onClick = onRetake,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("撮り直す")
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = onCancel) {
+            Text("キャンセル")
         }
     }
 }

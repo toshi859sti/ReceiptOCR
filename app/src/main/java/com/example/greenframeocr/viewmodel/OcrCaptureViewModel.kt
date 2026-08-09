@@ -50,7 +50,8 @@ class OcrCaptureViewModel(
         val isAmountValid: Boolean,
         val category: String = Category.UNCLASSIFIED,
         val isSubtotal: Boolean = false,
-        val isMonthlyTotal: Boolean = false
+        val isMonthlyTotal: Boolean = false,
+        val confidence: String? = null  // Geminiの自己申告確信度（"high"/"medium"/"low"）。ML Kit経由はnull
     )
 
     // -------------------------------------------------------------------
@@ -62,6 +63,7 @@ class OcrCaptureViewModel(
         object Capturing  : CaptureStep()
         data class Preview(val detectionResult: GreenFrameDetector.DetectionResult) : CaptureStep()
         object Processing : CaptureStep()
+        data class Error(val message: String, val detectionResult: GreenFrameDetector.DetectionResult) : CaptureStep()
         data class Complete(val rows: List<ParsedRow>) : CaptureStep()
     }
 
@@ -127,8 +129,7 @@ class OcrCaptureViewModel(
             try {
                 val dewarpedBitmap = result.dewarpedBitmap
                 if (dewarpedBitmap == null) {
-                    _errorMessage.value = "透視変換に失敗しました: ${result.errorMessage}"
-                    _currentStep.value = CaptureStep.Initial
+                    _currentStep.value = CaptureStep.Error("透視変換に失敗しました: ${result.errorMessage}", result)
                     return@launch
                 }
 
@@ -146,8 +147,7 @@ class OcrCaptureViewModel(
 
             } catch (e: Exception) {
                 Log.e(TAG, "OCR処理エラー", e)
-                _errorMessage.value = e.message ?: "OCR処理エラー"
-                _currentStep.value = CaptureStep.Initial
+                _currentStep.value = CaptureStep.Error(e.message ?: "OCR処理エラー", result)
             }
         }
     }
@@ -195,7 +195,8 @@ class OcrCaptureViewModel(
                         productName  = row.productName ?: "",
                         amount       = amount,
                         category     = row.category,
-                        isOcrOverwriteTarget = false
+                        isOcrOverwriteTarget = false,
+                        ocrConfidence = row.confidence
                     )
                 )
             }
@@ -292,7 +293,8 @@ class OcrCaptureViewModel(
                     isAmountValid = amount != null,
                     category      = category,
                     isSubtotal    = isSubtotal,
-                    isMonthlyTotal = isMonthlyTotal
+                    isMonthlyTotal = isMonthlyTotal,
+                    confidence    = row.confidence
                 )
             }
         }

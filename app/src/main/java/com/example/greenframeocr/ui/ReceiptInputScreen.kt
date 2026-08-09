@@ -1,7 +1,6 @@
 package com.example.greenframeocr.ui
 
 import android.util.Log
-import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -87,6 +86,7 @@ fun ReceiptInputScreen(
     var halfWidthOddRows by remember { mutableStateOf<List<String>>(emptyList()) }
     var ocrDuplicateSubtotalCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showUnclassifiedBlockDialog by remember { mutableStateOf(false) }
+    var showValidationMismatchDialog by remember { mutableStateOf(false) }
 
     // カメラ表示状態
     var showCamera by remember { mutableStateOf(false) }
@@ -171,6 +171,25 @@ fun ReceiptInputScreen(
             text = { Text("カテゴリが「未分類」の行が残っています。\n各行のカテゴリを確認・修正してから決定してください。") },
             confirmButton = {
                 TextButton(onClick = { showUnclassifiedBlockDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    if (showValidationMismatchDialog) {
+        AlertDialog(
+            onDismissRequest = { showValidationMismatchDialog = false },
+            title = { Text("小計・合計が一致していません") },
+            text = {
+                Text(
+                    "入力された小計・合計の金額が、明細行の合計と一致していません。\n" +
+                        "画面下の「小計・合計の検証」で赤字表示になっている項目を確認・修正してから" +
+                        "決定してください。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showValidationMismatchDialog = false }) {
                     Text("OK")
                 }
             }
@@ -867,6 +886,10 @@ fun ReceiptInputScreen(
                                     showUnclassifiedBlockDialog = true
                                     return@Button
                                 }
+                                if (hasUnresolvedMismatch(validateAllSheetsData(allSheetsData))) {
+                                    showValidationMismatchDialog = true
+                                    return@Button
+                                }
                                 scope.launch {
                                     saveMonthData(
                                         database = database,
@@ -1139,6 +1162,9 @@ private fun InputModeToggle(
     }
 }
 
+/** 要確認バッジ列の固定幅（ヘッダー・データ行で揃える） */
+private val BADGE_COLUMN_WIDTH = 16.dp
+
 /**
  * データグリッド（動的列幅版）
  */
@@ -1168,17 +1194,19 @@ private fun DataGrid(
             .fillMaxWidth()
             .border(1.dp, MaterialTheme.colorScheme.outline)
     ) {
-        // ヘッダー行
+        // ヘッダー行（先頭に要確認バッジ列と幅を揃えるための固定スペーサー）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .padding(vertical = 8.dp)
-                .horizontalScroll(scrollState)
         ) {
-            GridHeaderCell("取引日", dateWidth, fontSize)
-            GridHeaderCell("商品名", productNameWidth, fontSize)
-            GridHeaderCell("税込金額", amountWidth, fontSize)
+            Spacer(modifier = Modifier.width(BADGE_COLUMN_WIDTH))
+            Row(modifier = Modifier.horizontalScroll(scrollState)) {
+                GridHeaderCell("取引日", dateWidth, fontSize)
+                GridHeaderCell("商品名", productNameWidth, fontSize)
+                GridHeaderCell("税込金額", amountWidth, fontSize)
+            }
         }
 
         Divider()
@@ -1324,50 +1352,70 @@ private fun DataRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(rowBackgroundColor)
-            .padding(vertical = 8.dp)
-            .horizontalScroll(scrollState),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        GridDataCell(
-            text = row.date,
-            width = dateWidth,
-            fontSize = fontSize,
-            textAlign = TextAlign.Center,
-            isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !isAfterSubtotal,
-            backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.DATE))
-                selectedCellColor else Color.Transparent,
-            onClick = { onCellClick(CellType.DATE) },
-            onLongClick = onRowClick
-        )
+        // 要確認バッジ（Geminiの自己申告confidenceが"low"の行のみ。強制ブロックはせず参考表示に留める）
+        Box(
+            modifier = Modifier
+                .width(BADGE_COLUMN_WIDTH),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(
+                        color = if (row.ocrConfidence == "low") Color(0xFFFFC107) else Color.Transparent,
+                        shape = androidx.compose.foundation.shape.CircleShape
+                    )
+            )
+        }
 
-        GridDataCell(
-            text = when {
-                row.isTotalRow -> "■　${row.productName}" // 合計行
-                row.isSubtotal && row.subtotalCategory != null -> "＊　小計（　${row.subtotalCategory.displayName}　　　　　）"
-                row.isSubtotal -> "[小計] ${row.productName}"
-                else -> row.productName
-            },
-            width = productNameWidth,
-            fontSize = fontSize,
-            textAlign = TextAlign.Start,
-            isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !row.isTotalRow && !isAfterSubtotal,
-            backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.PRODUCT_NAME))
-                selectedCellColor else Color.Transparent,
-            onClick = { onCellClick(CellType.PRODUCT_NAME) },
-            onLongClick = onRowClick
-        )
+        Row(
+            modifier = Modifier.horizontalScroll(scrollState),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GridDataCell(
+                text = row.date,
+                width = dateWidth,
+                fontSize = fontSize,
+                textAlign = TextAlign.Center,
+                isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !isAfterSubtotal,
+                backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.DATE))
+                    selectedCellColor else Color.Transparent,
+                onClick = { onCellClick(CellType.DATE) },
+                onLongClick = onRowClick
+            )
 
-        GridDataCell(
-            text = if (row.amount != 0) "%,d".format(row.amount) else "",
-            width = amountWidth,
-            fontSize = fontSize,
-            textAlign = TextAlign.End,
-            isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !isAfterSubtotal,
-            backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.AMOUNT))
-                selectedCellColor else Color.Transparent,
-            onClick = { onCellClick(CellType.AMOUNT) },
-            onLongClick = { if (!row.isTotalRow) onRowClick() }
-        )
+            GridDataCell(
+                text = when {
+                    row.isTotalRow -> "■　${row.productName}" // 合計行
+                    row.isSubtotal && row.subtotalCategory != null -> "＊　小計（　${row.subtotalCategory.displayName}　　　　　）"
+                    row.isSubtotal -> "[小計] ${row.productName}"
+                    else -> row.productName
+                },
+                width = productNameWidth,
+                fontSize = fontSize,
+                textAlign = TextAlign.Start,
+                isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !row.isTotalRow && !isAfterSubtotal,
+                backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.PRODUCT_NAME))
+                    selectedCellColor else Color.Transparent,
+                onClick = { onCellClick(CellType.PRODUCT_NAME) },
+                onLongClick = onRowClick
+            )
+
+            GridDataCell(
+                text = if (row.amount != 0) "%,d".format(row.amount) else "",
+                width = amountWidth,
+                fontSize = fontSize,
+                textAlign = TextAlign.End,
+                isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !isAfterSubtotal,
+                backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.AMOUNT))
+                    selectedCellColor else Color.Transparent,
+                onClick = { onCellClick(CellType.AMOUNT) },
+                onLongClick = { if (!row.isTotalRow) onRowClick() }
+            )
+        }
     }
 }
 
@@ -1433,12 +1481,15 @@ private fun CameraView(
     onOcrComplete: (List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>) -> Unit,
     onCancel: () -> Unit
 ) {
-    val context = LocalContext.current
     val ocrScope = rememberCoroutineScope()
     var isProcessingOcr by remember { mutableStateOf(false) }
     // isValidShape() がNGだった撮影結果。nullでない間はTransformPreviewScreenを表示する
     var previewDetectionResult by remember {
         mutableStateOf<com.example.greenframeocr.util.GreenFrameDetector.DetectionResult?>(null)
+    }
+    // OCR（Gemini API呼び出し）失敗時のエラーメッセージと、再試行用に保持する撮影済み画像
+    var ocrError by remember {
+        mutableStateOf<Pair<String, com.example.greenframeocr.util.GreenFrameDetector.DetectionResult>?>(null)
     }
 
     fun runOcr(detectionResult: com.example.greenframeocr.util.GreenFrameDetector.DetectionResult) {
@@ -1456,7 +1507,7 @@ private fun CameraView(
                 } else emptyList()
                 onOcrComplete(parsed)
             } catch (e: Exception) {
-                Toast.makeText(context, e.message ?: "OCR処理エラー", Toast.LENGTH_LONG).show()
+                ocrError = (e.message ?: "OCR処理エラー") to detectionResult
             } finally {
                 isProcessingOcr = false
             }
@@ -1480,6 +1531,18 @@ private fun CameraView(
                         Text("OCR処理中...")
                     }
                 }
+            }
+            ocrError != null -> {
+                val (message, failedResult) = ocrError!!
+                OcrErrorScreen(
+                    message = message,
+                    onRetry = {
+                        ocrError = null
+                        runOcr(failedResult)
+                    },
+                    onRetake = { ocrError = null },
+                    onCancel = onCancel
+                )
             }
             preview != null -> {
                 TransformPreviewScreen(
@@ -1576,7 +1639,8 @@ data class ReceiptRowData(
     val category: String = "未分類",  // データベースから読み込まれたカテゴリ
     // V3: 学習登録用
     val originalOcrName: String? = null,  // OCR取得時の原本（編集不可）
-    val productMasterId: Long? = null     // 商品マスタID（確定時）
+    val productMasterId: Long? = null,    // 商品マスタID（確定時）
+    val ocrConfidence: String? = null     // Gemini自己申告の確信度（"high"/"medium"/"low"）
 )
 
 enum class CellType {
@@ -1664,6 +1728,29 @@ private fun tryStripRuleDigit(entered: Int, calculated: Int): Int? {
         }
     }
     return null
+}
+
+/**
+ * 小計・合計に「解消されていない」不一致があるかを判定する。
+ * OCRが値を読み取れず入力値が0のまま（=未検出）の場合は対象外とする
+ * （紙面に本当に印字されていない場合と区別できないため、機械的なブロックは避ける）。
+ * `tryStripRuleDigit` で説明が付く「罫線補正で一致」ケースも、画面表示上は許容扱い
+ * （オレンジ表示）にしているため、ここでも不一致とはみなさない。
+ * 未分類カテゴリ（小計行自体が存在しない）は`hasUnclassified`側の別チェックで扱う。
+ */
+private fun hasUnresolvedMismatch(validationResult: ValidationResult): Boolean {
+    val categoryMismatch = validationResult.categoryBreakdowns.any { category ->
+        category.categoryName != "未分類" &&
+            category.enteredSubtotal != 0 &&
+            !category.isValid &&
+            tryStripRuleDigit(category.enteredSubtotal, category.calculatedSubtotal) == null
+    }
+    val totalMismatch = validationResult.totalBreakdown?.let { total ->
+        total.enteredTotal != 0 &&
+            !total.isValid &&
+            tryStripRuleDigit(total.enteredTotal, total.calculatedTotal) == null
+    } ?: false
+    return categoryMismatch || totalMismatch
 }
 
 private fun validateAllSheetsData(allSheetsData: Map<Int, List<ReceiptRowData>>): ValidationResult {
@@ -2158,7 +2245,8 @@ private fun convertParsedRowsToRowData(
                 selectedCells = emptySet(),
                 category = categoryStr,
                 subtotalCategory = subtotalCat,
-                originalOcrName = if (productName.isNotBlank()) productName else null
+                originalOcrName = if (productName.isNotBlank()) productName else null,
+                ocrConfidence = row.confidence
             )
         )
 
@@ -2274,7 +2362,8 @@ private fun convertReceiptItemsToRows(items: List<com.example.greenframeocr.data
                 isTotalRow = false,
                 selectedCells = emptySet(),
                 category = item.category,  // データベースのカテゴリをコピー
-                subtotalCategory = subtotalCategory  // 小計行の場合はSubtotalCategoryも設定
+                subtotalCategory = subtotalCategory,  // 小計行の場合はSubtotalCategoryも設定
+                ocrConfidence = item.ocrConfidence
             )
         } else {
             ReceiptRowData(
@@ -2371,7 +2460,8 @@ private suspend fun saveMonthData(
                         productName = productName,
                         amount = row.amount,
                         category = row.category,  // 既存のカテゴリを保持（新規は「未分類」）
-                        isOcrOverwriteTarget = false
+                        isOcrOverwriteTarget = false,
+                        ocrConfidence = row.ocrConfidence
                     )
                 }
 
