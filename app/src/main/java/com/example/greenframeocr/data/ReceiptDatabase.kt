@@ -28,7 +28,7 @@ import com.example.greenframeocr.util.toCanonicalKey
         GeneralReceiptItem::class,
         InvoiceStore::class
     ],
-    version = 26,
+    version = 27,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -754,6 +754,41 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 26 → 27（receipt_items に productMasterId 追加、
+        // canonicalKey での過去データバックフィル。MIGRATION_16_17 と同じカーソル走査パターン）
+        private val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE receipt_items ADD COLUMN productMasterId INTEGER"
+                )
+
+                // canonicalKey → id のマップを構築
+                val keyToId = mutableMapOf<String, Long>()
+                val pmCursor = database.query("SELECT id, canonicalKey FROM product_master WHERE canonicalKey != ''")
+                while (pmCursor.moveToNext()) {
+                    keyToId[pmCursor.getString(1)] = pmCursor.getLong(0)
+                }
+                pmCursor.close()
+
+                // receipt_items を走査し、小計・合計行以外を toCanonicalKey() でマッチングして
+                // productMasterId をバックフィル
+                val riCursor = database.query("SELECT id, productName FROM receipt_items")
+                while (riCursor.moveToNext()) {
+                    val id = riCursor.getLong(0)
+                    val name = riCursor.getString(1)
+                    if (name.startsWith("[小計]") || name == "合計") continue
+                    val matchedId = keyToId[toCanonicalKey(name)]
+                    if (matchedId != null) {
+                        database.execSQL(
+                            "UPDATE receipt_items SET productMasterId = ? WHERE id = ?",
+                            arrayOf(matchedId, id)
+                        )
+                    }
+                }
+                riCursor.close()
+            }
+        }
+
         // マイグレーション: version 25 → 26（Gemini OCR確信度カラム追加）
         private val MIGRATION_25_26 = object : Migration(25, 26) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -1024,7 +1059,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
                     .build()
                 INSTANCE = instance
                 instance

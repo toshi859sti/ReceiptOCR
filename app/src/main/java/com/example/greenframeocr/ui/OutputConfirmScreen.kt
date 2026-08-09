@@ -800,7 +800,11 @@ private suspend fun loadPurchaseOutputItems(
         sortedItems
             .filter { !it.productName.contains("小計") && !it.productName.contains("合計") }
             .map { item ->
-                val productMaster = productMasterDao.getByName(item.productName)
+                // productMasterId（FK）を最優先で使う。表記ゆれ（全角/半角スペース等）による
+                // 完全一致ミスで勘定科目/摘要が空欄になるのを避けるため。未紐づけの過去データ
+                // のみ、従来の文字列完全一致にフォールバックする。
+                val productMaster = item.productMasterId?.let { productMasterDao.getById(it) }
+                    ?: productMasterDao.getByName(item.productName)
                     ?: ocrVariantDao.getByText(item.productName)
                         ?.let { variant -> productMasterDao.getById(variant.productId) }
 

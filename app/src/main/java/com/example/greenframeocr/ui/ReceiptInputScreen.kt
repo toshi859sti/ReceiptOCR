@@ -294,10 +294,12 @@ fun ReceiptInputScreen(
                             val newDate = if (row.selectedCells.contains(CellType.DATE)) ocrRow.date else row.date
                             val newProductName = if (row.selectedCells.contains(CellType.PRODUCT_NAME)) ocrRow.productName else row.productName
                             val newAmount = if (row.selectedCells.contains(CellType.AMOUNT)) ocrRow.amount else row.amount
+                            val newProductMasterId = if (row.selectedCells.contains(CellType.PRODUCT_NAME)) ocrRow.productMasterId else row.productMasterId
                             row.copy(
                                 date = newDate,
                                 productName = newProductName,
                                 amount = newAmount,
+                                productMasterId = newProductMasterId,
                                 selectedCells = emptySet()
                             )
                         } else {
@@ -2276,7 +2278,8 @@ private fun convertParsedRowsToRowData(
                 category = categoryStr,
                 subtotalCategory = subtotalCat,
                 originalOcrName = if (productName.isNotBlank()) productName else null,
-                ocrConfidence = row.confidence
+                ocrConfidence = row.confidence,
+                productMasterId = row.productMasterId
             )
         )
 
@@ -2393,7 +2396,8 @@ private fun convertReceiptItemsToRows(items: List<com.example.greenframeocr.data
                 selectedCells = emptySet(),
                 category = item.category,  // データベースのカテゴリをコピー
                 subtotalCategory = subtotalCategory,  // 小計行の場合はSubtotalCategoryも設定
-                ocrConfidence = item.ocrConfidence
+                ocrConfidence = item.ocrConfidence,
+                productMasterId = item.productMasterId
             )
         } else {
             ReceiptRowData(
@@ -2491,7 +2495,8 @@ private suspend fun saveMonthData(
                         amount = row.amount,
                         category = row.category,  // 既存のカテゴリを保持（新規は「未分類」）
                         isOcrOverwriteTarget = false,
-                        ocrConfidence = row.ocrConfidence
+                        ocrConfidence = row.ocrConfidence,
+                        productMasterId = if (row.isSubtotal || row.isTotalRow) null else row.productMasterId
                     )
                 }
 

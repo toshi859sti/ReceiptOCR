@@ -54,7 +54,8 @@ class OcrCaptureViewModel(
         val category: String = Category.UNCLASSIFIED,
         val isSubtotal: Boolean = false,
         val isMonthlyTotal: Boolean = false,
-        val confidence: String? = null  // Geminiの自己申告確信度（"high"/"medium"/"low"）。ML Kit経由はnull
+        val confidence: String? = null,  // Geminiの自己申告確信度（"high"/"medium"/"low"）。ML Kit経由はnull
+        val productMasterId: Long? = null  // product_master.id への紐づけ（applyProductMasterCorrection()で設定）
     )
 
     // -------------------------------------------------------------------
@@ -203,7 +204,8 @@ class OcrCaptureViewModel(
                         amount       = amount,
                         category     = row.category,
                         isOcrOverwriteTarget = false,
-                        ocrConfidence = row.confidence
+                        ocrConfidence = row.confidence,
+                        productMasterId = row.productMasterId
                     )
                 )
             }
@@ -278,9 +280,11 @@ class OcrCaptureViewModel(
 
         /**
          * NORMAL行の商品名を購買品リスト（product_master）と照合し、一致すれば登録済みの
-         * canonicalName に差し替える。全角/半角スペース・英数字幅・半角カナの違いを吸収する
-         * ため、product_master に事前計算済みの canonicalKey 列で比較する
-         * （表示文字列自体は書き換えない。OCR側の商品名だけその場で toCanonicalKey() する）。
+         * canonicalName に差し替え、productMasterId も紐づける。全角/半角スペース・英数字幅・
+         * 半角カナの違いを吸収するため、product_master に事前計算済みの canonicalKey 列で
+         * 比較する（表示文字列自体は書き換えない。OCR側の商品名だけその場で toCanonicalKey()
+         * する）。productMasterId は CSV出力時の勘定科目/摘要引き当てを文字列完全一致ではなく
+         * FKで行うために使う（`OutputConfirmScreen.kt`参照）。
          * SUBTOTAL/MONTHLY_TOTAL行は商品名ではないため対象外。
          * ReceiptInputScreen.kt の CameraView からも呼ばれる共通処理。
          */
@@ -288,14 +292,17 @@ class OcrCaptureViewModel(
             rows: List<ParsedRow>,
             productMasterDao: ProductMasterDao
         ): List<ParsedRow> {
-            val canonicalNameByKey = productMasterDao.getAll()
-                .associate { it.canonicalKey to it.canonicalName }
+            val productByKey = productMasterDao.getAll().associateBy { it.canonicalKey }
             return rows.map { row ->
                 if (row.isSubtotal || row.isMonthlyTotal || row.productName.isNullOrBlank()) {
                     row
                 } else {
-                    val matched = canonicalNameByKey[toCanonicalKey(row.productName)]
-                    if (matched != null && matched != row.productName) row.copy(productName = matched) else row
+                    val matched = productByKey[toCanonicalKey(row.productName)]
+                    if (matched != null) {
+                        row.copy(productName = matched.canonicalName, productMasterId = matched.id)
+                    } else {
+                        row
+                    }
                 }
             }
         }

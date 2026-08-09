@@ -256,11 +256,49 @@ Phase4はDBスキーマ・confidenceデータフロー・UI表示（バッジ）
 （詳細は上記「今回完了したこと」参照）。
 
 ### 次回セッションで最初にやること
-1. 実機で「購買品リストとの照合による表記統一」機能をGemini API実行込みで動作確認する
-   （今回はビルド・起動確認のみで、実際のAPI呼び出しでの動作は未確認）
-2. しばらく実機で複数枚・複数パターン（返品行・SUBTOTALなし伝票・複雑な商品名等）を撮影し、
+1. 購買品リストで「レギュラーガソリン」（`id=1`）を開いて保存し直し、`canonicalKey`の
+   空文字列破損を修復する（続き13で発見。今日のバグ修正より前に壊れたまま残っていた）。
+   他に同様の破損がないか購買品リストを一通り確認するのも推奨
+2. 実機で「購買品リストとの照合による表記統一」・`productMasterId`FKが実際の伝票保存で
+   正しく機能するかをGemini API実行込みで動作確認する（今回はマイグレーション成功と
+   ビルド確認のみ。`receipt_items`が空だったためバックフィルの実データ検証は未実施）
+3. しばらく実機で複数枚・複数パターン（返品行・SUBTOTALなし伝票・複雑な商品名等）を撮影し、
    本番導線でのGemini結果の安定性を継続確認する（今回確認できたのは数枚のみ）
-3. Phase4残タスク：伝票内の要確認行のみを抽出する一覧・一括確認モード
+4. Phase4残タスク：伝票内の要確認行のみを抽出する一覧・一括確認モード
+
+### 2026-08-09（続き13）：ReceiptItemにproductMasterId FK列を追加、CSV生成をFK経由に
+前回（続き12）のcanonicalKey照合実装について、ユーザーから3点の鋭い指摘を受けて発展させた：
+①事前計算列を使わず毎回再計算していた、②購買品リストで商品名を変えたら過去データも
+自動的に追随すべきでは、③商品名は文字列かFKか。調査の結果、**JA購買伝票（ReceiptItem）
+だけがこのアプリの中で例外的にFK化されていなかった**ことが判明した（預金`DepositMeisai`は
+`matchingRuleId`/`overrideTekiyouId`/`overrideYayoiAccountId`、一般レシート
+`GeneralReceiptItem`は`tekiyouId`/`yayoiAccountId`で、どちらも既にFK直結）。さらに
+`OutputConfirmScreen.kt`のCSV生成処理が`productMasterDao.getByName(item.productName)`という
+**完全一致文字列マッチング**で勘定科目/摘要を引いており、表記ゆれで一致しないと**黙って
+空欄になる**という実害のあるバグを発見した。
+
+これを受けて縮小版FK化を実装（`productName`はそのまま維持、`productMasterId: Long?`を
+追加するのみ）：
+- `ReceiptItem`に`productMasterId: Long?`追加、`MIGRATION_26_27`（v26→v27）で列追加＋
+  `MIGRATION_16_17`と同じカーソル走査パターンで過去データを`canonicalKey`一致でバックフィル
+- `OcrCaptureViewModel.ParsedRow`に`productMasterId`追加、`applyProductMasterCorrection()`が
+  一致時に`productMasterId`もセットするよう拡張
+- `ReceiptInputScreen.kt`：`convertParsedRowsToRowData()`・`convertReceiptItemsToRows()`・
+  `saveMonthData()`・部分再OCR（セル選択→再撮影）のマージ処理、すべてに`productMasterId`を
+  伝搬
+- `OutputConfirmScreen.kt`の`loadPurchaseOutputItems()`を`item.productMasterId`優先の
+  ルックアップに変更（未紐づけの過去データのみ従来の文字列一致にフォールバック）
+
+実機で v26→v27 マイグレーション（列追加＋カーソル走査）がクラッシュしないことを確認。
+DBを直接pull（`adb exec-out run-as ... cat databases/receipt_database`）してsqlite3で検証：
+`product_master`は103件中102件`canonicalKey`が正常だが、**`id=1`「レギュラーガソリン」の
+`canonicalKey`が空文字列**であることを発見。今回修正した「編集保存でcanonicalKeyがリセット
+される」バグの実害の実例（このバグ自体より前に発生した破損）。次回、購買品リストで開いて
+保存し直すことで修復可能（`.withComputedKey()`が正しく呼ばれるようになったため）。
+`receipt_items`は毎回テストデータを破棄していたため0件で、バックフィルの実データ検証は
+できなかった。
+
+`./gradlew compileDebugKotlin`・`assembleDebug`でビルド確認、実機インストール・起動確認済み。
 
 ### 2026-08-09（続き12）：Gemini OCR結果の商品名を購買品リストと照合して表記統一
 ユーザーから「Geminiの読み取り結果は全角/半角スペースを区別できないが、商品名の同一判定を
