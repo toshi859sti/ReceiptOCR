@@ -78,17 +78,79 @@ fun ReceiptInputScreen(
     // 現在の伝票データ
     val currentReceiptRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
 
+    // 要確認行（ocrConfidence=="low"）を全伝票から抽出（伝票番号・行インデックス付き）
+    val reviewRows = remember(allSheetsData) {
+        allSheetsData.entries.sortedBy { it.key }.flatMap { (sheetNum, rows) ->
+            rows.withIndex()
+                .filter { it.value.ocrConfidence == "low" }
+                .map { Triple(sheetNum, it.index, it.value) }
+        }
+    }
+
+    // 税込金額はあるのに取引日・商品名のどちらかが空欄の行（欠損行）を全伝票から抽出
+    val incompleteRows = remember(allSheetsData) {
+        allSheetsData.entries.sortedBy { it.key }.flatMap { (sheetNum, rows) ->
+            rows.filter {
+                !it.isSubtotal && !it.isTotalRow && it.amount != 0 &&
+                    (it.date.isBlank() || it.productName.isBlank())
+            }.map { sheetNum to it }
+        }
+    }
+
+    // この先に小計行が見つからずカテゴリが確定できない行（category=="未定"）を抽出
+    val undeterminedRows = remember(allSheetsData) {
+        allSheetsData.values.flatten()
+            .filter { !it.isSubtotal && !it.isTotalRow && it.amount != 0 && it.category == "未定" }
+    }
+
     // グリッド表示制御
     var selectedRowIndex by remember { mutableIntStateOf(-1) }
     var fontSize by remember { mutableFloatStateOf(12f) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showRowActionsBottomSheet by remember { mutableStateOf(false) }
-    var halfWidthOddRows by remember { mutableStateOf<List<String>>(emptyList()) }
     var ocrDuplicateSubtotalCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showUnclassifiedBlockDialog by remember { mutableStateOf(false) }
+    var showUndeterminedCategoryDialog by remember { mutableStateOf(false) }
+    var showIncompleteRowDialog by remember { mutableStateOf(false) }
     var showValidationMismatchDialog by remember { mutableStateOf(false) }
     // 取引日列の再アラインメントが取れなかった場合の要確認警告（強制ブロックはしない）
     var showDateAlignmentWarning by remember { mutableStateOf(false) }
+    var showReviewListDialog by remember { mutableStateOf(false) }
+    var showLowConfidenceConfirmDialog by remember { mutableStateOf(false) }
+
+    // 月データの保存処理（通常の「決定」／確信度低確認ダイアログの両方から呼ばれる）
+    val performSave: () -> Unit = {
+        scope.launch {
+            saveMonthData(
+                database = database,
+                year = eraYear,
+                month = selectedMonth,
+                allSheetsData = allSheetsData
+            )
+
+            // カテゴリ再計算を実行
+            com.example.greenframeocr.util.CategoryRecalculator.recalculateMonthlyCategories(
+                dao = database.receiptDao(),
+                year = eraYear,
+                month = selectedMonth
+            )
+
+            // データ再ロード
+            loadMonthData(
+                database = database,
+                year = eraYear,
+                month = selectedMonth,
+                onDataLoaded = { sheets, sheetsData ->
+                    totalSheets = sheets
+                    allSheetsData = sheetsData
+                    originalAllSheetsData = sheetsData
+                }
+            )
+
+            viewMode = ViewMode.VIEW
+            selectedRowIndex = -1
+        }
+    }
 
     // カメラ表示状態
     var showCamera by remember { mutableStateOf(false) }
@@ -145,27 +207,6 @@ fun ReceiptInputScreen(
         )
     }
 
-    if (halfWidthOddRows.isNotEmpty()) {
-        AlertDialog(
-            onDismissRequest = { halfWidthOddRows = emptyList() },
-            title = { Text("半角文字エラー") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("以下の商品名に半角文字が奇数含まれています。\n2文字ひとまとまり（kg・cm等）になるよう修正してください。")
-                    Spacer(modifier = Modifier.height(4.dp))
-                    halfWidthOddRows.forEach { name ->
-                        Text("・$name", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { halfWidthOddRows = emptyList() }) {
-                    Text("OK")
-                }
-            }
-        )
-    }
-
     if (showUnclassifiedBlockDialog) {
         AlertDialog(
             onDismissRequest = { showUnclassifiedBlockDialog = false },
@@ -173,6 +214,56 @@ fun ReceiptInputScreen(
             text = { Text("カテゴリが「未分類」の行が残っています。\n各行のカテゴリを確認・修正してから決定してください。") },
             confirmButton = {
                 TextButton(onClick = { showUnclassifiedBlockDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    if (showIncompleteRowDialog) {
+        AlertDialog(
+            onDismissRequest = { showIncompleteRowDialog = false },
+            title = { Text("入力が不完全な行があります") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text("税込金額が入力されているのに、取引日または商品名が空欄の行があります。")
+                    incompleteRows.forEach { (sheetNum, row) ->
+                        val missing = buildList {
+                            if (row.date.isBlank()) add("取引日")
+                            if (row.productName.isBlank()) add("商品名")
+                        }.joinToString("・")
+                        Text(
+                            "・${sheetNum}枚目 ${row.rowNumber}行目（${missing}が空欄、¥${"%,d".format(row.amount)}）",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showIncompleteRowDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    if (showUndeterminedCategoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showUndeterminedCategoryDialog = false },
+            title = { Text("小計行が見つからない行があります") },
+            text = {
+                Text(
+                    "この先に小計行が見つからないため、カテゴリを確定できない行があります。\n" +
+                        "小計は必ず伝票に印字されているはずなので、2枚目以降の伝票を撮り忘れていないか" +
+                        "ご確認ください。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showUndeterminedCategoryDialog = false }) {
                     Text("OK")
                 }
             }
@@ -211,6 +302,87 @@ fun ReceiptInputScreen(
             confirmButton = {
                 TextButton(onClick = { showDateAlignmentWarning = false }) {
                     Text("確認しました")
+                }
+            }
+        )
+    }
+
+    if (showReviewListDialog) {
+        AlertDialog(
+            onDismissRequest = { showReviewListDialog = false },
+            title = { Text("要確認一覧（${reviewRows.size}件）") },
+            text = {
+                if (reviewRows.isEmpty()) {
+                    Text("要確認の行はありません。")
+                } else {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Geminiの読み取り確信度が低い行です。タップすると該当の伝票へ移動します。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        reviewRows.forEach { (sheetNum, index, row) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        currentSheetNumber = sheetNum
+                                        selectedRowIndex = index
+                                        showReviewListDialog = false
+                                    }
+                                    .padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("${sheetNum}枚目 ${row.date}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(row.productName, fontSize = 14.sp)
+                                }
+                                Text("¥${"%,d".format(row.amount)}", fontSize = 14.sp)
+                            }
+                            Divider()
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showReviewListDialog = false }) {
+                    Text("閉じる")
+                }
+            }
+        )
+    }
+
+    if (showLowConfidenceConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showLowConfidenceConfirmDialog = false },
+            title = { Text("確信度の低い行があります") },
+            text = {
+                Text(
+                    "Geminiの読み取り確信度が低い行が${reviewRows.size}件あります。" +
+                        "内容をご確認の上、問題なければそのまま保存できます。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    allSheetsData = allSheetsData.mapValues { (_, rows) ->
+                        rows.map { if (it.ocrConfidence == "low") it.copy(ocrConfidence = null) else it }
+                    }
+                    showLowConfidenceConfirmDialog = false
+                    performSave()
+                }) {
+                    Text("確認して保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showLowConfidenceConfirmDialog = false
+                    showReviewListDialog = true
+                }) {
+                    Text("一覧を確認する")
                 }
             }
         )
@@ -515,13 +687,23 @@ fun ReceiptInputScreen(
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.error
                             ),
-                            enabled = totalSheets > 0
+                            // 途中の伝票を消すと後続が繰り上がり、物理ページと伝票番号が
+                            // ズレて分からなくなるため、最後の伝票のみ削除可能とする
+                            enabled = totalSheets > 0 && currentSheetNumber == totalSheets
                         ) {
                             Icon(Icons.Default.Delete, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("伝票削除")
                         }
                     }
+                }
+
+                if (viewMode == ViewMode.EDIT && totalSheets > 0 && currentSheetNumber != totalSheets) {
+                    Text(
+                        text = "伝票の削除は最後（${totalSheets}枚目）のみ可能です。",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 // 3行目: OCR/直接、撮影
@@ -676,7 +858,9 @@ fun ReceiptInputScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (validationResult.isValid && validationResult.calculatedTotal != 0)
+                            containerColor = if (undeterminedRows.isNotEmpty())
+                                MaterialTheme.colorScheme.errorContainer
+                            else if (validationResult.isValid && validationResult.calculatedTotal != 0)
                                 MaterialTheme.colorScheme.primaryContainer
                             else if (!validationResult.isValid)
                                 MaterialTheme.colorScheme.errorContainer
@@ -696,6 +880,30 @@ fun ReceiptInputScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
+
+                            // カテゴリ未定（この先に小計行が見つからない）の警告
+                            if (undeterminedRows.isNotEmpty()) {
+                                Divider(modifier = Modifier.padding(vertical = 4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "⚠ カテゴリ未定（${undeterminedRows.size}行、小計行が見つからない）",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    Text(
+                                        text = "${"%,d".format(undeterminedRows.sumOf { it.amount })} 円",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                            }
 
                             // カテゴリ別小計の検証
                             if (validationResult.categoryBreakdowns.isNotEmpty()) {
@@ -868,6 +1076,18 @@ fun ReceiptInputScreen(
                 if (viewMode == ViewMode.EDIT) {
                     Divider()
 
+                    if (reviewRows.isNotEmpty()) {
+                        OutlinedButton(
+                            onClick = { showReviewListDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFFF57C00)
+                            )
+                        ) {
+                            Text("要確認一覧を見る（${reviewRows.size}件）")
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -898,12 +1118,8 @@ fun ReceiptInputScreen(
 
                         Button(
                             onClick = {
-                                val invalidNames = allSheetsData.values.flatten()
-                                    .filter { !it.isSubtotal && !it.isTotalRow && it.productName.isNotBlank() }
-                                    .filter { countFullWidthEquivalent(it.productName) % 1.0 != 0.0 }
-                                    .map { it.productName }
-                                if (invalidNames.isNotEmpty()) {
-                                    halfWidthOddRows = invalidNames
+                                if (incompleteRows.isNotEmpty()) {
+                                    showIncompleteRowDialog = true
                                     return@Button
                                 }
                                 val hasUnclassified = allSheetsData.values.flatten()
@@ -912,39 +1128,21 @@ fun ReceiptInputScreen(
                                     showUnclassifiedBlockDialog = true
                                     return@Button
                                 }
+                                val hasUndetermined = allSheetsData.values.flatten()
+                                    .any { !it.isSubtotal && !it.isTotalRow && it.amount != 0 && it.category == "未定" }
+                                if (hasUndetermined) {
+                                    showUndeterminedCategoryDialog = true
+                                    return@Button
+                                }
                                 if (hasUnresolvedMismatch(validateAllSheetsData(allSheetsData))) {
                                     showValidationMismatchDialog = true
                                     return@Button
                                 }
-                                scope.launch {
-                                    saveMonthData(
-                                        database = database,
-                                        year = eraYear,
-                                        month = selectedMonth,
-                                        allSheetsData = allSheetsData
-                                    )
-
-                                    // カテゴリ再計算を実行
-                                    com.example.greenframeocr.util.CategoryRecalculator.recalculateMonthlyCategories(
-                                        dao = database.receiptDao(),
-                                        year = eraYear,
-                                        month = selectedMonth
-                                    )
-
-                                    // データ再ロード
-                                    loadMonthData(
-                                        database = database,
-                                        year = eraYear,
-                                        month = selectedMonth,
-                                        onDataLoaded = { sheets, sheetsData ->
-                                            totalSheets = sheets
-                                            allSheetsData = sheetsData
-                                            originalAllSheetsData = sheetsData
-                                        }
-                                    )
-
-                                    viewMode = ViewMode.VIEW
+                                if (reviewRows.isNotEmpty()) {
+                                    showLowConfidenceConfirmDialog = true
+                                    return@Button
                                 }
+                                performSave()
                             },
                             modifier = Modifier.weight(1f)
                         ) {
@@ -1370,7 +1568,7 @@ private fun DataRow(
         row.isTotalRow -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f) // 合計行は水色背景
         row.isSubtotal -> Color(0xFFE8F5E9) // 小計行は薄い緑背景
         isAfterSubtotal -> Color(0xFFF5F5F5) // 小計後の1行は薄いグレーアウト（編集不可）
-        isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        isSelected -> Color(0xFFBBDEFB) // 選択中の行は水色（テーマの緑系primaryContainerだと小計行の薄緑と紛らわしいため固定色）
         else -> Color.Transparent
     }
 
@@ -1764,9 +1962,13 @@ private fun tryStripRuleDigit(entered: Int, calculated: Int): Int? {
 
 /**
  * 小計・合計に「解消されていない」不一致があるかを判定する。
- * OCRが値を読み取れず入力値が0のまま（=未検出）の場合は対象外とする
- * （紙面に本当に印字されていない場合と区別できないため、機械的なブロックは避ける）。
- * `tryStripRuleDigit` で説明が付く「罫線補正で一致」ケースも、画面表示上は許容扱い
+ * カテゴリ別小計は、OCRが値を読み取れず入力値が0のまま（=未検出）の場合は対象外とする
+ * （小計行自体が紙面に印字されないカテゴリが存在するため、機械的なブロックは避ける。
+ * ただしその小計行自体が本当に見つからない場合は`hasUndetermined`側の別チェックで扱う）。
+ * 合計（1枚目に必ず印字される）は、入力値が0＝未検出のままでも不一致とみなす。
+ * 1枚目の合計欄が読み取れていない場合は、実際に読み取り漏れが起きているか、
+ * 撮り忘れたページがあるかのいずれかであり、機械的に見逃すべきではないため。
+ * `tryStripRuleDigit` で説明が付く「罫線補正で一致」ケースは、画面表示上は許容扱い
  * （オレンジ表示）にしているため、ここでも不一致とはみなさない。
  * 未分類カテゴリ（小計行自体が存在しない）は`hasUnclassified`側の別チェックで扱う。
  */
@@ -1778,8 +1980,7 @@ private fun hasUnresolvedMismatch(validationResult: ValidationResult): Boolean {
             tryStripRuleDigit(category.enteredSubtotal, category.calculatedSubtotal) == null
     }
     val totalMismatch = validationResult.totalBreakdown?.let { total ->
-        total.enteredTotal != 0 &&
-            !total.isValid &&
+        !total.isValid &&
             tryStripRuleDigit(total.enteredTotal, total.calculatedTotal) == null
     } ?: false
     return categoryMismatch || totalMismatch
@@ -2722,7 +2923,6 @@ private fun CellEditDialog(
     var selectedProductId by remember { mutableStateOf<Long?>(currentRow.productMasterId) }
     val coroutineScope = rememberCoroutineScope()
     val productCharCount = if (cellType == CellType.PRODUCT_NAME) countFullWidthEquivalent(inputValue) else 0.0
-    val productHalfWidthOdd = cellType == CellType.PRODUCT_NAME && productCharCount % 1.0 != 0.0
 
     LaunchedEffect(cellType) {
         if (cellType == CellType.PRODUCT_NAME) {
@@ -2791,7 +2991,7 @@ private fun CellEditDialog(
                 }
 
                 if (cellType == CellType.PRODUCT_NAME) {
-                    val countText = if (!productHalfWidthOdd) "${productCharCount.toInt()}" else "${"%.1f".format(productCharCount)}"
+                    val countText = if (productCharCount % 1.0 == 0.0) "${productCharCount.toInt()}" else "${"%.1f".format(productCharCount)}"
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2803,13 +3003,10 @@ private fun CellEditDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "$countText/20",
+                            text = "$countText/30",
                             fontSize = 11.sp,
-                            color = when {
-                                productHalfWidthOdd -> MaterialTheme.colorScheme.error
-                                productCharCount >= 20.0 -> MaterialTheme.colorScheme.error
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
+                            color = if (productCharCount >= 30.0) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -2845,7 +3042,7 @@ private fun CellEditDialog(
                                 }
                             )
                         },
-                        isError = errorMessage != null || productHalfWidthOdd,
+                        isError = errorMessage != null,
                         singleLine = cellType != CellType.PRODUCT_NAME,
                         maxLines = if (cellType == CellType.PRODUCT_NAME) 2 else 1,
                         keyboardOptions = KeyboardOptions(
@@ -2886,13 +3083,6 @@ private fun CellEditDialog(
 
                 // 商品名入力時のボタン（合計行は除外）
                 if (cellType == CellType.PRODUCT_NAME && !currentRow.isTotalRow) {
-                    if (productHalfWidthOdd) {
-                        Text(
-                            text = "半角は2文字ひとまとまりで入力してください（kg・cm等）",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Start,
@@ -3090,7 +3280,7 @@ private fun CellEditDialog(
                                     defaultMonth,
                                     day
                                 )
-                                onConfirm(currentRow.copy(date = formattedDate))
+                                onConfirm(currentRow.copy(date = formattedDate, ocrConfidence = null))
                             } else {
                                 // 通常モード: 従来通りの日付入力
                                 val formattedDate = formatDateInput(
@@ -3102,14 +3292,10 @@ private fun CellEditDialog(
                                     errorMessage = "正しい日付を入力してください（6桁/4桁/2桁）"
                                     return@TextButton
                                 }
-                                onConfirm(currentRow.copy(date = formattedDate))
+                                onConfirm(currentRow.copy(date = formattedDate, ocrConfidence = null))
                             }
                         }
                         CellType.PRODUCT_NAME -> {
-                            if (productHalfWidthOdd) {
-                                errorMessage = "半角文字が奇数です。2文字ひとまとまりにしてください"
-                                return@TextButton
-                            }
                             // 商品マスタIDを解決（ドロップダウン選択時は既にセット済み、手動入力時は検索）
                             coroutineScope.launch {
                                 val resolvedProductId = if (selectedProductId != null) {
@@ -3133,7 +3319,8 @@ private fun CellEditDialog(
                                         subtotalCategory = if (isSubtotal) selectedSubtotalCategory else null,
                                         date = if (isSubtotal) "" else currentRow.date,
                                         category = if (isSubtotal) selectedSubtotalCategory.displayName else currentRow.category,
-                                        productMasterId = if (!isSubtotal) resolvedProductId else null
+                                        productMasterId = if (!isSubtotal) resolvedProductId else null,
+                                        ocrConfidence = null
                                     )
                                 )
                             }
@@ -3156,7 +3343,7 @@ private fun CellEditDialog(
                                 return@TextButton
                             }
 
-                            onConfirm(currentRow.copy(amount = finalAmount))
+                            onConfirm(currentRow.copy(amount = finalAmount, ocrConfidence = null))
                         }
                     }
                 }

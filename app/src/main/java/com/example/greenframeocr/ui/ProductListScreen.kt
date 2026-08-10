@@ -981,7 +981,7 @@ private fun ProductEditDialog(
     val title = if (isNew) "購買品追加" else "購買品編集"
 
     val fwCount = fullWidthCount(name)
-    val fwMax = 20.0
+    val fwMax = 30.0
     val counterColor = when {
         fwCount >= fwMax -> MaterialTheme.colorScheme.error
         fwCount >= fwMax * 0.9 -> Color(0xFFF57C00)
@@ -995,7 +995,7 @@ private fun ProductEditDialog(
             Column(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // 商品名（全角20文字制限・数字/スペースは自動全角変換）
+                // 商品名（全角30文字制限・数字/スペースは自動全角変換）
                 Column {
                     OutlinedTextField(
                         value = name,
@@ -1003,7 +1003,7 @@ private fun ProductEditDialog(
                             val converted = toFullWidthProductName(newVal)
                             if (fullWidthCount(converted) <= fwMax) name = converted
                         },
-                        label = { Text("商品名（全角20文字）") },
+                        label = { Text("商品名（全角30文字）") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(

@@ -69,7 +69,7 @@ fun charFullWidthWeight(c: Char): Double =
 fun countFullWidthEquivalent(text: String): Double =
     text.sumOf { charFullWidthWeight(it) }
 
-fun truncateToFullWidthLimit(text: String, limit: Double = 20.0): String {
+fun truncateToFullWidthLimit(text: String, limit: Double = 30.0): String {
     var count = 0.0
     val result = StringBuilder()
     for (c in text) {

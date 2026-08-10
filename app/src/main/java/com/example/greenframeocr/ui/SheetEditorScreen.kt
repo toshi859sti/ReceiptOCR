@@ -708,8 +708,7 @@ private fun ItemEditDialog(
                 // 商品名
                 Column {
                     val charCount = countFullWidthEquivalent(productName)
-                    val hasHalfWidthOdd = charCount % 1.0 != 0.0
-                    val countText = if (!hasHalfWidthOdd) "${charCount.toInt()}" else "${"%.1f".format(charCount)}"
+                    val countText = if (charCount % 1.0 == 0.0) "${charCount.toInt()}" else "${"%.1f".format(charCount)}"
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -721,13 +720,10 @@ private fun ItemEditDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "$countText/20",
+                            text = "$countText/30",
                             fontSize = 11.sp,
-                            color = when {
-                                hasHalfWidthOdd -> MaterialTheme.colorScheme.error
-                                charCount >= 20.0 -> MaterialTheme.colorScheme.error
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
+                            color = if (charCount >= 30.0) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     OutlinedTextField(
@@ -737,16 +733,8 @@ private fun ItemEditDialog(
                             errorMessage = null
                         },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        isError = hasHalfWidthOdd
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    if (hasHalfWidthOdd) {
-                        Text(
-                            text = "半角は2文字ひとまとまりで入力してください（kg・cm等）",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -844,13 +832,10 @@ private fun ItemEditDialog(
             TextButton(
                 onClick = {
                     val parsedAmount = amount.toIntOrNull()
-                    val hasHalfWidthOdd = countFullWidthEquivalent(productName) % 1.0 != 0.0
                     if (parsedAmount == null) {
                         errorMessage = "金額は数値で入力してください"
                     } else if (productName.isBlank()) {
                         errorMessage = "商品名を入力してください"
-                    } else if (hasHalfWidthOdd) {
-                        errorMessage = "半角文字が奇数です。2文字ひとまとまりにしてください"
                     } else {
                         onConfirm(
                             item.copy(
@@ -858,7 +843,8 @@ private fun ItemEditDialog(
                                 receiptDay = day,
                                 productName = productName,
                                 amount = parsedAmount,
-                                category = category
+                                category = category,
+                                ocrConfidence = null
                             )
                         )
                     }
