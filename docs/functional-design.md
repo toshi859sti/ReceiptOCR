@@ -7,9 +7,7 @@ flowchart TD
     Menu["メニュー\n(MenuScreen)"]
     PurchaseMenu["購買メニュー\n(PurchaseMenuScreen)"]
     DepositMenu["預金メニュー\n(DepositMenuScreen)"]
-    OcrCapture["OCR撮影\n(OcrCaptureScreen)"]
-    ReceiptInput["購買リスト\n(ReceiptInputScreen)"]
-    SheetEditor["伝票編集\n(SheetEditorScreen)"]
+    ReceiptInput["購買リスト・撮影・編集\n(ReceiptInputScreen)"]
     MonthlySummary["月次サマリー\n(MonthlySummaryScreen)"]
     ProductList["商品リスト\n(ProductListScreen)"]
     KaikakeTekiyou["買掛摘要辞書\n(KaikakeTekiyouScreen)"]
@@ -19,34 +17,30 @@ flowchart TD
     YokinTekiyou["預金摘要辞書\n(YokinTekiyouScreen)"]
     DepositOutputConfirm["預金CSV出力\n(OutputConfirmScreen)"]
     Settings["設定\n(SettingsScreen)"]
-    OcrLearning["OCR学習状況\n(OcrLearningStatusScreen)"]
     RakurakuTekiyou["らくらく摘要辞書\n(RakurakuTekiyouScreen)"]
-    DebugCapture["デバッグ撮影\n(DebugCaptureScreen)"]
 
     Menu --> PurchaseMenu
     Menu --> DepositMenu
     Menu --> Settings
-    Menu --> DebugCapture
 
     PurchaseMenu --> ReceiptInput
     PurchaseMenu --> ProductList
     PurchaseMenu --> KaikakeTekiyou
     PurchaseMenu --> PurchaseOutputConfirm
 
-    ReceiptInput --> OcrCapture
-    ReceiptInput --> SheetEditor
     ReceiptInput --> MonthlySummary
-    SheetEditor --> OcrCapture
-    SheetEditor -->|次/前伝票| SheetEditor
 
     DepositMenu --> PassbookData
     DepositMenu --> TekiyouMatching
     DepositMenu --> YokinTekiyou
     DepositMenu --> DepositOutputConfirm
 
-    Settings --> OcrLearning
     Settings --> RakurakuTekiyou
 ```
+
+`ReceiptInputScreen`は撮影（独自`CameraView`）・編集・保存・CSV連携用データ確定までを
+単体で完結する（`OcrCaptureScreen`/`SheetEditorScreen`はPhase6で削除。旧図に残っていた
+これらのノード・エッジは本番UIから到達不能なまま存在した死んだ経路だった）。
 
 > **注意**: `AccountSettingsScreen`（勘定科目設定）は実装済みだが Navigation 未接続。
 
@@ -325,7 +319,7 @@ ID,日付,摘要,メモ,入金,出金
 
 ---
 
-## 8. 商品名入力の文字幅変換仕様（SheetEditorScreen）
+## 8. 商品名入力の文字幅変換仕様（ReceiptInputScreen）
 
 伝票編集ダイアログ（`ItemEditDialog`）の商品名フィールド：
 

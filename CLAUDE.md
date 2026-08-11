@@ -122,7 +122,8 @@ Utils.matToBitmap(rgbaMat, bitmap)
 fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult
 ```
 - 本番（`debugMode=false`）: Step7（行切り抜き）スキップ → 約1,225ms
-- デバッグ（`debugMode=true`）: Step7 実行、`DebugCaptureScreen` からのみ呼ぶ
+- デバッグ（`debugMode=true`）: Step7 実行。`DebugCaptureScreen` はPhase6（2026-08-11）で
+  削除済みのため、現在アプリ内に呼び出し元はない（将来デバッグツールを再実装する際の既存パラメータ）
 
 ### 透視変換解像度（変更禁止）
 `WARP_PX_PER_MM = 15.0` → 出力 3045×2220px（203mm×148mm）
@@ -131,19 +132,13 @@ fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult
 ### ML Kit 文字高さ（最小 100px）
 40px 以下で精度が急落する。透視変換解像度を下げてはいけない。
 
-### Room DB バージョン（現在 v25）
+### Room DB バージョン（現在 v28）
 バージョンアップ時は `ReceiptDatabase.kt` にマイグレーションを追加すること。
 `fallbackToDestructiveMigration()` は削除済み（2026-07-12）。
 スキーマ変更時にマイグレーションを書き忘れるとデータ消失ではなく**起動時クラッシュ**になる。
 
 ### Navigation に未接続の画面（要対応）
 `AccountSettingsScreen.kt` は実装済みだが `Navigation.kt` の NavHost に未登録。
-
-### ProductNameCorrectorV3 の3層構造
-- Layer1（無条件適用）: LOCKED / 手動 CONFIRMED バリアント
-- Layer2（スコア検証後）: 自動 CONFIRMED バリアント
-- Layer3（学習素材のみ）: AUTO バリアント（補正には使わない）
-昇格・降格ロジックを変更するときは `docs/functional-design.md` の学習仕様を必ず確認すること。
 
 ---
 
@@ -157,10 +152,10 @@ fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 # パフォーマンスログ確認
-adb logcat -s GreenFrameDetector:D OCRProcessor:D | grep PERF
+adb logcat -s GreenFrameDetector:D | grep PERF
 
 # 全体ログ
-adb logcat -s GreenFrameDetector:D OCRProcessor:D CameraViewModel:D OcrCaptureViewModel:D
+adb logcat -s GreenFrameDetector:D GeminiReceiptClient:D CameraViewModel:D ReceiptInputScreen:D
 ```
 
 ---

@@ -21,8 +21,7 @@ fun MenuScreen(
     onNavigateToDepositMenu: () -> Unit,
     onNavigateToGeneralPurchaseMenu: () -> Unit = {},
     onNavigateToBookkeepingMenu: () -> Unit = {},
-    onNavigateToSettings: () -> Unit,
-    onNavigateToDebugCapture: () -> Unit = {}
+    onNavigateToSettings: () -> Unit
 ) {
     val eraYear = remember { appPreferences.eraYear }
 
@@ -88,20 +87,6 @@ fun MenuScreen(
                 text = "設定",
                 onClick = onNavigateToSettings
             )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            OutlinedButton(
-                onClick = onNavigateToDebugCapture,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-            ) {
-                Text(
-                    text = "デバッグ撮影",
-                    fontSize = 16.sp
-                )
-            }
 
             Spacer(modifier = Modifier.height(40.dp))
 

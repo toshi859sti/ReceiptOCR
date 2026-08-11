@@ -53,7 +53,6 @@ import java.util.Locale
 fun SettingsScreen(
     appPreferences: AppPreferences,
     onBack: () -> Unit,
-    onNavigateToOcrLearningStatus: () -> Unit = {},
     onThemeChanged: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -442,15 +441,6 @@ fun SettingsScreen(
                 subtitle = "デバイス情報を表示"
             ) {
                 TextButton(onClick = { showCameraInfo = true }) {
-                    Text("表示")
-                }
-            }
-
-            SettingItem(
-                title = "OCR学習状況",
-                subtitle = "誤認識パターンの学習データベースを表示"
-            ) {
-                TextButton(onClick = onNavigateToOcrLearningStatus) {
                     Text("表示")
                 }
             }

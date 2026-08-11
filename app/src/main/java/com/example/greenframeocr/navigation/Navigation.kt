@@ -12,20 +12,15 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.ReceiptDao
-import com.example.greenframeocr.ui.DebugCaptureScreen
 import com.example.greenframeocr.ui.DepositMenuScreen
 import com.example.greenframeocr.ui.KaikakeTekiyouScreen
 import com.example.greenframeocr.ui.MenuScreen
 import com.example.greenframeocr.ui.MonthlySummaryScreen
-import com.example.greenframeocr.ui.OcrCaptureScreen
-import com.example.greenframeocr.ui.OcrLearningStatusScreen
 import com.example.greenframeocr.ui.OutputConfirmScreen
 import com.example.greenframeocr.ui.PassbookDataScreen
 import com.example.greenframeocr.ui.ProductListScreen
@@ -33,7 +28,6 @@ import com.example.greenframeocr.ui.PurchaseMenuScreen
 import com.example.greenframeocr.ui.RakurakuTekiyouScreen
 import com.example.greenframeocr.ui.ReceiptInputScreen
 import com.example.greenframeocr.ui.SettingsScreen
-import com.example.greenframeocr.ui.SheetEditorScreen
 import com.example.greenframeocr.ui.TekiyouMatchingScreen
 import com.example.greenframeocr.ui.BookkeepingMenuScreen
 import com.example.greenframeocr.ui.RakurakuAccountSettingsScreen
@@ -48,8 +42,6 @@ import com.example.greenframeocr.ui.InvoiceStoreListScreen
 import com.example.greenframeocr.ui.YearSummaryScreen
 import com.example.greenframeocr.ui.YokinTekiyouScreen
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
-import com.example.greenframeocr.viewmodel.OcrCaptureViewModel
-import com.example.greenframeocr.viewmodel.SheetEditorViewModel
 
 /**
  * 画面の定義
@@ -58,10 +50,8 @@ sealed class Screen(val route: String) {
     object Menu : Screen("menu")
     object PurchaseMenu : Screen("purchase_menu")
     object DepositMenu : Screen("deposit_menu")
-    object OcrCapture : Screen("ocr_capture")
     object Settings : Screen("settings")
     object ReceiptInput : Screen("receipt_input")
-    object OcrLearningStatus : Screen("ocr_learning_status")
     object ProductList : Screen("product_list")
     object KaikakeTekiyou : Screen("kaikake_tekiyou")
     object PurchaseOutputConfirm : Screen("purchase_output_confirm")
@@ -70,7 +60,6 @@ sealed class Screen(val route: String) {
     object YokinTekiyou : Screen("yokin_tekiyou")
     object DepositOutputConfirm : Screen("deposit_output_confirm")
     object RakurakuTekiyou : Screen("rakuraku_tekiyou")
-    object DebugCapture : Screen("debug_capture")
     object YearSummary : Screen("year_summary")
     object BookkeepingMenu : Screen("bookkeeping_menu")
     object YayoiAccountSettings : Screen("yayoi_account_settings")
@@ -90,11 +79,6 @@ sealed class Screen(val route: String) {
             return "monthly_summary/$year/$month"
         }
     }
-    object SheetEditor : Screen("sheet_editor/{year}/{month}/{sheetNumber}") {
-        fun createRoute(year: Int, month: Int, sheetNumber: Int): String {
-            return "sheet_editor/$year/$month/$sheetNumber"
-        }
-    }
 }
 
 /**
@@ -108,7 +92,6 @@ fun ReceiptNavGraph(
     database: com.example.greenframeocr.data.ReceiptDatabase,
     startDestination: String = Screen.Menu.route,
     sharedCsvUri: Uri? = null,
-    onNavigateToDebugCapture: (() -> Unit)? = null,
     onThemeChanged: () -> Unit = {}
 ) {
     val generalReceiptViewModel: GeneralReceiptViewModel = viewModel()
@@ -135,17 +118,7 @@ fun ReceiptNavGraph(
                 },
                 onNavigateToSettings = {
                     navController.navigate(Screen.Settings.route)
-                },
-                onNavigateToDebugCapture = {
-                    navController.navigate(Screen.DebugCapture.route)
                 }
-            )
-        }
-
-        // デバッグ撮影画面
-        composable(Screen.DebugCapture.route) {
-            DebugCaptureScreen(
-                onBack = { navController.popBackStack() }
             )
         }
 
@@ -243,87 +216,12 @@ fun ReceiptNavGraph(
             )
         }
 
-        // OCR撮影画面
-        composable(Screen.OcrCapture.route) {
-            val viewModel: OcrCaptureViewModel = viewModel(
-                factory = OcrCaptureViewModelFactory(
-                    dao = dao,
-                    productMasterDao = database.productMasterDao(),
-                    issueYear = appPreferences.eraYear,
-                    issueMonth = appPreferences.currentIssueMonth,
-                    geminiApiKey = appPreferences.geminiApiKey
-                )
-            )
-            OcrCaptureScreen(
-                viewModel = viewModel,
-                onBack = { navController.popBackStack() },
-                onComplete = { year, month, sheetNumber ->
-                    navController.navigate(
-                        Screen.SheetEditor.createRoute(year, month, sheetNumber)
-                    ) {
-                        popUpTo(Screen.Menu.route)
-                    }
-                }
-            )
-        }
-
-        // 伝票編集画面
-        composable(
-            route = Screen.SheetEditor.route,
-            arguments = listOf(
-                navArgument("year") { type = NavType.IntType },
-                navArgument("month") { type = NavType.IntType },
-                navArgument("sheetNumber") { type = NavType.IntType }
-            )
-        ) { backStackEntry ->
-            val year = backStackEntry.arguments?.getInt("year") ?: 0
-            val month = backStackEntry.arguments?.getInt("month") ?: 1
-            val sheetNumber = backStackEntry.arguments?.getInt("sheetNumber") ?: 1
-
-            val viewModel: SheetEditorViewModel = viewModel(
-                factory = SheetEditorViewModelFactory(
-                    dao = dao,
-                    issueYear = year,
-                    issueMonth = month,
-                    sheetNumber = sheetNumber
-                )
-            )
-            SheetEditorScreen(
-                viewModel = viewModel,
-                eraYear = appPreferences.eraYear,
-                onBack = { navController.popBackStack() },
-                onNavigateToPreviousSheet = {
-                    if (sheetNumber > 1) {
-                        navController.navigate(
-                            Screen.SheetEditor.createRoute(year, month, sheetNumber - 1)
-                        ) {
-                            popUpTo(Screen.SheetEditor.route) { inclusive = true }
-                        }
-                    }
-                },
-                onNavigateToNextSheet = {
-                    navController.navigate(
-                        Screen.SheetEditor.createRoute(year, month, sheetNumber + 1)
-                    ) {
-                        popUpTo(Screen.SheetEditor.route) { inclusive = true }
-                    }
-                },
-                onReOcr = {
-                    // 再OCR: OCR撮影画面へ遷移
-                    navController.navigate(Screen.OcrCapture.route)
-                }
-            )
-        }
-
         // 設定画面
         composable(Screen.Settings.route) {
             SettingsScreen(
                 appPreferences = appPreferences,
                 onBack = { navController.popBackStack() },
-                onThemeChanged = onThemeChanged,
-                onNavigateToOcrLearningStatus = {
-                    navController.navigate(Screen.OcrLearningStatus.route)
-                }
+                onThemeChanged = onThemeChanged
             )
         }
 
@@ -377,15 +275,6 @@ fun ReceiptNavGraph(
                 initialParentId = if (parentId >= 0L) parentId else null,
                 database      = database,
                 onBack        = { navController.popBackStack() }
-            )
-        }
-
-        // OCR学習状況画面
-        composable(Screen.OcrLearningStatus.route) {
-            OcrLearningStatusScreen(
-                database = database,
-                appPreferences = appPreferences,
-                onBack = { navController.popBackStack() }
             )
         }
 
@@ -486,9 +375,6 @@ fun ReceiptNavGraph(
                 eraYear = appPreferences.eraYear,
                 database = database,
                 onBack = { navController.popBackStack() },
-                onCapture = {
-                    navController.navigate(Screen.OcrCapture.route)
-                },
                 onNavigateToSummary = { year, month ->
                     navController.navigate(
                         Screen.MonthlySummary.createRoute(year, month)
@@ -553,42 +439,5 @@ private fun PlaceholderScreen(
                 style = MaterialTheme.typography.headlineSmall
             )
         }
-    }
-}
-
-/**
- * OcrCaptureViewModel用のFactory
- */
-class OcrCaptureViewModelFactory(
-    private val dao: ReceiptDao,
-    private val productMasterDao: com.example.greenframeocr.data.ProductMasterDao,
-    private val issueYear: Int,
-    private val issueMonth: Int,
-    private val geminiApiKey: String
-) : ViewModelProvider.Factory {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(OcrCaptureViewModel::class.java)) {
-            return OcrCaptureViewModel(dao, productMasterDao, issueYear, issueMonth, geminiApiKey) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel class")
-    }
-}
-
-/**
- * SheetEditorViewModel用のFactory
- */
-class SheetEditorViewModelFactory(
-    private val dao: ReceiptDao,
-    private val issueYear: Int,
-    private val issueMonth: Int,
-    private val sheetNumber: Int
-) : ViewModelProvider.Factory {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(SheetEditorViewModel::class.java)) {
-            return SheetEditorViewModel(dao, issueYear, issueMonth, sheetNumber) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel class")
     }
 }

@@ -41,48 +41,54 @@ kotlinCompilerExtensionVersion = "1.5.4"
 ```
 +-------------------------------------------------------------+
 |  UI Layer（Jetpack Compose）                                  |
-|  18画面 / ViewModel                                          |
 +-------------------------------------------------------------+
 |  Domain / Util Layer                                         |
-|  GreenFrameDetector / OCRProcessor / ProductNameCorrectorV3  |
-|  UnderlyingBaseProcessor / CategoryRecalculator              |
-|  ExplicitJoinMatcher / ValidationUtils                       |
+|  GreenFrameDetector / GeminiReceiptClient / JaSheetOcrMapper |
+|  UnderlyingBaseProcessor / CategoryRecalculator / Validation |
 +-------------------------------------------------------------+
-|  Data Layer（Room Database v15）                              |
-|  ReceiptDatabase / DAO x 14テーブル                          |
+|  Data Layer（Room Database v28）                              |
+|  ReceiptDatabase / DAO                                       |
 +-------------------------------------------------------------+
-|  Hardware Layer                                              |
-|  CameraX 4K -> OpenCV -> ML Kit                              |
+|  Hardware / External API Layer                               |
+|  CameraX 4K -> OpenCV -> Gemini Vision API                   |
 +-------------------------------------------------------------+
 ```
+
+（画面数・DAO数の正確なカウントは`docs/repository-structure.md`参照。この図は層構造の
+概略のみを示す）
 
 ### MVVM 構成
 
 | クラス | 役割 |
 |---|---|
 | `CameraViewModel` | カメラ起動・フォーカス判定・GreenFrameDetector 呼び出し |
-| `OcrCaptureViewModel` | OCR パイプライン全体の制御・DB 保存 |
-| `SheetEditorViewModel` | 伝票個別編集・行追加削除・再 OCR |
+
+JA伝票の撮影・OCR結果確認・編集・保存は`viewmodel`を介さず`ui/ReceiptInputScreen.kt`が
+単体で完結する（独自の`CameraView`・`ReceiptRowData`・`saveMonthData()`）。
+`OcrCaptureViewModel`・`SheetEditorViewModel`はPhase6（2026-08-11）で削除済み。
 
 ---
 
-## システムフロー
+## システムフロー（JA伝票、Gemini Vision API移行後）
 
 ```
 [CameraX ImageAnalysis 4K (3840x2160)]
          | YuvToRgbConverter
 [RGB Bitmap]
          | GreenFrameDetector.process()
-[緑枠検出 + 透視変換 → 3045×2220px]
-         | OcrCaptureViewModel.processUnderlayingBase()
-[ML Kit 全体 OCR + 数量列 OCR + 商品名列 OCR]
-         | ProductNameCorrectorV3.correctProductName()
-[商品名補正（スコアリング・学習）]
-         | Room DB 保存
-[ReceiptInputScreen / SheetEditorScreen で確認・修正]
+[緑枠検出 + 透視変換 → 3045×2220px（dewarpedBitmap）]
+         | GeminiReceiptClient.parseJaSheetFromImage()
+[列クロップTwo-Pass：全体OCR + 取引日列OCR（並列実行・指数バックオフリトライ）]
+         | JaSheetOcrMapper.mapGeminiResultToParsedRows() / applyProductMasterCorrection()
+[カテゴリ仮判定 + 商品マスタ照合（canonicalKey）]
+         | ReceiptInputScreen.saveMonthData()
+[検算バリデーション・要確認バッジ・小計カテゴリ重複ガードを経てRoom DB保存]
          | OutputConfirmScreen
-[らくらく CSV 出力]
+[らくらく／弥生 CSV 出力（productMasterId経由のFKルックアップ）]
 ```
+
+一般レシート（`GeneralReceiptCaptureScreen.kt`）は本フローとは独立しており、
+引き続きML Kit（テキスト抽出）+ オンライン時Gemini（構造化）のハイブリッド方式を使う。
 
 ---
 
@@ -94,19 +100,20 @@ kotlinCompilerExtensionVersion = "1.5.4"
 - **WARP_PX_PER_MM = 15.0**（出力: 3045×2220px・変更禁止）
 - `debugMode=true` のとき Step7（行切り抜き）実行
 
-### OCRProcessor
-- ML Kit のラッパー
-- 全体 OCR（日本語）・数量列 OCR（Latin・縦罫線除去）・商品名列 OCR（日本語）
-- `cleanLeadingRuleNoise()`: 商品名先頭の `|` と日本語前の `I` を除去
+### GeminiReceiptClient
+- Gemini Vision API（`gemini-3.5-flash-lite`採用）のラッパー
+- `parseJaSheetFromImage()`: 列クロップTwo-Pass方式（全体画像＋取引日列単独クロップを並列送信、
+  NORMAL行数ベースで再アラインメント）
+- `parseJaSheetPartial()`: Phase5の部分再OCR（選択セルの行範囲のみクロップして再送信、
+  行数不一致時は自動的に伝票全体再送信へフォールバック）
+- 429/500/503/通信エラーに対する指数バックオフリトライ（`callWithRetry()`）
 
-### ProductNameCorrectorV3
-- 3 層補正構造（LOCKED → CONFIRMED → AUTO）
-- 100 点スコアリング（textSimilarity 60 + variantBonus 15 + 他）
-- 失敗駆動の昇格・降格ロジック
-
-### ExplicitJoinMatcher
-- OCR 分離文字の結合パターン学習
-- 例: `灯|油` → `灯油`（hitCount≥5 または manualConfirmCount≥2 で昇格）
+### JaSheetOcrMapper
+- Gemini OCR結果 → DB保存用`ParsedRow`への変換（`mapGeminiResultToParsedRows()`）
+- 商品マスタとの`canonicalKey`照合による表記統一・`productMasterId`紐づけ
+  （`applyProductMasterCorrection()`）
+- 小計行の区分名からカテゴリを仮判定（`assignJaSheetCategories()`、最終確定は保存後の
+  CategoryRecalculatorが担う）
 
 ### CategoryRecalculator
 - 月全体の全伝票・全行を対象にカテゴリを再計算
@@ -127,20 +134,20 @@ kotlinCompilerExtensionVersion = "1.5.4"
 | Step7 行切り抜き | スキップ（本番） |
 | Step8 二値化 | 88ms |
 | **GreenFrameDetector 合計** | **約1,225ms** |
-| OCRProcessor 全体 | 約2,500ms |
-| **全体合計** | **約3,700ms** |
 
-ボトルネックは ML Kit（Step2 全体 OCR: 1,034ms、Step8.5 商品名列 OCR: 984ms）。
+（`OCRProcessor`（ML Kit）行はPhase6で削除済み。Gemini移行後は`GreenFrameDetector`の後段は
+Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-flash-lite`で約4秒/回
+（`docs/TASK_gemini_ocr_migration.md`のPhase0実測値）。ローカル処理と異なり通信状況に
+左右されるため、単純な合算値としては扱わない）
 
 ---
 
 ## データベース設計
 
 - **DB 名**: `receipt_database`
-- **バージョン**: 15
-- **テーブル数**: 14
-- **マイグレーション**: 1→2→...→15（全ステップ定義済み）
-- `fallbackToDestructiveMigration()` は開発中のみ有効（本番リリース前に削除すること）
+- **バージョン**: 28
+- **マイグレーション**: 1→2→...→28（全ステップ定義済み、`fallbackToDestructiveMigration()`は
+  2026-07-12に削除済み。以後マイグレーション必須）
 
 | テーブル | 用途 |
 |---|---|
@@ -148,16 +155,18 @@ kotlinCompilerExtensionVersion = "1.5.4"
 | `sheet_data` | 伝票単位の小計・合計 |
 | `monthly_data` | 月次サマリー |
 | `product_master` | 商品マスタ（正規名・確定フラグ） |
-| `ocr_variants` | OCR 誤認識パターン学習（V3） |
+| `ocr_variants` | OCR 誤認識パターン学習（Gemini経路の商品名照合・CSV出力FKフォールバックで現役） |
 | `yayoi_accounts` | 弥生会計 勘定科目マスタ |
 | `rakuraku_accounts` | らくらく青色申告 勘定科目マスタ |
 | `rakuraku_tekiyou` | 摘要辞書（購買・預金共用） |
-| `correction_logs` | OCR 補正判定ログ |
-| `ocr_score_logs` | OCR スコア詳細ログ |
 | `deposit_meisai` | 通帳明細データ |
 | `tekiyou_matching_rules` | 預金摘要マッチングルール |
 | `ocr_fallback_logs` | OCR フォールバックログ |
-| `ocr_explicit_joins` | 分離テキスト結合パターン学習 |
+| `general_receipts` / `general_receipt_items` | 一般レシート（ML Kit + Gemini） |
+| `invoice_stores` | 登録番号・店舗マスタ |
+
+（`correction_logs`・`ocr_score_logs`・`ocr_explicit_joins`はPhase6（v27→v28、
+`MIGRATION_27_28`）でDROP済み）
 
 ---
 
@@ -184,10 +193,10 @@ kotlinCompilerExtensionVersion = "1.5.4"
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 # ログ確認（パフォーマンス）
-adb logcat -s GreenFrameDetector:D OCRProcessor:D | grep PERF
+adb logcat -s GreenFrameDetector:D | grep PERF
 
 # ログ確認（全体）
-adb logcat -s GreenFrameDetector:D OCRProcessor:D CameraViewModel:D OcrCaptureViewModel:D
+adb logcat -s GreenFrameDetector:D GeminiReceiptClient:D CameraViewModel:D ReceiptInputScreen:D
 ```
 
 ---

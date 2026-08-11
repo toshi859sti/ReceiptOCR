@@ -27,13 +27,15 @@
 - `fallbackToDestructiveMigration()` は削除済み（2026-07-12）
   - 以後、DBスキーマ変更時はマイグレーション追加が必須
   - マイグレーションを書き忘れるとデータ消失ではなく**起動時クラッシュ**になる点に注意
-- `OcrCaptureScreen`/`OcrCaptureViewModel`は実質的に主動線ではない（2026-08-09発見）
-  - `SheetEditorScreen`の「再OCR」ボタンからのみ到達する経路
+- `OcrCaptureScreen`/`OcrCaptureViewModel`・`SheetEditorScreen`/`SheetEditorViewModel`は
+  本番UIから到達不能と判明したため、Phase6（2026-08-11）で削除済み
   - 実際にユーザーが使う撮影導線（伝票データ→編集→伝票追加→撮影）は
     `ReceiptInputScreen.kt`内の独自`CameraView`実装（`showCamera`状態＋非公開`CameraView`
-    コンポーザブル）を使っている
-  - 撮影・OCR処理まわりに手を入れる際は、`OcrCaptureViewModel`側だけ直しても本番導線には
-    反映されない点に注意。両方の経路を確認すること
+    コンポーザブル）。実際のカメラプレビューUI（`CameraScreen.kt`・`CameraViewModel.kt`）と
+    OCR失敗画面（`OcrErrorScreen`、`ui/CameraScreenForOcr.kt`）は本番導線でも共有利用しており
+    削除していない
+  - 撮影・OCR処理まわりに手を入れる際は、`ReceiptInputScreen.kt`が主導線であることを
+    前提にすること
 
 ---
 
@@ -56,20 +58,5 @@
 
 ## 技術的負債
 
-- [ ] **OCR補正の失敗検知が未実装**（2026-05-06）
-  - `OcrVariantDao.onAutoFailure()` はDAOに定義済みだが、どこからも呼ばれていない
-  - 現状 `autoFailCount` は永遠に 0 のまま → 降格・無効化の仕組みが動いていない
-  - 本来の動作：自動補正が適用されたバリアントを記録しておき、
-    ユーザーが確定時に別の商品へ手動修正した場合に `onAutoFailure(variantId)` を呼ぶ
-  - 実装に必要なこと：
-    1. OCR補正時に「どのバリアントIDを適用したか」を行データに一時保持
-    2. `registerManualCorrection` 呼び出し時に、自動補正の結果と最終商品名を比較
-    3. 食い違いがあれば `onAutoFailure()` を呼ぶ
-
-- `ProductNameCorrector.kt` / `ProductNameCorrectorV2.kt`
-  - 旧バージョン。現在は `ProductNameCorrectorV3` を使用
-  - 参照コードとして残存しているが、削除可能か要確認
-- `ocr_score_logs` テーブル
-  - ログが蓄積し続ける。定期的なクリーンアップ機能が未実装
-- `correction_logs` テーブル
-  - 同上。容量管理の仕組みが必要
+（`ProductNameCorrectorV3`の自動補正学習システム・`ocr_score_logs`/`correction_logs`
+テーブルはPhase6（2026-08-11）で削除済み。関連する技術的負債はあわせて解消）

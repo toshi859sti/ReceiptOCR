@@ -42,9 +42,11 @@ JA伝票OCRについては**課金有効化キーの利用を前提とし、注�
 - `ExplicitJoinMatcher.kt`（分離テキスト結合学習）
 - Step7（行切り抜き）・Step8（二値化・グレーチャンネル前処理）
 - 列ROI個別切り出し（数量列・商品名列の個別OCR）→ 表全体を1枚の画像としてGeminiに渡す
-- `OcrLearningStatusScreen`・`DebugCaptureScreen`（画面ごと削除）
-- `ocr_variants`・`ocr_score_logs`・`correction_logs`・`ocr_explicit_joins` テーブル
-  （学習パラダイム自体が不要になるため。マイグレーションでDROP）
+- `OcrLearningStatusScreen`・`DebugCaptureScreen`・`OcrCaptureScreen`・`SheetEditorScreen`
+  （画面ごと削除。後者2つは調査の結果、本番UIから到達不能と判明したため追加）
+- `ocr_score_logs`・`correction_logs`・`ocr_explicit_joins` テーブル
+  （学習パラダイム自体が不要になるため。マイグレーションでDROP。`ocr_variants`は
+  手動補正学習・CSV出力FKフォールバック等で現役使用中のため削除対象外）
 
   **削除タイミングの方針（2026-08-07 決定）**：上記コードの物理削除はPhase6にまとめて
   実施するが、Gemini移行を本番投入した直後には行わない。本番で一定期間（安定稼働の確認が
@@ -426,35 +428,60 @@ Gemini再OCRは同一画像・同一プロンプトの単純リトライでは�
 
 ---
 
-## Phase 6：不要ファイル・画面の削除
+## Phase 6：不要ファイル・画面の削除（完了・2026-08-11）
 
-### 削除対象ファイル
-- [ ] `util/ProductNameCorrectorV3.kt`
-- [ ] `util/ProductNameCorrector.kt` / `ProductNameCorrectorV2.kt`（旧バージョン、
-      `known-issues.md` に記載の技術的負債）
-- [ ] `util/ExplicitJoinMatcher.kt`
-- [ ] `ui/OcrLearningStatusScreen.kt`
-- [ ] `ui/DebugCaptureScreen.kt`
-- [ ] `viewmodel/` 内の上記画面に対応するViewModel
+事前調査（Explore agent＋手動確認）で、当初の想定より大きな事実が判明した：
+`ReceiptInputScreen.kt`の`onCapture`パラメータ（`Screen.OcrCapture`への遷移）はコード中
+どこからも呼び出されておらず、`SheetEditorScreen`への唯一の入口（`OcrCaptureScreen`の
+`onComplete`）もこの経路の先にしか存在しなかった。つまり**`OcrCaptureScreen`→
+`SheetEditorScreen`の一群は本番UIから完全に到達不能**だった（このドキュメントや
+`functional-design.md`のMermaid図に残っていた「SheetEditorは現役」という記述は古い情報）。
+このため「再OCR」機能はユーザー判断で機能ごと削除し、`SheetEditorScreen`/
+`SheetEditorViewModel`も削除対象に追加した。
 
-### Navigation変更
-- [ ] `Navigation.kt` から `OcrLearningStatusScreen`・`DebugCaptureScreen` のルートを削除
-- [ ] `SettingsScreen` からのOCR学習状況への導線を削除
+一方で、`OcrCaptureScreen.kt`内の`CameraScreenForOcr`・`OcrErrorScreen`の2つの
+composableは、`ReceiptInputScreen.kt`のCameraViewが実際に呼び出している**現役の共有UI**
+だったため、`ui/CameraScreenForOcr.kt`として新規ファイルに退避してから残りを削除した。
+同様に`CameraScreen.kt`・`CameraViewModel.kt`（GreenFrameDetector撮影UI・自動撮影・
+トーチ制御本体）も`CameraScreenForOcr`経由で本番導線から呼ばれているため**削除しなかった**。
 
-### DB変更
-- [ ] 以下のテーブルを削除するマイグレーションを追加：
-      - `ocr_variants`
+### 削除したファイル
+- [x] `ui/DebugCaptureScreen.kt`
+- [x] `ui/OcrCaptureScreen.kt`（`CameraScreenForOcr`・`OcrErrorScreen`は
+      `ui/CameraScreenForOcr.kt`に退避してから削除）
+- [x] `viewmodel/OcrCaptureViewModel.kt`（`ParsedRow`・`applyProductMasterCorrection()`等の
+      共通処理は`util/JaSheetOcrMapper.kt`に退避してから削除）
+- [x] `ui/SheetEditorScreen.kt` / `viewmodel/SheetEditorViewModel.kt`（本番UIから到達不能と
+      判明したため追加削除。「再OCR」機能ごと廃止）
+- [x] `ui/OcrLearningStatusScreen.kt`
+- [x] `util/LearningDataExporter.kt` / `util/LearningDataImporter.kt`
+- [x] `util/OCRProcessor.kt` / `util/MultiScaleOcrProcessor.kt`
+- [x] `util/ProductNameCorrectorV3.kt`
+- [x] `util/ProductNameCorrector.kt` / `ProductNameCorrectorV2.kt`
+- [x] `util/ExplicitJoinMatcher.kt`
+
+### Navigation変更（完了）
+- [x] `Navigation.kt` から `Screen.DebugCapture`・`Screen.OcrCapture`・`Screen.SheetEditor`・
+      `Screen.OcrLearningStatus` のルート・composableブロック・
+      `OcrCaptureViewModelFactory`/`SheetEditorViewModelFactory`を削除
+- [x] `MenuScreen`からデバッグ撮影ボタン、`SettingsScreen`からOCR学習状況への導線を削除
+- [x] `ReceiptInputScreen.kt`の未使用`onCapture`パラメータ（呼び出し箇所なし）も削除
+
+### DB変更（完了、v27→v28）
+- [x] 以下のテーブルを削除するマイグレーション（`MIGRATION_27_28`）を追加：
       - `ocr_score_logs`
       - `correction_logs`
       - `ocr_explicit_joins`
-- [ ] `product_master.kaikakeTekiyouId` 等、削除対象テーブルに依存しないFK関係は
-      影響がないことを確認する
+- [x] **`ocr_variants`は削除しなかった**：`ReceiptInputScreen.kt`の手動補正学習
+      （`registerManualCorrectionsOnCommit`）・`OutputConfirmScreen.kt`のFKフォールバック・
+      `ProductListScreen.kt`/`SettingsScreen.kt`のツール群で現役使用中と判明したため
+      （このドキュメントの旧記載は誤りだった）
 
-### OCRProcessor.kt の扱い
-- [ ] ML Kitのラッパーとしての `OCRProcessor.kt` は、一般レシート（一般購買）パイプライン側で
-      引き続き使用中の可能性があるため、**安易に全削除しない**。JA伝票専用ロジック
-      （列特化OCR・数量Latinモデル呼び出し等）のみ削除し、一般レシート側で使っている
-      メソッドは残すこと。着手前に一般レシートパイプラインの依存箇所を確認すること。
+### OCRProcessor.kt の扱い（完了）
+一般レシート（`GeneralReceiptCaptureScreen.kt`）は独自の`TextRecognition.getClient(...)`
+インスタンスを持ち、`OCRProcessor.kt`を一切呼んでいないことを確認した。
+`OCRProcessor.kt`の唯一の呼び出し元は`DebugCaptureScreen.kt`（削除済み）だったため、
+**全削除して問題なかった**（旧記載の懸念は杞憂だった）。
 
 ---
 
@@ -479,9 +506,10 @@ Gemini再OCRは同一画像・同一プロンプトの単純リトライでは�
 - 検算バリデーション（小計整合性）が機能し、不一致行は確定前に強制的にユーザー確認を求める
 - confidence表示により、要確認行が一覧・バッジで識別できる
 - 再OCRが部分クロップ方式で機能し、対象行のみ再送信される
-- OcrLearningStatusScreen・DebugCaptureScreenが削除され、Navigation・DBともに整合性が保たれている
+- OcrLearningStatusScreen・DebugCaptureScreen・OcrCaptureScreen・SheetEditorScreenが削除され、
+  Navigation・DBともに整合性が保たれている（2026-08-11完了、`./gradlew assembleDebug`と
+  実機のv27→v28マイグレーション動作で確認）
 - 一般レシート（一般購買）OCRパイプラインが今回の変更で壊れていないことを確認済み
-- `fallbackToDestructiveMigration()` が開発中のみ有効であることを維持（本番前削除は別タスク）
 
 ## 進捗メモ
 

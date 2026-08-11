@@ -1,7 +1,7 @@
 # CURRENT_TASK.md
 
 ## 作業タイトル
-JA購買伝票OCRパイプライン Gemini Vision API移行（Phase 0〜5完了、Phase6未着手）
+JA購買伝票OCRパイプライン Gemini Vision API移行（Phase 0〜6すべて完了）
 
 ## 目的・背景
 詳細計画は `docs/TASK_gemini_ocr_migration.md` を参照。ML Kit日本語モデルの精度が
@@ -266,16 +266,16 @@ JA購買伝票OCRパイプライン Gemini Vision API移行（Phase 0〜5完了�
   - `./gradlew compileDebugKotlin`でコンパイル確認済み（実機でのブロック動作確認は未実施）
 
 ### 未完了・中断した理由
-Phase0〜5はすべて完了・実機確認済み。Phase5「再OCRの部分クロップ再送信化」を実装し、
-実機で5パターン（回帰・金額のみ・取引日のみ・離れた複数行・合計行混在フォールバック）を
-確認済み（下記「続き5」参照）。検証中に実際に発生した「同じ伝票の重複撮影による小計異常」
-事故を受けて、他の伝票との小計カテゴリ重複を保存前にブロックする機能も追加・実機確認済み。
-中断した作業はなし。
+Phase0〜6すべて完了・実機確認済み。Phase6（ML Kit時代のJA伝票専用コード削除）を実施し、
+実機のv27→v28マイグレーション・UI表示・撮影/保存フロー・一般レシート（ML Kit経路）を
+確認済み（下記「続き7」参照）。中断した作業はなし。
 
 ### 次回セッションで最初にやること
-1. Phase6：ML Kit経路・`DebugCaptureScreen`等の削除（本番安定稼働後）
-2. 引き続き実機で複数パターン（返品行・複数ページ・小計なし等）の伝票を撮影し、
-   Gemini結果と今回追加した保存時チェック群の安定性を継続確認する
+1. 引き続き実機で複数パターン（返品行・複数ページ・小計なし等）の伝票を撮影し、
+   Gemini結果と保存時チェック群の安定性を継続確認する
+2. Phase6で計画外だったドキュメント10件（`glossary.md`・`OCR_SPEC.md`・
+   `CORRECTION_SYSTEM.md`・`DICTIONARY.md`・`OCR_LEARNING_REDESIGN.md`等）に残る
+   削除済みクラスへの言及の整理（優先度は低い、アーカイブ的な内容のため急ぎではない）
 
 ### 2026-08-11（続き6）：実機継続確認中に発見したトーチ（懐中電灯）消灯漏れバグを修正（完了）
 本番導線で実際のJA伝票2枚（令和7年8月、一般購買20行＋給油所小計・給油所1行）を撮影し、
@@ -308,6 +308,60 @@ Phase0〜5はすべて完了・実機確認済み。Phase5「再OCRの部分ク�
 `./gradlew compileDebugKotlin`・`assembleDebug`・`adb install -r`で確認、実機で
 「フラッシュ設定オフ→ライトボタンで手動ON→自動撮影→消灯確認」の手順を再現し、
 修正後は正しく消灯することを確認済み（ユーザー確認済み：「消えるようになりました」）。
+
+### 2026-08-11（続き7）：Phase6（ML Kit時代のJA伝票専用コード削除）を完了
+
+Plan modeで調査・計画・ユーザー承認を経て実施。事前調査で当初の想定より大きな事実が判明した：
+`ReceiptInputScreen.kt`の`onCapture`パラメータ（`Screen.OcrCapture`への遷移）はコード中
+どこからも呼び出されておらず、`SheetEditorScreen`への唯一の入口（`OcrCaptureScreen`の
+`onComplete`）もこの経路の先にしか存在しなかった。つまり**`OcrCaptureScreen`→
+`SheetEditorScreen`の一群は本番UIから完全に到達不能**だった（過去セッションの
+「再OCRボタンからのみ到達する副次画面」という認識も、実際にはさらに一歩踏み込んで
+「その再OCRボタン自体への入口も無かった」という事実だった）。ユーザー判断で「再OCR」機能は
+機能ごと削除、`DebugCaptureScreen`（`MenuScreen`から到達可能な現役画面）も削除に。
+
+**削除したファイル**（22ファイル）：`ui/DebugCaptureScreen.kt`、`ui/OcrCaptureScreen.kt`、
+`viewmodel/OcrCaptureViewModel.kt`、`ui/SheetEditorScreen.kt`、
+`viewmodel/SheetEditorViewModel.kt`、`ui/OcrLearningStatusScreen.kt`、
+`util/LearningDataExporter.kt`/`LearningDataImporter.kt`、`util/OCRProcessor.kt`、
+`util/MultiScaleOcrProcessor.kt`、`util/ProductNameCorrectorV3/V2/(無印).kt`、
+`util/ExplicitJoinMatcher.kt`、`data/CorrectionLog(Dao).kt`、`data/OcrScoreLog(Dao).kt`、
+`data/OcrExplicitJoin(Dao).kt`。
+
+**実装時の重要な発見・修正**：`OcrCaptureScreen.kt`を丸ごと削除しようとしたところ
+`ReceiptInputScreen.kt`のコンパイルが破損した。同ファイル内の`CameraScreenForOcr`・
+`OcrErrorScreen`の2つのcomposableは実は`ReceiptInputScreen.kt`のCameraViewが直接呼んでいる
+**現役の共有UI**だったため、`ui/CameraScreenForOcr.kt`として新規ファイルに退避してから
+残りを削除した。同様の理由で`CameraScreen.kt`・`CameraViewModel.kt`（今回のトーチバグを
+修正した本体）も削除しなかった。`OcrCaptureViewModel`の`ParsedRow`・
+`applyProductMasterCorrection()`・`mapGeminiResultToParsedRows()`等も
+`ReceiptInputScreen.kt`が直接依存する共通処理だったため、`util/JaSheetOcrMapper.kt`
+（新規object）に退避してから元ファイルを削除した。
+
+**DB変更**：v27→v28（`MIGRATION_27_28`）で`correction_logs`・`ocr_score_logs`・
+`ocr_explicit_joins`の3テーブルをDROP。**`ocr_variants`は削除しなかった**
+（`docs/TASK_gemini_ocr_migration.md`の旧Phase6計画は誤ってこのテーブルも削除対象に
+含めていたが、実際は`ReceiptInputScreen.kt`の手動補正学習・`OutputConfirmScreen.kt`の
+FKフォールバック・`ProductListScreen.kt`/`SettingsScreen.kt`のツール群で現役使用中と判明し、
+計画修正の上で除外した）。
+
+**ドキュメント更新**：`docs/TASK_gemini_ocr_migration.md`（Phase6セクションを完了マーク・
+`ocr_variants`誤記を訂正）、`docs/known-issues.md`、`docs/functional-design.md`
+（Mermaid画面遷移図を更新）、`docs/repository-structure.md`、`docs/architecture.md`
+（システムフロー図・DB設計・logcatコマンドをGemini版に更新）、`CLAUDE.md`
+（DBバージョン表記・debugMode注記・ProductNameCorrectorV3節削除、いずれもプラン承認時に
+ユーザー確認済み）。`docs/APP_SPECIFICATION.md`はArUcoマーカー時代の記述が大半で
+Phase6と無関係に全面的に古かったため、個別の記述修正ではなく先頭に非推奨バナーを追加する
+方針にとどめた。他10件（`glossary.md`・`OCR_SPEC.md`・`CORRECTION_SYSTEM.md`・
+`DICTIONARY.md`・`OCR_LEARNING_REDESIGN.md`等）にも死んだクラスへの言及が残っているが、
+計画のスコープ外のため今回は着手していない（次回以降の課題）。
+
+**実機確認**：`./gradlew assembleDebug`→`adb install -r`で実データ（令和7年8月分等）入りの
+端末にv27→v28マイグレーションを適用し無停止起動を確認。メニュー画面から「デバッグ撮影」
+ボタンが消えたこと、設定画面から「OCR学習状況」項目が消えたこと、`ReceiptInputScreen`が
+既存伝票データを正常に読み込み表示すること（`JaSheetOcrMapper`移設の影響なし）、一般レシート
+撮影画面（ML Kit経路）が引き続き正常に開くことをスクリーンショット付きで確認。
+クラッシュ・FATAL例外なし。
 
 ### 2026-08-11（続き5）：Phase5実装・実機確認、小計カテゴリの伝票間重複ブロックを追加（完了）
 Phase4完了時点の残タスク（伝票削除の番号詰め・合計欄0円ブロック）の実機確認（下記「続き4」）に

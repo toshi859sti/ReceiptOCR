@@ -58,7 +58,6 @@ fun ReceiptInputScreen(
     eraYear: Int,
     database: com.example.greenframeocr.data.ReceiptDatabase,
     onBack: () -> Unit,
-    onCapture: () -> Unit,
     onNavigateToSummary: (Int, Int) -> Unit = { _, _ -> }  // (year, month)
 ) {
     val context = LocalContext.current
@@ -1778,8 +1777,8 @@ private fun CameraView(
         if (!geminiResult.dateColumnAligned) {
             android.util.Log.w("ReceiptInputScreen", "取引日列のアラインメントが取れませんでした（要確認）")
         }
-        val parsed = com.example.greenframeocr.viewmodel.OcrCaptureViewModel.applyProductMasterCorrection(
-            com.example.greenframeocr.viewmodel.OcrCaptureViewModel.mapGeminiResultToParsedRows(geminiResult),
+        val parsed = com.example.greenframeocr.util.JaSheetOcrMapper.applyProductMasterCorrection(
+            com.example.greenframeocr.util.JaSheetOcrMapper.mapGeminiResultToParsedRows(geminiResult),
             productMasterDao
         )
         return OcrRunResult.Full(parsed, geminiResult.dateColumnAligned)
@@ -1804,7 +1803,7 @@ private fun CameraView(
                     )
                     if (partial.aligned) {
                         val mapped = mapPartialResultToParsedRows(partial, partialReOcrTarget.rowRange)
-                        val corrected = com.example.greenframeocr.viewmodel.OcrCaptureViewModel
+                        val corrected = com.example.greenframeocr.util.JaSheetOcrMapper
                             .applyProductMasterCorrection(mapped, productMasterDao)
                         OcrRunResult.Partial(partialReOcrTarget.rowRange, corrected)
                     } else {
@@ -1974,13 +1973,13 @@ private data class PartialReOcrTarget(
 /** CameraView.runOcr() の結果。選択セルの有無で Full（伝票全体）/ Partial（行範囲クロップ）に分岐する */
 private sealed class OcrRunResult {
     data class Full(
-        val parsedRows: List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>,
+        val parsedRows: List<com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow>,
         val dateColumnAligned: Boolean
     ) : OcrRunResult()
 
     data class Partial(
         val rowRange: IntRange,
-        val rows: List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>
+        val rows: List<com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow>
     ) : OcrRunResult()
 }
 
@@ -2011,9 +2010,9 @@ private fun computePartialReOcrTarget(currentRows: List<ReceiptRowData>): Partia
 private fun mapPartialResultToParsedRows(
     partial: com.example.greenframeocr.util.GeminiReceiptClient.PartialJaSheetResult,
     rowRange: IntRange
-): List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow> =
+): List<com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow> =
     partial.rows.mapIndexed { i, row ->
-        com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow(
+        com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow(
             rowIndex = rowRange.first + i,
             date = row.dateRaw,
             productName = row.itemName,
@@ -2571,7 +2570,7 @@ private fun formatOcrDate(
 }
 
 private fun convertParsedRowsToRowData(
-    parsedRows: List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>,
+    parsedRows: List<com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow>,
     sheetNumber: Int = 1,
     fixYearMonth: Boolean = false,
     defaultYear: Int = 7,

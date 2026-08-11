@@ -1,5 +1,14 @@
 # ReceiptOCR アプリケーション 詳細仕様書
 
+> **⚠️ このドキュメントは古いプロトタイプ段階（ArUcoマーカー式台紙・アプリ名「Remoni」時代）の
+> 記述であり、現行の設計（台紙なし・緑枠検出方式、アプリ名「JA仕訳変換」、Gemini Vision API
+> によるJA伝票OCR）とは大きく乖離している。現行の仕様は `CLAUDE.md`・
+> `docs/GreenFrameOCR_SPEC.md`・`docs/TASK_gemini_ocr_migration.md` を参照すること。
+> Phase6（2026-08-11、ML Kit時代のJA伝票専用コード削除）に伴い、本ドキュメントが言及する
+> `OcrCaptureScreen`・`SheetEditorScreen`・`OcrLearningStatusScreen`・`OCRProcessor`・
+> `MultiScaleOcrProcessor`・`ProductNameCorrectorV2/V3`・`ExplicitJoinMatcher`は
+> いずれも削除済み。**このファイル全体の内容は参考程度に留め、鵜呑みにしないこと。**
+
 ## 1. アプリの概要と目的
 
 ### アプリ基本情報

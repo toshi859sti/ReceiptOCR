@@ -50,15 +50,12 @@ Room データベース関連クラスを配置する。
 | `SheetData.kt` | 伝票単位サマリーエンティティ |
 | `MonthlyData.kt` | 月次サマリーエンティティ |
 | `ProductMaster.kt` | 商品マスタエンティティ |
-| `OcrVariant.kt` | OCR バリアント学習エンティティ |
-| `OcrExplicitJoin.kt` | 分離テキスト結合パターンエンティティ |
+| `OcrVariant.kt` | OCR バリアント学習エンティティ（Gemini経路の商品名照合・CSV出力FKフォールバックで現役） |
 | `YayoiAccount.kt` | 弥生会計 勘定科目エンティティ |
 | `RakurakuAccount.kt` | らくらく 勘定科目エンティティ |
 | `RakurakuTekiyou.kt` | 摘要辞書エンティティ |
 | `DepositMeisai.kt` | 通帳明細エンティティ |
 | `TekiyouMatchingRule.kt` | 預金摘要マッチングルールエンティティ |
-| `CorrectionLog.kt` | OCR 補正ログエンティティ |
-| `OcrScoreLog.kt` | OCR スコアログエンティティ |
 | `OcrFallbackLog.kt` | OCR フォールバックログエンティティ |
 | `AppPreferences.kt` | SharedPreferences ラッパー |
 | `DatabaseInitializer.kt` | 初回起動時の初期データ投入 |
@@ -79,10 +76,9 @@ Jetpack Compose の画面ファイル。1ファイル1画面が原則。
 | `MenuScreen.kt` | メインメニュー | `menu` |
 | `PurchaseMenuScreen.kt` | 購買メニュー | `purchase_menu` |
 | `DepositMenuScreen.kt` | 預金メニュー | `deposit_menu` |
-| `OcrCaptureScreen.kt` | OCR 撮影 | `ocr_capture` |
-| `CameraScreen.kt` | カメラプレビュー（共通） | — |
-| `ReceiptInputScreen.kt` | 購買リスト | `receipt_input` |
-| `SheetEditorScreen.kt` | 伝票編集 | `sheet_editor/{year}/{month}/{sheetNumber}` |
+| `ReceiptInputScreen.kt` | 購買リスト・撮影・編集（主導線） | `receipt_input` |
+| `CameraScreen.kt` | カメラプレビュー（共通・トーチ制御含む） | — |
+| `CameraScreenForOcr.kt` | カメラ撮影ラッパー・OCR失敗画面（`ReceiptInputScreen`から利用） | — |
 | `MonthlySummaryScreen.kt` | 月次サマリー | `monthly_summary/{year}/{month}` |
 | `ProductListScreen.kt` | 商品マスタリスト | `product_list` |
 | `KaikakeTekiyouScreen.kt` | 買掛摘要辞書 | `kaikake_tekiyou` |
@@ -92,8 +88,6 @@ Jetpack Compose の画面ファイル。1ファイル1画面が原則。
 | `YokinTekiyouScreen.kt` | 預金摘要辞書 | `yokin_tekiyou` |
 | `RakurakuTekiyouScreen.kt` | らくらく摘要辞書 | `rakuraku_tekiyou` |
 | `SettingsScreen.kt` | 設定・データ管理 | `settings` |
-| `OcrLearningStatusScreen.kt` | OCR 学習状況 | `ocr_learning_status` |
-| `DebugCaptureScreen.kt` | デバッグ撮影 | `debug_capture` |
 | `AccountSettingsScreen.kt` | 勘定科目設定 | **Navigation 未接続** |
 
 ### `util/`
@@ -103,15 +97,11 @@ Jetpack Compose の画面ファイル。1ファイル1画面が原則。
 | ファイル | 役割 |
 |---|---|
 | `GreenFrameDetector.kt` | 緑枠検出・透視変換（OpenCV） |
-| `OCRProcessor.kt` | ML Kit OCR ラッパー・列特化 OCR |
+| `GeminiReceiptClient.kt` | Gemini Vision API 呼び出し（JA伝票OCR・列クロップTwo-Pass・部分再OCR） |
+| `JaSheetOcrMapper.kt` | Gemini OCR結果→DB保存用行データへの変換・商品マスタ照合 |
 | `UnderlyingBaseProcessor.kt` | 行分割・列検出・OCR パイプライン |
-| `ProductNameCorrectorV3.kt` | 商品名補正（3層・スコアリング） |
-| `ProductNameCorrectorV2.kt` | 旧バージョン（参照用・使用停止） |
-| `ProductNameCorrector.kt` | 旧バージョン（参照用・使用停止） |
 | `CategoryRecalculator.kt` | カテゴリ再計算 |
-| `ExplicitJoinMatcher.kt` | 分離テキスト結合パターンマッチング |
 | `ImagePreprocessor.kt` | 画像前処理ユーティリティ |
-| `MultiScaleOcrProcessor.kt` | マルチスケール OCR（補助） |
 | `OcrQualityEvaluator.kt` | OCR 結果品質評価 |
 | `OcrResultEvaluator.kt` | OCR 結果評価 |
 | `OcrResultMerger.kt` | 複数 OCR 結果のマージ |
@@ -124,8 +114,6 @@ Jetpack Compose の画面ファイル。1ファイル1画面が原則。
 | ファイル | 役割 |
 |---|---|
 | `CameraViewModel.kt` | カメラ・GreenFrameDetector 制御 |
-| `OcrCaptureViewModel.kt` | OCR パイプライン・DB 保存 |
-| `SheetEditorViewModel.kt` | 伝票編集 UI ロジック |
 
 ---
 
