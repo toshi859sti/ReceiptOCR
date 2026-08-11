@@ -23,9 +23,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.util.ImagePreprocessor
+import com.example.greenframeocr.util.OcrQualityEvaluator
+import com.example.greenframeocr.util.YuvToRgbConverter
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,6 +52,14 @@ fun GeneralReceiptCaptureScreen(
     var imageCaptureRef by remember { mutableStateOf<ImageCapture?>(null) }
     var cameraRef by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
     var isTorchOn by remember { mutableStateOf(false) }
+    var sharpness by remember { mutableStateOf(0.0) }
+
+    val appPreferences = remember { AppPreferences(context) }
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    val lastAnalysisTime = remember { AtomicLong(0L) }
+    DisposableEffect(Unit) {
+        onDispose { cameraExecutor.shutdown() }
+    }
 
     // 画面起動時に前回の残留データをクリア
     LaunchedEffect(Unit) {
@@ -88,13 +102,43 @@ fun GeneralReceiptCaptureScreen(
             .build()
         imageCaptureRef = imageCapture
 
+        // 鮮鋭度をリアルタイム表示するための解析用ユースケース（自動撮影はしない、表示のみ）
+        val imageAnalyzer = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also {
+                it.setAnalyzer(cameraExecutor) { imageProxy ->
+                    val now = System.currentTimeMillis()
+                    if (now - lastAnalysisTime.get() >= 200L) {
+                        lastAnalysisTime.set(now)
+                        try {
+                            val bitmap = YuvToRgbConverter.imageProxyToBitmapDirect(imageProxy)
+                            if (!bitmap.isRecycled) {
+                                val scale = 960f / maxOf(bitmap.width, bitmap.height)
+                                val w = (bitmap.width * scale).toInt()
+                                val h = (bitmap.height * scale).toInt()
+                                val small = Bitmap.createScaledBitmap(bitmap, w, h, false)
+                                val gray = ImagePreprocessor.toGray(small)
+                                sharpness = OcrQualityEvaluator.calculateSharpness(gray)
+                                gray.recycle()
+                                small.recycle()
+                            }
+                        } catch (e: Exception) {
+                            Log.e("GeneralReceiptCapture", "Sharpness calc failed: ${e.message}")
+                        }
+                    }
+                    imageProxy.close()
+                }
+            }
+
         try {
             cameraProvider.unbindAll()
             cameraRef = cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 CameraSelector.DEFAULT_BACK_CAMERA,
                 preview,
-                imageCapture
+                imageCapture,
+                imageAnalyzer
             )
         } catch (e: Exception) {
             Log.e("GeneralReceiptCapture", "Camera bind failed: ${e.message}")
@@ -134,6 +178,17 @@ fun GeneralReceiptCaptureScreen(
             AndroidView(
                 factory = { previewView },
                 modifier = Modifier.fillMaxSize()
+            )
+
+            // 鮮鋭度リアルタイム表示（閾値以上で緑、未満で黄。自動撮影はしない）
+            Text(
+                text = "${"%.0f".format(sharpness)}",
+                fontSize = 40.sp,
+                color = if (sharpness >= appPreferences.minSharpness.toDouble()) Color.Green else Color.Yellow,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 16.dp)
             )
 
             // ローディングオーバーレイ
