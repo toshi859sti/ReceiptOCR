@@ -18,10 +18,6 @@
 - `WARP_PX_PER_MM = 15.0` は変更禁止
   - 20px/mm に変更すると Step7 行切り抜きが 2.6 倍遅くなる（実測済み）
   - 変更する場合は全パイプラインの再計測が必要
-- ML Kit の最小文字高さは実質 100px（40px 以下で精度急落）
-  - 透視変換解像度を下げると商品名・数量の認識精度が著しく劣化する
-- ML Kit 日本語モデルはオフライン動作のため assets にバンドルが必須
-  - モデルサイズが大きく APK サイズに影響する
 - CameraX ImageAnalysis の 4K 解像度はデバイスによってサポート外の場合あり
   - 非対応デバイスでは自動フォールバックするが精度低下の可能性あり
 - `Utils.bitmapToMat` は RGBA 4ch を返す
@@ -38,6 +34,11 @@
     削除していない
   - 撮影・OCR処理まわりに手を入れる際は、`ReceiptInputScreen.kt`が主導線であることを
     前提にすること
+- **ML Kitは2026-08-11に依存ごと完全削除**（`build.gradle.kts`・`proguard-rules.pro`から除去）。
+  一般レシート（`GeneralReceiptCaptureScreen.kt`）もJA伝票と同じくGemini Vision APIへの
+  画像直接送信（`parseReceiptFromImage`）に一本化した。オフライン・APIキー未設定時の
+  手動入力フォールバックは廃止済み（精度優先のユーザー判断、`onImageCaptured()`は
+  単純にエラー表示するのみ）
 
 ---
 
