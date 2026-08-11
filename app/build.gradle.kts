@@ -72,10 +72,6 @@ dependencies {
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.5")
 
-    // ML Kit Text Recognition
-    implementation("com.google.mlkit:text-recognition:16.0.1")  // Latin script (default)
-    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")  // Japanese script
-
     // OpenCV
     implementation("org.opencv:opencv:4.9.0")
 

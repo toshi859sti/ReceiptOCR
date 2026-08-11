@@ -7,7 +7,6 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.FlashlightOff
@@ -20,22 +19,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
-private enum class CaptureMode(val label: String) {
-    ML_KIT("ML Kit OCR"),
-    GEMINI_IMAGE("Gemini 画像")
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,7 +40,6 @@ fun GeneralReceiptCaptureScreen(
     val uiState by viewModel.uiState.collectAsState()
     val pendingReceipt by viewModel.pendingReceipt.collectAsState()
 
-    var captureMode by remember { mutableStateOf(CaptureMode.ML_KIT) }
     var isCapturing by remember { mutableStateOf(false) }
     var ocrStarted by remember { mutableStateOf(false) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
@@ -58,23 +47,14 @@ fun GeneralReceiptCaptureScreen(
     var cameraRef by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
     var isTorchOn by remember { mutableStateOf(false) }
 
-    val recognizer = remember {
-        TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-    }
-    DisposableEffect(Unit) {
-        onDispose { recognizer.close() }
-    }
-
     // 画面起動時に前回の残留データをクリア
     LaunchedEffect(Unit) {
         viewModel.clearPending()
     }
 
-    // エラー・GeminiUnavailable → Snackbar
+    // エラー → Snackbar
     LaunchedEffect(uiState) {
         when (val s = uiState) {
-            is GeneralReceiptViewModel.UiState.GeminiUnavailable ->
-                snackbarMessage = "APIキー未設定またはオフラインのため手動入力が必要です"
             is GeneralReceiptViewModel.UiState.Error -> {
                 snackbarMessage = s.message
                 isCapturing = false
@@ -157,8 +137,7 @@ fun GeneralReceiptCaptureScreen(
             )
 
             // ローディングオーバーレイ
-            val isProcessing = uiState is GeneralReceiptViewModel.UiState.OcrRunning ||
-                    uiState is GeneralReceiptViewModel.UiState.GeminiRunning ||
+            val isProcessing = uiState is GeneralReceiptViewModel.UiState.GeminiRunning ||
                     isCapturing
             if (isProcessing) {
                 Box(
@@ -173,7 +152,6 @@ fun GeneralReceiptCaptureScreen(
                         Text(
                             text = when (uiState) {
                                 is GeneralReceiptViewModel.UiState.GeminiRunning -> "AIで解析中..."
-                                is GeneralReceiptViewModel.UiState.OcrRunning -> "OCR処理中..."
                                 else -> "処理中..."
                             },
                             color = Color.White,
@@ -214,13 +192,6 @@ fun GeneralReceiptCaptureScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // モード切替トグル
-                ModeToggle(
-                    selected = captureMode,
-                    onSelect = { captureMode = it },
-                    enabled = !isProcessing
-                )
-
                 // シャッターボタン
                 FloatingActionButton(
                     onClick = {
@@ -237,29 +208,8 @@ fun GeneralReceiptCaptureScreen(
                                     image.close()
                                     cameraRef?.cameraControl?.enableTorch(false)
                                     isTorchOn = false
-
-                                    when (captureMode) {
-                                        CaptureMode.ML_KIT -> {
-                                            val inputImage = InputImage.fromBitmap(bitmap, 0)
-                                            recognizer.process(inputImage)
-                                                .addOnSuccessListener { visionText ->
-                                                    isCapturing = false
-                                                    val ocrText = visionText.textBlocks
-                                                        .joinToString("\n") { it.text }
-                                                    viewModel.onOcrCompleted(ocrText)
-                                                }
-                                                .addOnFailureListener { e ->
-                                                    Log.e("GeneralReceiptCapture", "OCR failed: ${e.message}")
-                                                    isCapturing = false
-                                                    ocrStarted = false
-                                                    snackbarMessage = "OCR処理に失敗しました"
-                                                }
-                                        }
-                                        CaptureMode.GEMINI_IMAGE -> {
-                                            isCapturing = false
-                                            viewModel.onImageCaptured(bitmap)
-                                        }
-                                    }
+                                    isCapturing = false
+                                    viewModel.onImageCaptured(bitmap)
                                 }
 
                                 override fun onError(exception: ImageCaptureException) {
@@ -284,48 +234,3 @@ fun GeneralReceiptCaptureScreen(
     }
 }
 
-@Composable
-private fun ModeToggle(
-    selected: CaptureMode,
-    onSelect: (CaptureMode) -> Unit,
-    enabled: Boolean
-) {
-    Row(
-        modifier = Modifier
-            .background(
-                color = Color.Black.copy(alpha = 0.55f),
-                shape = RoundedCornerShape(24.dp)
-            )
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        CaptureMode.entries.forEach { mode ->
-            val isSelected = selected == mode
-            Button(
-                onClick = { onSelect(mode) },
-                enabled = enabled,
-                shape = RoundedCornerShape(20.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSelected)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        Color.Transparent,
-                    contentColor = Color.White,
-                    disabledContainerColor = if (isSelected)
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                    else
-                        Color.Transparent,
-                    disabledContentColor = Color.White.copy(alpha = 0.5f)
-                ),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                elevation = null
-            ) {
-                Text(
-                    text = mode.label,
-                    fontSize = 13.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                )
-            }
-        }
-    }
-}

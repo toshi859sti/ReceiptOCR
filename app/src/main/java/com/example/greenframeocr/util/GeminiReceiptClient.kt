@@ -383,28 +383,10 @@ $accountsText
                     put("temperature", 0)
                 })
             }
-            executeRequest(requestBody, apiKey, source = "image")
+            executeRequest(requestBody, apiKey)
         }
 
-    suspend fun parseReceipt(ocrText: String, apiKey: String): ReceiptParseResult? =
-        withContext(Dispatchers.IO) {
-            val requestBody = JSONObject().apply {
-                put("contents", JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("parts", JSONArray().apply {
-                            put(JSONObject().apply { put("text", buildPrompt(ocrText)) })
-                        })
-                    })
-                })
-                put("generationConfig", JSONObject().apply {
-                    put("responseMimeType", "application/json")
-                    put("temperature", 0)
-                })
-            }
-            executeRequest(requestBody, apiKey, source = "text")
-        }
-
-    private suspend fun executeRequest(requestBody: JSONObject, apiKey: String, source: String): ReceiptParseResult? {
+    private suspend fun executeRequest(requestBody: JSONObject, apiKey: String): ReceiptParseResult? {
         val client = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
@@ -429,7 +411,7 @@ $accountsText
                     return null
                 }
                 parseUsageStats(JSONObject(body))?.let {
-                    Log.d("GeminiReceiptClient", "[$source] ${it.toDisplayString()}")
+                    Log.d("GeminiReceiptClient", "parseReceiptFromImage: ${it.toDisplayString()}")
                 }
                 parseGeminiResponse(body)
             }
@@ -438,25 +420,6 @@ $accountsText
             null
         }
     }
-
-    private fun buildPrompt(ocrText: String): String = """
-以下はレシートをOCRで読み取ったテキストです。
-このテキストから以下のJSON形式で情報を抽出してください。日付が不明な場合は空文字列にしてください。
-価格は税込の整数（円）で返してください。
-小計・合計・ポイント・お釣り等の行は items に含めないでください。
-
-{
-  "storeName": "店舗名",
-  "date": "yyyy-MM-dd",
-  "items": [
-    { "name": "商品名", "price": 金額 }
-  ],
-  "total": 合計金額
-}
-
-OCRテキスト:
-$ocrText
-""".trimIndent()
 
     private fun buildImagePrompt(): String = """
 このレシート画像から以下のJSON形式で情報を抽出してください。

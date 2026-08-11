@@ -285,8 +285,7 @@ fun GeneralReceiptConfirmScreen(
                         viewModel.saveReceipt(receipt, items)
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = uiState !is GeneralReceiptViewModel.UiState.OcrRunning &&
-                            uiState !is GeneralReceiptViewModel.UiState.GeminiRunning
+                    enabled = uiState !is GeneralReceiptViewModel.UiState.GeminiRunning
                 ) {
                     Text("保存")
                 }

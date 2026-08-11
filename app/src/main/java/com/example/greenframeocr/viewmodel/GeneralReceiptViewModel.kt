@@ -94,71 +94,13 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
 
     sealed class UiState {
         object Idle : UiState()
-        object OcrRunning : UiState()
         object GeminiRunning : UiState()
-        object GeminiUnavailable : UiState()
         data class Done(val receiptId: Long) : UiState()
         data class Error(val message: String) : UiState()
     }
 
     private val _uiState = MutableStateFlow<UiState>(UiState.Idle)
     val uiState: StateFlow<UiState> = _uiState
-
-    fun onOcrCompleted(ocrText: String) {
-        viewModelScope.launch {
-            _uiState.value = UiState.OcrRunning
-            val regNum = NtaInvoiceClient.extractRegistrationNumber(ocrText)
-            val apiKey = prefs.geminiApiKey
-            val isOnline = isNetworkAvailable()
-
-            if (apiKey.isNotBlank() && isOnline) {
-                _uiState.value = UiState.GeminiRunning
-                try {
-                    val result = GeminiReceiptClient.parseReceipt(ocrText, apiKey)
-                    if (result != null) {
-                        _pendingReceipt.value = GeneralReceipt(
-                            date = result.date,
-                            storeName = result.storeName,
-                            total = result.total,
-                            rawOcrText = ocrText,
-                            geminiUsed = true,
-                            registrationNumber = regNum ?: ""
-                        )
-                        _pendingItems.value = result.items.map { item ->
-                            GeneralReceiptItem(receiptId = 0, itemName = item.name, price = item.price)
-                        }
-                        _uiState.value = UiState.Idle
-                        // Geminiが店舗名を取れなかった場合のみ登録番号で補完
-                        if (result.storeName.isBlank() && regNum != null) {
-                            autoLookupStore(regNum)
-                        }
-                    } else {
-                        fallbackToRawOcr(ocrText, regNum)
-                    }
-                } catch (e: GeminiRateLimitException) {
-                    fallbackToRawOcr(ocrText, regNum)
-                    _uiState.value = UiState.Error(e.message ?: "利用上限エラー")
-                }
-            } else {
-                _uiState.value = UiState.GeminiUnavailable
-                fallbackToRawOcr(ocrText, regNum)
-                if (regNum != null) autoLookupStore(regNum)
-            }
-        }
-    }
-
-    private fun fallbackToRawOcr(ocrText: String, regNum: String? = null) {
-        _pendingReceipt.value = GeneralReceipt(
-            date = "",
-            storeName = "",
-            total = 0,
-            rawOcrText = ocrText,
-            geminiUsed = false,
-            registrationNumber = regNum ?: ""
-        )
-        _pendingItems.value = emptyList()
-        _uiState.value = UiState.Idle
-    }
 
     fun saveReceipt(receipt: GeneralReceipt, items: List<GeneralReceiptItem>) {
         viewModelScope.launch(Dispatchers.IO) {
