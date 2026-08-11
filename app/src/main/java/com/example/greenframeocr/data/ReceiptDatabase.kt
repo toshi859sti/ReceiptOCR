@@ -25,7 +25,7 @@ import com.example.greenframeocr.util.toCanonicalKey
         GeneralReceiptItem::class,
         InvoiceStore::class
     ],
-    version = 28,
+    version = 29,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -750,6 +750,25 @@ abstract class ReceiptDatabase : RoomDatabase() {
 
         // マイグレーション: version 26 → 27（receipt_items に productMasterId 追加、
         // canonicalKey での過去データバックフィル。MIGRATION_16_17 と同じカーソル走査パターン）
+        // マイグレーション: version 28 → 29（toCanonicalKey()の記号幅正規化漏れ修正に伴う再計算）
+        private val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // ダッシュ等の全角記号を正規化するよう toCanonicalKey() を修正したため、
+                // 既存 product_master の canonicalKey を新ロジックで再計算する
+                // （MIGRATION_16_17・MIGRATION_26_27と同じカーソル走査パターン）
+                val cursor = database.query("SELECT id, canonicalName FROM product_master")
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    val canonicalName = cursor.getString(1)
+                    database.execSQL(
+                        "UPDATE product_master SET canonicalKey = ? WHERE id = ?",
+                        arrayOf(toCanonicalKey(canonicalName), id)
+                    )
+                }
+                cursor.close()
+            }
+        }
+
         // マイグレーション: version 27 → 28（Phase6: 使われなくなったML Kit学習ログ3テーブルを削除）
         private val MIGRATION_27_28 = object : Migration(27, 28) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -1062,7 +1081,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29)
                     .build()
                 INSTANCE = instance
                 instance

@@ -9,7 +9,8 @@ import com.example.greenframeocr.data.ProductMaster
  * 変換ルール:
  *   1. 半角・全角スペース除去
  *   2. 半角カタカナ（ﾞﾟ結合を含む）→ 全角カタカナ
- *   3. 全角英数字 → 半角英数字
+ *   3. 全角英数字・全角記号（－／（）：等、U+FF01〜U+FF5E） → 半角
+ *      （ダッシュ等の記号幅がOCR実行のたびにブレる既知の傾向に対応。2026-08-11修正）
  */
 fun toCanonicalKey(name: String): String {
     // 半角カタカナ単独 → 全角カタカナ
@@ -50,9 +51,7 @@ fun toCanonicalKey(name: String): String {
             next == 'ﾞ' && dakutenMap.containsKey(c) -> { sb.append(dakutenMap[c]); i += 2 }
             next == 'ﾟ' && handakutenMap.containsKey(c) -> { sb.append(handakutenMap[c]); i += 2 }
             baseMap.containsKey(c) -> { sb.append(baseMap[c]); i++ }
-            c in 'Ａ'..'Ｚ' -> { sb.append((c.code - 0xFEE0).toChar()); i++ }
-            c in 'ａ'..'ｚ' -> { sb.append((c.code - 0xFEE0).toChar()); i++ }
-            c in '０'..'９' -> { sb.append((c.code - 0xFEE0).toChar()); i++ }
+            c.code in 0xFF01..0xFF5E -> { sb.append((c.code - 0xFEE0).toChar()); i++ }
             else -> { sb.append(c); i++ }
         }
     }
