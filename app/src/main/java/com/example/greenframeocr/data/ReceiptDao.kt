@@ -27,6 +27,9 @@ interface ReceiptDao {
     @Query("DELETE FROM receipt_items WHERE issueYear = :year AND issueMonth = :month AND sheetNumber = :sheetNumber")
     suspend fun deleteReceiptItemsBySheet(year: Int, month: Int, sheetNumber: Int)
 
+    @Query("DELETE FROM receipt_items WHERE issueYear = :year AND issueMonth = :month")
+    suspend fun deleteReceiptItemsByMonth(year: Int, month: Int)
+
     @Update
     suspend fun updateReceiptItem(item: ReceiptItem)
 

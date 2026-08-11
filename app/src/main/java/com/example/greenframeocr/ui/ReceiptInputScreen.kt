@@ -2819,11 +2819,14 @@ private suspend fun saveMonthData(
     // V3: コミットバッチID生成
     val commitBatchId = "${year}_${month}_${System.currentTimeMillis()}"
     withContext(Dispatchers.IO) {
+        // 月全体を一旦削除してから作り直す。sheetNumberごとの削除だと、伝票削除で
+        // allSheetsDataからキーが消えた（＝もう存在しない）伝票のDB行が残り続けてしまう
+        // （例：全伝票削除→決定 で空にならない不具合の原因だった）
+        database.receiptDao().deleteReceiptItemsByMonth(year, month)
+        android.util.Log.d("ReceiptInputScreen", "Deleted existing data for year=$year month=$month")
+
         allSheetsData.forEach { (sheetNumber, rows) ->
             android.util.Log.d("ReceiptInputScreen", "Processing sheet $sheetNumber with ${rows.size} rows")
-            // 既存データを削除
-            database.receiptDao().deleteReceiptItemsBySheet(year, month, sheetNumber)
-            android.util.Log.d("ReceiptInputScreen", "Deleted existing data for sheet $sheetNumber")
 
             // 新しいデータを挿入（合計行も含む）
             val items = rows
@@ -2868,10 +2871,10 @@ private suspend fun saveMonthData(
 
         // MonthlyDataの更新（totalSheetsを保存）
         val totalSheets = allSheetsData.keys.maxOrNull() ?: 0
-        if (totalSheets > 0) {
-            val monthlyDataId = "${year}_${month}"
-            val existingMonthlyData = database.receiptDao().getMonthlyData(monthlyDataId)
+        val monthlyDataId = "${year}_${month}"
+        val existingMonthlyData = database.receiptDao().getMonthlyData(monthlyDataId)
 
+        if (totalSheets > 0) {
             if (existingMonthlyData == null) {
                 // 新規作成
                 database.receiptDao().insertMonthlyData(
@@ -2894,6 +2897,11 @@ private suspend fun saveMonthData(
                 )
                 android.util.Log.d("ReceiptInputScreen", "Updated MonthlyData: totalSheets=$totalSheets")
             }
+        } else if (existingMonthlyData != null) {
+            // 全伝票が削除され0枚になった場合はMonthlyData自体を削除する
+            // （残しておくと次回読み込み時に古いtotalSheetsが復元されてしまう）
+            database.receiptDao().deleteMonthlyData(monthlyDataId)
+            android.util.Log.d("ReceiptInputScreen", "Deleted MonthlyData (totalSheets became 0)")
         }
 
         // V3: 手動修正の学習登録
@@ -3005,31 +3013,6 @@ private suspend fun addNewSheet(
         }
 
         Pair(newSheetNumber, newTotalSheets)
-    }
-}
-
-private suspend fun deleteSheet(
-    database: com.example.greenframeocr.data.ReceiptDatabase,
-    year: Int,
-    month: Int,
-    sheetNumber: Int
-): Int {
-    return withContext(Dispatchers.IO) {
-        database.receiptDao().deleteReceiptItemsBySheet(year, month, sheetNumber)
-        database.receiptDao().deleteSheetData(year, month, sheetNumber)
-
-        val monthlyDataId = "${year}_${month}"
-        val monthlyData = database.receiptDao().getMonthlyData(monthlyDataId)
-
-        if (monthlyData != null) {
-            val newTotalSheets = (monthlyData.totalSheets - 1).coerceAtLeast(0)
-            database.receiptDao().updateMonthlyData(
-                monthlyData.copy(totalSheets = newTotalSheets)
-            )
-            newTotalSheets
-        } else {
-            0
-        }
     }
 }
 
