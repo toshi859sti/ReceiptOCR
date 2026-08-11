@@ -863,4 +863,244 @@ Markdown装飾(```json など)は一切付けないでください。
 - 読み取れない・かすれている場合も、最も近いと判断した数字を6桁で出力してください。
 - 空欄行を省略せず、見えている行の数だけ配列要素を出力してください(欠落・重複させない)。
 """.trimIndent()
+
+    // -----------------------------------------------------------------------
+    // JA購買伝票 部分再OCR（Phase5: 選択セルの行範囲だけをクロップして再送信）
+    //
+    // ReceiptInputScreen.kt でユーザーがグリッド上の特定セルを選択して再撮影した場合、
+    // 選択された行範囲だけを画像として切り出し、かつ選択されたセル種別に応じて
+    // 必要な呼び出しだけを行う（取引日が未選択なら取引日列クロップ呼び出し自体を省略）。
+    // 新設プロンプトは「空白行も省略せず行範囲と1:1で返す」ことを明示要求するが、
+    // 取引日列クロップでも同種の指示が完全には守られなかった実績がある（2026-08-09実機確認で
+    // SUBTOTAL行省略を発見済み）ため、返却行数が期待値と一致しない場合は aligned=false を返し、
+    // 呼び出し側で伝票全体再送信（parseJaSheetFromImage）へフォールバックすることを前提とする。
+    // -----------------------------------------------------------------------
+
+    /** 通常行・小計行のY範囲（mm、伝票上端原点）。20行を均等分割。合計行は別ブロック */
+    private const val NORMAL_ROW_Y_START_MM = 56.5
+    private const val NORMAL_ROW_Y_END_MM = 120.5
+    private const val NORMAL_ROW_COUNT = 20
+    private const val TOTAL_ROW_Y_START_MM = 121.0
+    private const val TOTAL_ROW_Y_END_MM = 135.0
+    private const val TOTAL_ROW_GRID_INDEX = 20
+
+    /** 商品名列の開始〜税込金額列の終了（mm）。部分メイン呼び出しの列範囲（取引日列は含めない） */
+    private const val PARTIAL_MAIN_COLUMN_START_MM = 20.0
+    private const val PARTIAL_MAIN_COLUMN_END_MM = 156.0
+
+    /** グリッド行インデックス(0〜19=通常行/小計行, 20=合計行)のY範囲(mm)を返す */
+    private fun rowYRangeMm(gridIndex: Int): Pair<Double, Double> {
+        if (gridIndex == TOTAL_ROW_GRID_INDEX) {
+            return TOTAL_ROW_Y_START_MM to TOTAL_ROW_Y_END_MM
+        }
+        val rowHeightMm = (NORMAL_ROW_Y_END_MM - NORMAL_ROW_Y_START_MM) / NORMAL_ROW_COUNT
+        val start = NORMAL_ROW_Y_START_MM + gridIndex * rowHeightMm
+        return start to (start + rowHeightMm)
+    }
+
+    /** 行範囲・列範囲(mm)をクロップする。cropDateColumn() と同じ mm→px 変換＋パディングパターン */
+    private fun cropRowRange(
+        dewarpedBitmap: Bitmap,
+        rowRange: IntRange,
+        columnStartMm: Double,
+        columnEndMm: Double
+    ): Bitmap {
+        val mmToPxX = dewarpedBitmap.width / 203.0
+        val mmToPxY = dewarpedBitmap.height / 148.0
+        val (yStartMm, _) = rowYRangeMm(rowRange.first)
+        val (_, yEndMm) = rowYRangeMm(rowRange.last)
+
+        val x = ((columnStartMm * mmToPxX) - 10).toInt().coerceIn(0, dewarpedBitmap.width - 1)
+        val xEnd = ((columnEndMm * mmToPxX) + 10).toInt().coerceIn(x + 1, dewarpedBitmap.width)
+        val yStart = ((yStartMm * mmToPxY) - 5).toInt().coerceIn(0, dewarpedBitmap.height - 1)
+        val yEnd = ((yEndMm * mmToPxY) + 5).toInt().coerceIn(yStart + 1, dewarpedBitmap.height)
+
+        return Bitmap.createBitmap(dewarpedBitmap, x, yStart, xEnd - x, yEnd - yStart)
+    }
+
+    /** 取引日列だけを行範囲に絞って切り出す。列範囲・2倍拡大は cropDateColumn() と同じ */
+    private fun cropDateColumnForRows(dewarpedBitmap: Bitmap, rowRange: IntRange): Bitmap {
+        val cropped = cropRowRange(dewarpedBitmap, rowRange, 5.5, 20.0)
+        return Bitmap.createScaledBitmap(cropped, cropped.width * 2, cropped.height * 2, true)
+    }
+
+    data class PartialJaSheetResult(
+        val rows: List<JaSheetRow>,
+        val usageStats: AiUsageStats?,
+        /** falseの場合、返却行数が期待値(rowRangeの行数)と一致しなかった。呼び出し側はparseJaSheetFromImage()へフォールバックすること */
+        val aligned: Boolean
+    )
+
+    /**
+     * 選択された行範囲だけを部分的に再OCRする。needsDate/needsMainに応じて
+     * 必要な呼び出しだけを並列実行する。
+     */
+    suspend fun parseJaSheetPartial(
+        dewarpedBitmap: Bitmap,
+        apiKey: String,
+        rowRange: IntRange,
+        needsDate: Boolean,
+        needsMain: Boolean
+    ): PartialJaSheetResult = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) throw GeminiApiKeyMissingException()
+        val expectedCount = rowRange.count()
+
+        coroutineScope {
+            val mainDeferred = if (needsMain) async {
+                callWithRetry { requestJaSheetPartialMain(dewarpedBitmap, apiKey, rowRange) }
+            } else null
+            val dateDeferred = if (needsDate) async {
+                callWithRetry { requestJaSheetDateColumnForRows(dewarpedBitmap, apiKey, rowRange) }
+            } else null
+
+            val mainResult = mainDeferred?.await()
+            val dateResult = dateDeferred?.await()
+
+            val mainAligned = mainResult == null || mainResult.first.size == expectedCount
+            val dateAligned = dateResult == null || dateResult.first.size == expectedCount
+
+            if (!mainAligned || !dateAligned) {
+                Log.w(
+                    "GeminiReceiptClient",
+                    "JA sheet partial re-OCR misalignment: rowRange=$rowRange expected=$expectedCount " +
+                        "main=${mainResult?.first?.size} date=${dateResult?.first?.size}"
+                )
+                return@coroutineScope PartialJaSheetResult(
+                    rows = emptyList(),
+                    usageStats = mergeUsageStats(mainResult?.second, dateResult?.second),
+                    aligned = false
+                )
+            }
+
+            val mergedRows = (0 until expectedCount).map { i ->
+                val base = mainResult?.first?.get(i) ?: JaSheetRow(
+                    rowType = "NORMAL", dateRaw = "", itemName = "", quantity = null,
+                    amount = null, categorySum = null, remarks = "", confidence = "medium"
+                )
+                if (dateResult != null) base.copy(dateRaw = dateResult.first[i]) else base
+            }
+
+            Log.d(
+                "GeminiReceiptClient",
+                "partial re-OCR: rows=$rowRange needsDate=$needsDate needsMain=$needsMain aligned=true"
+            )
+            PartialJaSheetResult(
+                rows = mergedRows,
+                usageStats = mergeUsageStats(mainResult?.second, dateResult?.second),
+                aligned = true
+            )
+        }
+    }
+
+    private fun requestJaSheetPartialMain(
+        dewarpedBitmap: Bitmap,
+        apiKey: String,
+        rowRange: IntRange
+    ): Pair<List<JaSheetRow>, AiUsageStats?> {
+        val cropped = cropRowRange(dewarpedBitmap, rowRange, PARTIAL_MAIN_COLUMN_START_MM, PARTIAL_MAIN_COLUMN_END_MM)
+        val base64Image = bitmapToBase64Jpeg(cropped)
+
+        val requestBody = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("inlineData", JSONObject().apply {
+                                put("mimeType", "image/jpeg")
+                                put("data", base64Image)
+                            })
+                        })
+                        put(JSONObject().apply { put("text", buildJaSheetPartialMainPrompt(rowRange.count())) })
+                    })
+                })
+            })
+            put("generationConfig", JSONObject().apply {
+                put("responseMimeType", "application/json")
+                put("temperature", 0)
+            })
+        }
+
+        val body = executeJaSheetHttp(requestBody, apiKey)
+        return parseJaSheetMainResponse(body)
+    }
+
+    private fun requestJaSheetDateColumnForRows(
+        dewarpedBitmap: Bitmap,
+        apiKey: String,
+        rowRange: IntRange
+    ): Pair<List<String>, AiUsageStats?> {
+        val cropped = cropDateColumnForRows(dewarpedBitmap, rowRange)
+        val base64Image = bitmapToBase64Jpeg(cropped)
+
+        val requestBody = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("inlineData", JSONObject().apply {
+                                put("mimeType", "image/jpeg")
+                                put("data", base64Image)
+                            })
+                        })
+                        put(JSONObject().apply { put("text", buildJaSheetDateColumnPrompt()) })
+                    })
+                })
+            })
+            put("generationConfig", JSONObject().apply {
+                put("responseMimeType", "application/json")
+                put("temperature", 0)
+            })
+        }
+
+        val body = executeJaSheetHttp(requestBody, apiKey)
+        return parseJaSheetDateColumnResponse(body)
+    }
+
+    private fun buildJaSheetPartialMainPrompt(rowCount: Int): String = """
+あなたはOCR専門のアシスタントです。以下の画像は、JA(農業協同組合)の「購買代金請求明細書」の
+一部分（上から連続した${rowCount}行分の行位置だけ）を切り出した表組みです。表は左から
+次の列で構成されます（取引日列は含まれていません）。
+
+1. 商品名(農薬・肥料・資材・ガソリン等。規格や容量を含む)
+2. 取扱支店(読み取り不要)
+3. 数量(整数または小数。返品行は数量がマイナスになる、または備考に「返品」と書かれる)
+4. 税込単価(読み取り不要)
+5. 税込金額(円の整数。マイナスの場合あり)
+6. 分類計(「* 小計(分類名)」という行にのみ記載される、その区分の合計金額)
+7. 入金・窓口(読み取り不要)
+8. 備考(車両番号等の補足。空欄が多い)
+
+この画像はちょうど${rowCount}行分の行位置を上から順に示しています。**文字が何も見えない
+行位置（空白行）も省略せず、必ず${rowCount}件を順番通りに返してください**。空白行は
+rowType を "BLANK" とし、他のフィールドは空文字列またはnullにしてください。
+
+通常の取引行(NORMAL)のほかに、「* 小計(一般購買)」「* 小計(給油所)」のような小計行(SUBTOTAL)、
+「合計(税込)」という月計行(MONTHLY_TOTAL)が含まれることがあります。
+
+以下のJSON形式だけで返してください。前置き・説明文・Markdown装飾(```json など)は
+一切付けないでください。
+
+{
+  "rows": [
+    {
+      "rowType": "NORMAL または SUBTOTAL または MONTHLY_TOTAL または BLANK",
+      "itemName": "商品名。SUBTOTAL行の場合は分類名(例:一般購買、給油所)。
+                   MONTHLY_TOTAL行の場合は「合計(税込)」。BLANK行は空文字列",
+      "quantity": 数値またはnull,
+      "amount": 税込金額の整数(マイナスの場合は負の値)、またはnull,
+      "categorySum": "SUBTOTAL行は分類計の整数、MONTHLY_TOTAL行は合計(税込)の金額の整数。
+                      NORMAL行・BLANK行はnull",
+      "remarks": "備考欄。空なら空文字列",
+      "confidence": "high、medium、lowのいずれか"
+    }
+  ]
+}
+
+注意:
+- 出力する配列の要素数は必ず${rowCount}件にしてください（多くても少なくてもいけません）。
+- 数量列に小数点が印字されていなくても、ガソリン等の給油量は小数(例: 29.20)である場合があります。
+  金額を単価で割った値と整合するか検算し、整合するなら小数として解釈してください。
+- 返品行は数量・金額をマイナス値にしてください。
+- 取扱支店・税込単価・入金・窓口列の値は出力に含めないでください。
+""".trimIndent()
 }

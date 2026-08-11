@@ -184,7 +184,7 @@ fun ReceiptInputScreen(
             title = { Text("OCR読み取りエラー") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("以下の小計カテゴリが複数検出されました。\n撮影条件を確認して再撮影してください。")
+                    Text("以下の小計カテゴリが重複しています（同じ伝票内、または他の伝票と重複）。\n同じ伝票を重複して撮影していないか確認し、再撮影してください。")
                     Spacer(modifier = Modifier.height(4.dp))
                     ocrDuplicateSubtotalCategories.forEach { cat ->
                         Text("・$cat", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
@@ -436,61 +436,115 @@ fun ReceiptInputScreen(
 
     // カメラとデータグリッドを排他的に表示
     if (showCamera) {
+        // Phase5: 選択セルがあれば行範囲クロップ再OCRの対象を算出（CameraView側でAPI呼び出しを分岐する）
+        val partialReOcrTarget = computePartialReOcrTarget(currentReceiptRows)
         CameraView(
             geminiApiKey = appPreferences.geminiApiKey,
             productMasterDao = database.productMasterDao(),
-            onOcrComplete = { parsedRows, dateColumnAligned ->
-                val result = convertParsedRowsToRowData(
-                    parsedRows = parsedRows,
-                    sheetNumber = currentSheetNumber,
-                    fixYearMonth = fixYearMonth,
-                    defaultYear = eraYear,
-                    defaultMonth = selectedMonth
-                )
-                if (result.duplicatedSubtotalCategories.isNotEmpty()) {
-                    ocrDuplicateSubtotalCategories = result.duplicatedSubtotalCategories
-                    showCamera = false  // CameraView をリセットして再撮影できるようにする
-                    return@CameraView
-                }
-                val ocrRows = result.rows
-                val currentRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
+            partialReOcrTarget = partialReOcrTarget,
+            onOcrComplete = { outcome ->
+                when (outcome) {
+                    is OcrRunResult.Full -> {
+                        val result = convertParsedRowsToRowData(
+                            parsedRows = outcome.parsedRows,
+                            sheetNumber = currentSheetNumber,
+                            fixYearMonth = fixYearMonth,
+                            defaultYear = eraYear,
+                            defaultMonth = selectedMonth
+                        )
+                        // 他の伝票（同じ月内）で既に検出済みの小計カテゴリと重複していないかチェック。
+                        // この伝票は月次請求明細の1ページであり、同じ小計カテゴリ（一般購買/給油所/農業機械）は
+                        // 月に1回しか出現しない仕様のため、他の伝票との重複は撮影ミス（同じ紙の重複撮影等）を
+                        // 強く示唆する（正当な複数枚パターンでの誤検知はない）。
+                        val otherSheetsSubtotalCategories = allSheetsData
+                            .filterKeys { it != currentSheetNumber }
+                            .values.flatten()
+                            .filter { it.isSubtotal }
+                            .map { it.category }
+                            .toSet()
+                        val crossSheetDuplicateCategories = result.rows
+                            .filter { it.isSubtotal && it.category in otherSheetsSubtotalCategories }
+                            .map { it.category }
+                            .toSet()
+                        val allDuplicateCategories = result.duplicatedSubtotalCategories + crossSheetDuplicateCategories
+                        if (allDuplicateCategories.isNotEmpty()) {
+                            ocrDuplicateSubtotalCategories = allDuplicateCategories
+                            showCamera = false  // CameraView をリセットして再撮影できるようにする
+                            return@CameraView
+                        }
+                        val ocrRows = result.rows
+                        val currentRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
 
-                // 選択されたセルがあるかチェック
-                val hasSelectedCells = currentRows.any { it.selectedCells.isNotEmpty() }
+                        // 選択されたセルがあるかチェック
+                        val hasSelectedCells = currentRows.any { it.selectedCells.isNotEmpty() }
 
-                val updatedRows = if (hasSelectedCells) {
-                    // 選択セルのみを更新
-                    currentRows.mapIndexed { index, row ->
-                        if (row.selectedCells.isNotEmpty() && index < ocrRows.size) {
-                            val ocrRow = ocrRows[index]
-                            val newDate = if (row.selectedCells.contains(CellType.DATE)) ocrRow.date else row.date
-                            val newProductName = if (row.selectedCells.contains(CellType.PRODUCT_NAME)) ocrRow.productName else row.productName
-                            val newAmount = if (row.selectedCells.contains(CellType.AMOUNT)) ocrRow.amount else row.amount
-                            val newProductMasterId = if (row.selectedCells.contains(CellType.PRODUCT_NAME)) ocrRow.productMasterId else row.productMasterId
-                            row.copy(
-                                date = newDate,
-                                productName = newProductName,
-                                amount = newAmount,
-                                productMasterId = newProductMasterId,
-                                selectedCells = emptySet()
-                            )
+                        val updatedRows = if (hasSelectedCells) {
+                            // 選択セルのみを更新
+                            currentRows.mapIndexed { index, row ->
+                                if (row.selectedCells.isNotEmpty() && index < ocrRows.size) {
+                                    val ocrRow = ocrRows[index]
+                                    val newDate = if (row.selectedCells.contains(CellType.DATE)) ocrRow.date else row.date
+                                    val newProductName = if (row.selectedCells.contains(CellType.PRODUCT_NAME)) ocrRow.productName else row.productName
+                                    val newAmount = if (row.selectedCells.contains(CellType.AMOUNT)) ocrRow.amount else row.amount
+                                    val newProductMasterId = if (row.selectedCells.contains(CellType.PRODUCT_NAME)) ocrRow.productMasterId else row.productMasterId
+                                    row.copy(
+                                        date = newDate,
+                                        productName = newProductName,
+                                        amount = newAmount,
+                                        productMasterId = newProductMasterId,
+                                        selectedCells = emptySet()
+                                    )
+                                } else {
+                                    row.copy(selectedCells = emptySet())
+                                }
+                            }
                         } else {
-                            row.copy(selectedCells = emptySet())
+                            // 選択セルがない場合は全体を更新
+                            ocrRows
+                        }
+
+                        // データを更新してカテゴリを再計算
+                        val tempSheetsData = allSheetsData.toMutableMap().apply {
+                            put(currentSheetNumber, updatedRows)
+                        }
+                        allSheetsData = recalculateCategoriesInMemory(tempSheetsData)
+                        showCamera = false
+                        if (!outcome.dateColumnAligned) {
+                            showDateAlignmentWarning = true
                         }
                     }
-                } else {
-                    // 選択セルがない場合は全体を更新
-                    ocrRows
-                }
-
-                // データを更新してカテゴリを再計算
-                val tempSheetsData = allSheetsData.toMutableMap().apply {
-                    put(currentSheetNumber, updatedRows)
-                }
-                allSheetsData = recalculateCategoriesInMemory(tempSheetsData)
-                showCamera = false
-                if (!dateColumnAligned) {
-                    showDateAlignmentWarning = true
+                    is OcrRunResult.Partial -> {
+                        // 行範囲クロップ再OCR：選択セルだけをその場でマージする
+                        // （aligned=true の結果しかここに来ないため、日付列アラインメント警告は対象外）
+                        val currentRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
+                        val updatedRows = currentRows.mapIndexed { index, row ->
+                            if (index in outcome.rowRange && row.selectedCells.isNotEmpty()) {
+                                val ocrRow = outcome.rows[index - outcome.rowRange.first]
+                                val newDate = if (row.selectedCells.contains(CellType.DATE))
+                                    formatOcrDate(ocrRow.date, fixYearMonth, eraYear, selectedMonth) else row.date
+                                val newProductName = if (row.selectedCells.contains(CellType.PRODUCT_NAME))
+                                    (ocrRow.productName ?: "") else row.productName
+                                val newAmount = if (row.selectedCells.contains(CellType.AMOUNT))
+                                    (ocrRow.amount ?: 0) else row.amount
+                                val newProductMasterId = if (row.selectedCells.contains(CellType.PRODUCT_NAME))
+                                    ocrRow.productMasterId else row.productMasterId
+                                row.copy(
+                                    date = newDate,
+                                    productName = newProductName,
+                                    amount = newAmount,
+                                    productMasterId = newProductMasterId,
+                                    selectedCells = emptySet()
+                                )
+                            } else {
+                                row.copy(selectedCells = emptySet())
+                            }
+                        }
+                        val tempSheetsData = allSheetsData.toMutableMap().apply {
+                            put(currentSheetNumber, updatedRows)
+                        }
+                        allSheetsData = recalculateCategoriesInMemory(tempSheetsData)
+                        showCamera = false
+                    }
                 }
             },
             onCancel = {
@@ -1703,7 +1757,8 @@ private fun GridDataCell(
 private fun CameraView(
     geminiApiKey: String,
     productMasterDao: com.example.greenframeocr.data.ProductMasterDao,
-    onOcrComplete: (List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>, Boolean) -> Unit,
+    partialReOcrTarget: PartialReOcrTarget?,
+    onOcrComplete: (OcrRunResult) -> Unit,
     onCancel: () -> Unit
 ) {
     val ocrScope = rememberCoroutineScope()
@@ -1717,25 +1772,50 @@ private fun CameraView(
         mutableStateOf<Pair<String, com.example.greenframeocr.util.GreenFrameDetector.DetectionResult>?>(null)
     }
 
+    suspend fun runFullOcr(dewarped: android.graphics.Bitmap): OcrRunResult.Full {
+        val geminiResult = com.example.greenframeocr.util.GeminiReceiptClient
+            .parseJaSheetFromImage(dewarped, geminiApiKey)
+        if (!geminiResult.dateColumnAligned) {
+            android.util.Log.w("ReceiptInputScreen", "取引日列のアラインメントが取れませんでした（要確認）")
+        }
+        val parsed = com.example.greenframeocr.viewmodel.OcrCaptureViewModel.applyProductMasterCorrection(
+            com.example.greenframeocr.viewmodel.OcrCaptureViewModel.mapGeminiResultToParsedRows(geminiResult),
+            productMasterDao
+        )
+        return OcrRunResult.Full(parsed, geminiResult.dateColumnAligned)
+    }
+
     fun runOcr(detectionResult: com.example.greenframeocr.util.GreenFrameDetector.DetectionResult) {
         isProcessingOcr = true
         ocrScope.launch {
             try {
                 val dewarped = detectionResult.dewarpedBitmap
-                var dateColumnAligned = true
-                val parsed = if (dewarped != null) {
-                    val geminiResult = com.example.greenframeocr.util.GeminiReceiptClient
-                        .parseJaSheetFromImage(dewarped, geminiApiKey)
-                    dateColumnAligned = geminiResult.dateColumnAligned
-                    if (!dateColumnAligned) {
-                        android.util.Log.w("ReceiptInputScreen", "取引日列のアラインメントが取れませんでした（要確認）")
-                    }
-                    com.example.greenframeocr.viewmodel.OcrCaptureViewModel.applyProductMasterCorrection(
-                        com.example.greenframeocr.viewmodel.OcrCaptureViewModel.mapGeminiResultToParsedRows(geminiResult),
-                        productMasterDao
+                val outcome = if (dewarped == null) {
+                    OcrRunResult.Full(emptyList(), dateColumnAligned = true)
+                } else if (partialReOcrTarget != null) {
+                    // Phase5: 選択セルの行範囲だけをクロップして再送信
+                    val partial = com.example.greenframeocr.util.GeminiReceiptClient.parseJaSheetPartial(
+                        dewarpedBitmap = dewarped,
+                        apiKey = geminiApiKey,
+                        rowRange = partialReOcrTarget.rowRange,
+                        needsDate = CellType.DATE in partialReOcrTarget.cellTypes,
+                        needsMain = CellType.PRODUCT_NAME in partialReOcrTarget.cellTypes ||
+                            CellType.AMOUNT in partialReOcrTarget.cellTypes
                     )
-                } else emptyList()
-                onOcrComplete(parsed, dateColumnAligned)
+                    if (partial.aligned) {
+                        val mapped = mapPartialResultToParsedRows(partial, partialReOcrTarget.rowRange)
+                        val corrected = com.example.greenframeocr.viewmodel.OcrCaptureViewModel
+                            .applyProductMasterCorrection(mapped, productMasterDao)
+                        OcrRunResult.Partial(partialReOcrTarget.rowRange, corrected)
+                    } else {
+                        // 行数不一致 → 伝票全体再送信にフォールバック
+                        android.util.Log.w("ReceiptInputScreen", "部分再OCRの行数が一致しなかったため、伝票全体を再送信します")
+                        runFullOcr(dewarped)
+                    }
+                } else {
+                    runFullOcr(dewarped)
+                }
+                onOcrComplete(outcome)
             } catch (e: Exception) {
                 ocrError = (e.message ?: "OCR処理エラー") to detectionResult
             } finally {
@@ -1884,6 +1964,70 @@ data class EditingCell(
     val row: ReceiptRowData,
     val cellType: CellType
 )
+
+/** グリッド上で選択中のセル群から算出した、部分再OCRの対象範囲（Phase5） */
+private data class PartialReOcrTarget(
+    val rowRange: IntRange,
+    val cellTypes: Set<CellType>
+)
+
+/** CameraView.runOcr() の結果。選択セルの有無で Full（伝票全体）/ Partial（行範囲クロップ）に分岐する */
+private sealed class OcrRunResult {
+    data class Full(
+        val parsedRows: List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>,
+        val dateColumnAligned: Boolean
+    ) : OcrRunResult()
+
+    data class Partial(
+        val rowRange: IntRange,
+        val rows: List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>
+    ) : OcrRunResult()
+}
+
+/** 合計行(21行目)のグリッドインデックス。GeminiReceiptClient の TOTAL_ROW_GRID_INDEX と対応 */
+private const val TOTAL_ROW_GRID_INDEX = 20
+
+/**
+ * currentRows の selectedCells から、部分再OCRの対象範囲を算出する。
+ * 選択なし、または合計行とデータ行が混在選択されている場合はnull（呼び出し側はFullパスにフォールバック）。
+ */
+private fun computePartialReOcrTarget(currentRows: List<ReceiptRowData>): PartialReOcrTarget? {
+    val selectedIndices = currentRows.indices.filter { currentRows[it].selectedCells.isNotEmpty() }
+    if (selectedIndices.isEmpty()) return null
+    val touchesTotalRow = selectedIndices.contains(TOTAL_ROW_GRID_INDEX)
+    val touchesDataRow = selectedIndices.any { it != TOTAL_ROW_GRID_INDEX }
+    if (touchesTotalRow && touchesDataRow) return null
+    return PartialReOcrTarget(
+        rowRange = selectedIndices.min()..selectedIndices.max(),
+        cellTypes = selectedIndices.flatMap { currentRows[it].selectedCells }.toSet()
+    )
+}
+
+/**
+ * GeminiReceiptClient.PartialJaSheetResult を ParsedRow リストへ変換する（部分再OCR用の軽量マッパー）。
+ * mapGeminiResultToParsedRows() と異なり、小計後の空白行挿入・カテゴリ再判定は行わない
+ * （部分マージでは category/isSubtotal は既存行のまま据え置く既存仕様のため不要）。
+ */
+private fun mapPartialResultToParsedRows(
+    partial: com.example.greenframeocr.util.GeminiReceiptClient.PartialJaSheetResult,
+    rowRange: IntRange
+): List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow> =
+    partial.rows.mapIndexed { i, row ->
+        com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow(
+            rowIndex = rowRange.first + i,
+            date = row.dateRaw,
+            productName = row.itemName,
+            branch = null,
+            quantity = row.quantity?.toInt(),
+            unitPrice = null,
+            amount = row.amount,
+            isAmountValid = row.amount != null,
+            category = "",
+            isSubtotal = false,
+            isMonthlyTotal = false,
+            confidence = row.confidence
+        )
+    }
 
 // ========== ユーティリティ関数 ==========
 
@@ -2404,6 +2548,28 @@ private data class ParsedRowResult(
     val duplicatedSubtotalCategories: Set<String>
 )
 
+/**
+ * OCRの取引日生テキスト(6桁数字等)を "YY/MM/DD" 形式へ整形する。
+ * convertParsedRowsToRowData()（伝票全体の再構成）・部分再OCRのマージ処理の両方で使う共通ロジック。
+ */
+private fun formatOcrDate(
+    rawDate: String?,
+    fixYearMonth: Boolean,
+    defaultYear: Int,
+    defaultMonth: Int
+): String {
+    val digits = rawDate?.filter { it.isDigit() } ?: ""
+    return when {
+        fixYearMonth && digits.length >= 2 -> {
+            val day = digits.takeLast(2).toIntOrNull()?.coerceIn(1, 31) ?: 1
+            "%02d/%02d/%02d".format(defaultYear % 100, defaultMonth, day)
+        }
+        digits.length >= 6 ->
+            "${digits.substring(0, 2)}/${digits.substring(2, 4)}/${digits.substring(4, 6)}"
+        else -> rawDate ?: ""
+    }
+}
+
 private fun convertParsedRowsToRowData(
     parsedRows: List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>,
     sheetNumber: Int = 1,
@@ -2423,16 +2589,7 @@ private fun convertParsedRowsToRowData(
 
     for (row in normalAndSubtotalRows) {
         // 取引日テキスト → フォーマット変換
-        val digits = row.date?.filter { it.isDigit() } ?: ""
-        val formattedDate = when {
-            fixYearMonth && digits.length >= 2 -> {
-                val day = digits.takeLast(2).toIntOrNull()?.coerceIn(1, 31) ?: 1
-                "%02d/%02d/%02d".format(defaultYear % 100, defaultMonth, day)
-            }
-            digits.length >= 6 ->
-                "${digits.substring(0, 2)}/${digits.substring(2, 4)}/${digits.substring(4, 6)}"
-            else -> row.date ?: ""
-        }
+        val formattedDate = formatOcrDate(row.date, fixYearMonth, defaultYear, defaultMonth)
 
         val productName = row.productName ?: ""
         val finalAmount = row.amount ?: 0
