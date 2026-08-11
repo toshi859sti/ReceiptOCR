@@ -83,6 +83,7 @@ fun CameraScreen(
     var lastDetectionTime by remember { mutableStateOf(0L) }
     val lastOverlayUpdateMs = remember { java.util.concurrent.atomic.AtomicLong(0L) }
     var camera by remember { mutableStateOf<Camera?>(null) }
+    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var isTorchOn by remember { mutableStateOf(false) }
     var latestBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
@@ -112,6 +113,9 @@ fun CameraScreen(
         onDispose {
             try {
                 camera?.cameraControl?.enableTorch(false)
+                // enableTorch(false) だけでは一部端末（HAL実装依存）でトーチが物理的に
+                // 消灯しないことがあるため、カメラデバイス自体をクローズして確実に消灯させる
+                cameraProvider?.unbindAll()
             } catch (e: Exception) {
                 Log.e("CameraScreen", "Failed to disable torch on dispose", e)
             }
@@ -134,7 +138,8 @@ fun CameraScreen(
                             val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
 
                             cameraProviderFuture.addListener({
-                                val cameraProvider = cameraProviderFuture.get()
+                                val boundProvider = cameraProviderFuture.get()
+                                cameraProvider = boundProvider
 
                                 val preview = Preview.Builder().build().also {
                                     it.setSurfaceProvider(previewView.surfaceProvider)
@@ -180,8 +185,8 @@ fun CameraScreen(
                                     }
 
                                 try {
-                                    cameraProvider.unbindAll()
-                                    camera = cameraProvider.bindToLifecycle(
+                                    boundProvider.unbindAll()
+                                    camera = boundProvider.bindToLifecycle(
                                         lifecycleOwner,
                                         CameraSelector.DEFAULT_BACK_CAMERA,
                                         preview,
