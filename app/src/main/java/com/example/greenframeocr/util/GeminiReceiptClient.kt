@@ -338,8 +338,12 @@ $accountsText
         throw GeminiApiException(code, body)
     }
 
+    // 一般レシート（matchProducts/matchTekiyou/parseReceiptFromImage共通）用モデル。
+    // gemini-2.5-flashは新規ユーザー向け提供終了（HTTP 404）のため、JA伝票と同じ
+    // gemini-3.5-flash-liteに更新（2026-08-11）
+    private const val GENERAL_RECEIPT_MODEL = "gemini-3.5-flash-lite"
     private const val API_URL =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        "https://generativelanguage.googleapis.com/v1beta/models/$GENERAL_RECEIPT_MODEL:generateContent"
 
     data class ReceiptParseResult(
         val storeName: String,
@@ -379,7 +383,7 @@ $accountsText
                     put("temperature", 0)
                 })
             }
-            executeRequest(requestBody, apiKey)
+            executeRequest(requestBody, apiKey, source = "image")
         }
 
     suspend fun parseReceipt(ocrText: String, apiKey: String): ReceiptParseResult? =
@@ -397,10 +401,10 @@ $accountsText
                     put("temperature", 0)
                 })
             }
-            executeRequest(requestBody, apiKey)
+            executeRequest(requestBody, apiKey, source = "text")
         }
 
-    private suspend fun executeRequest(requestBody: JSONObject, apiKey: String): ReceiptParseResult? {
+    private suspend fun executeRequest(requestBody: JSONObject, apiKey: String, source: String): ReceiptParseResult? {
         val client = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
@@ -423,6 +427,9 @@ $accountsText
                 val body = response.body?.string() ?: run {
                     Log.e("GeminiReceiptClient", "body is null")
                     return null
+                }
+                parseUsageStats(JSONObject(body))?.let {
+                    Log.d("GeminiReceiptClient", "[$source] ${it.toDisplayString()}")
                 }
                 parseGeminiResponse(body)
             }
