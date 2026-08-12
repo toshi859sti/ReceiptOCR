@@ -1,5 +1,8 @@
 package com.example.greenframeocr.ui
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -23,10 +27,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.data.YayoiAccount
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
 
-private val TAISYAKU_CATS = setOf("資産", "負債", "資本")
-private val SONEKI_CATS   = setOf("収入", "経費")
+// yayoi_accounts.categoryA は「【流動資産】」のように【】付きで格納されているため、
+// 実データの値そのものを列挙する（括弧なし文字列と比較していたため常に0件になっていたバグの修正）
+private val TAISYAKU_CATS = setOf(
+    "【流動資産】", "【固定資産】", "【繰延資産】",
+    "【流動負債】", "【固定負債】",
+    "【資本】", "【事業主貸】", "【事業主借】"
+)
+private val SONEKI_CATS   = setOf("【収入金額】", "【経費】", "【繰入額等】", "【繰戻額等】")
 
 private val COL_DEBIT   = 36.dp
 private val COL_TAX     = 56.dp
@@ -63,6 +77,7 @@ fun YayoiAccountSettingsScreen(
     onNavigateToEdit: (accountId: Long, parentId: Long) -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     var accounts        by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var selectedTab     by remember { mutableIntStateOf(0) }
@@ -73,6 +88,7 @@ fun YayoiAccountSettingsScreen(
     var accountToDelete by remember { mutableStateOf<YayoiAccount?>(null) }
     var showEnabledOnly by remember { mutableStateOf(false) }
     var expansionLevel  by remember { mutableIntStateOf(0) }
+    var importResultMessage by remember { mutableStateOf<String?>(null) }
 
     fun reload() { scope.launch { accounts = database.yayoiAccountDao().getAll() } }
     LaunchedEffect(Unit) { reload() }
@@ -189,12 +205,85 @@ fun YayoiAccountSettingsScreen(
         expandedA = emptySet(); expandedB = emptySet(); expandedAccts = emptySet()
     }
 
+    // CSVインポート（勘定科目,サーチキー英字,サーチキー数字,借貸,区分B,区分A,税区分,購買取引使用,預金取引使用）。
+    // accountCodeが既存科目と一致すればその科目を更新、なければ新規追加するマージ方式
+    // （初回インポート用のDatabaseInitializer.importYayoiAccounts()とはCSV書式を揃えている）
+    fun importCsv(uri: Uri) {
+        scope.launch {
+            try {
+                val parsed = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        BufferedReader(InputStreamReader(input, Charsets.UTF_8)).use { reader ->
+                            reader.readLine() // ヘッダー行をスキップ
+                            reader.readLines().mapNotNull { line ->
+                                val parts = line.split(",")
+                                if (parts.isEmpty() || parts[0].isBlank()) return@mapNotNull null
+                                YayoiAccount(
+                                    accountName = parts[0].trim(),
+                                    searchKeyAlpha = parts.getOrNull(1)?.trim() ?: "",
+                                    accountCode = parts.getOrNull(2)?.trim()?.ifEmpty { null },
+                                    debitCredit = parts.getOrNull(3)?.trim() ?: "",
+                                    categoryB = parts.getOrNull(4)?.trim() ?: "",
+                                    categoryA = parts.getOrNull(5)?.trim() ?: "",
+                                    defaultTaxCategory = parts.getOrNull(6)?.trim() ?: "対象外",
+                                    usedForPurchase = parts.getOrNull(7)?.trim()?.uppercase() == "TRUE",
+                                    usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() == "TRUE"
+                                )
+                            }
+                        }
+                    } ?: emptyList()
+                }
+
+                if (parsed.isEmpty()) {
+                    importResultMessage = "取り込み可能なデータがありませんでした"
+                    return@launch
+                }
+
+                var updated = 0
+                var inserted = 0
+                withContext(Dispatchers.IO) {
+                    val dao = database.yayoiAccountDao()
+                    parsed.forEach { row ->
+                        val existing = row.accountCode?.let { dao.getByCode(it) }
+                        if (existing != null) {
+                            dao.update(row.copy(id = existing.id, parentId = existing.parentId, isEnabled = existing.isEnabled))
+                            updated++
+                        } else {
+                            dao.insert(row)
+                            inserted++
+                        }
+                    }
+                }
+                importResultMessage = "新規${inserted}件・更新${updated}件を取り込みました"
+                reload()
+            } catch (e: Exception) {
+                importResultMessage = "取込エラー: ${e.message}"
+            }
+        }
+    }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? -> uri?.let { importCsv(it) } }
+
+    importResultMessage?.let { message ->
+        LaunchedEffect(message) {
+            kotlinx.coroutines.delay(3000)
+            importResultMessage = null
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("弥生の青色申告 — 勘定科目") },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "戻る") }
+                },
+                actions = {
+                    IconButton(onClick = { filePickerLauncher.launch("text/*") }) {
+                        Icon(Icons.Default.Add, contentDescription = "CSV取込")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -204,6 +293,18 @@ fun YayoiAccountSettingsScreen(
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+
+            importResultMessage?.let { message ->
+                Text(
+                    text = message,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.secondaryContainer)
+                        .padding(8.dp),
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    textAlign = TextAlign.Center
+                )
+            }
 
             // ── アクションバー（横一列・スクロール可） ────────────
             Row(

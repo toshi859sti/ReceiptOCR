@@ -17,6 +17,7 @@ fun GeneralPurchaseMenuScreen(
     onBack: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToList: () -> Unit,
+    onNavigateToItemMatching: () -> Unit,
     onNavigateToOutput: () -> Unit,
     onNavigateToStoreList: () -> Unit
 ) {
@@ -56,6 +57,8 @@ fun GeneralPurchaseMenuScreen(
             GeneralMenuButton(text = "レシート撮影・OCR", onClick = onNavigateToCapture)
             Spacer(modifier = Modifier.height(16.dp))
             GeneralMenuButton(text = "レシート一覧", onClick = onNavigateToList)
+            Spacer(modifier = Modifier.height(16.dp))
+            GeneralMenuButton(text = "品目別マッチング", onClick = onNavigateToItemMatching)
             Spacer(modifier = Modifier.height(16.dp))
             GeneralMenuButton(text = "CSV出力", onClick = onNavigateToOutput)
             Spacer(modifier = Modifier.height(16.dp))

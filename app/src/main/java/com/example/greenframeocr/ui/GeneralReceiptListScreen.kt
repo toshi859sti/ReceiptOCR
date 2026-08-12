@@ -1,8 +1,6 @@
 package com.example.greenframeocr.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,31 +11,24 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AppPreferences
-import com.example.greenframeocr.data.GeneralItemGroup
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
-import com.example.greenframeocr.data.YayoiAccount
-import com.example.greenframeocr.util.GeminiReceiptClient
+import com.example.greenframeocr.data.ReceiptItemPreview
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 import kotlinx.coroutines.launch
 
@@ -49,17 +40,14 @@ fun GeneralReceiptListScreen(
     onBack: () -> Unit
 ) {
     val receipts by viewModel.receipts.collectAsState()
-    val itemGroups by viewModel.itemGroups.collectAsState()
-    val aiError by viewModel.aiError.collectAsState()
+    val itemPreviews by viewModel.itemPreviews.collectAsState()
 
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabs = listOf("レシート一覧", "品目別マッチング")
     var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("レシート・領収書") },
+                title = { Text("レシート一覧") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
@@ -93,39 +81,23 @@ fun GeneralReceiptListScreen(
                     }
                 )
             }
-            TabRow(selectedTabIndex = selectedTabIndex) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected = selectedTabIndex == index,
-                        onClick = { selectedTabIndex = index },
-                        text = { Text(title) }
-                    )
-                }
-            }
 
-            when (selectedTabIndex) {
-                0 -> ReceiptListTab(
-                    receipts = receipts,
-                    viewModel = viewModel,
-                    onDelete = { viewModel.deleteReceipt(it) },
-                    fontSize = listFontSize
-                )
-                1 -> ItemMatchingTab(
-                    itemGroups = itemGroups,
-                    viewModel = viewModel,
-                    aiError = aiError
-                )
-            }
+            ReceiptListTab(
+                receipts = receipts,
+                itemPreviews = itemPreviews,
+                viewModel = viewModel,
+                onDelete = { viewModel.deleteReceipt(it) },
+                fontSize = listFontSize
+            )
         }
     }
 }
-
-// ─── Tab1: レシート一覧 ──────────────────────────────────────────────────────
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun ReceiptListTab(
     receipts: List<GeneralReceipt>,
+    itemPreviews: Map<Long, ReceiptItemPreview>,
     viewModel: GeneralReceiptViewModel,
     onDelete: (GeneralReceipt) -> Unit,
     fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE
@@ -267,7 +239,7 @@ private fun ReceiptListTab(
                                 .fillMaxWidth()
                                 .padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -280,15 +252,40 @@ private fun ReceiptListTab(
                                     fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                if (receipt.geminiUsed) {
-                                    Text("AI解析済み", fontSize = (fontSize - 2f).coerceAtLeast(10f).sp, color = MaterialTheme.colorScheme.primary)
+                                val preview = itemPreviews[receipt.id]
+                                if (!preview?.itemNamesPreview.isNullOrBlank()) {
+                                    Text(
+                                        text = preview!!.itemNamesPreview,
+                                        fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(top = 2.dp)
+                                    )
                                 }
                             }
-                            Text(
-                                text = "¥${"%,d".format(receipt.total)}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = fontSize.sp
-                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(horizontalAlignment = Alignment.End) {
+                                if (receipt.geminiUsed) {
+                                    Text(
+                                        text = "AI解析済み",
+                                        fontSize = (fontSize - 4f).coerceAtLeast(9f).sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Text(
+                                    text = "¥${"%,d".format(receipt.total)}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = fontSize.sp
+                                )
+                                itemPreviews[receipt.id]?.let { p ->
+                                    Text(
+                                        text = "${p.itemCount}点",
+                                        fontSize = (fontSize - 4f).coerceAtLeast(9f).sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -597,417 +594,5 @@ private fun ReceiptDetailDialog(
         dismissButton = if (isEditMode) {
             { TextButton(onClick = { resetEdit() }) { Text("キャンセル") } }
         } else null
-    )
-}
-
-// ─── Tab2: 品目別マッチング ──────────────────────────────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ItemMatchingTab(
-    itemGroups: List<GeneralItemGroup>,
-    viewModel: GeneralReceiptViewModel,
-    aiError: String?
-) {
-    val matchedCount = itemGroups.count { it.yayoiAccountId != null }
-    val totalCount = itemGroups.size
-    val unmatchedCount = totalCount - matchedCount
-
-    val aiSuggestions by viewModel.aiSuggestions.collectAsState()
-    val isAiMatching by viewModel.isAiMatching.collectAsState()
-    val aiUsageStats by viewModel.aiUsageStats.collectAsState()
-
-    var editTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
-    var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
-
-    LaunchedEffect(Unit) {
-        yayoiAccounts = viewModel.loadYayoiAccounts()
-    }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        // 統計カード
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                StatColumn("品目数", "$totalCount")
-                StatColumn("マッチ済", "$matchedCount", MaterialTheme.colorScheme.primary)
-                StatColumn(
-                    "未マッチ", "$unmatchedCount",
-                    if (unmatchedCount > 0) MaterialTheme.colorScheme.error else Color.Gray
-                )
-            }
-        }
-
-        // AI一括割り当てボタン
-        if (unmatchedCount > 0) {
-            OutlinedButton(
-                onClick = {
-                    val unmatched = itemGroups.filter { it.yayoiAccountId == null }
-                    viewModel.suggestAccountsForItems(unmatched, yayoiAccounts)
-                },
-                enabled = !isAiMatching && yayoiAccounts.isNotEmpty(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                if (isAiMatching) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("AI提案中...")
-                } else {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("未マッチ ${unmatchedCount}件をAIで一括割り当て")
-                }
-            }
-        }
-
-        if (itemGroups.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("品目データがありません", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(itemGroups, key = { it.itemName }) { group ->
-                    ItemGroupCard(
-                        group = group,
-                        onClick = { editTarget = group }
-                    )
-                }
-            }
-        }
-    }
-
-    // AI提案結果ダイアログ
-    if (aiSuggestions.isNotEmpty()) {
-        AiSuggestionDialog(
-            suggestions = aiSuggestions,
-            usageStats = aiUsageStats,
-            onApply = { approved ->
-                approved.forEach { s ->
-                    viewModel.updateAccountForItemName(s.itemName, s.accountId)
-                }
-                viewModel.clearAiSuggestions()
-            },
-            onDismiss = { viewModel.clearAiSuggestions() }
-        )
-    }
-
-    // 科目選択ダイアログ
-    if (editTarget != null) {
-        ItemAccountEditDialog(
-            group = editTarget!!,
-            yayoiAccounts = yayoiAccounts,
-            onDismiss = { editTarget = null },
-            onSave = { itemName, accountId ->
-                viewModel.updateAccountForItemName(itemName, accountId)
-                editTarget = null
-            },
-            onLoadAccounts = { accounts -> yayoiAccounts = accounts },
-            viewModel = viewModel
-        )
-    }
-
-    // AIエラーダイアログ
-    if (aiError != null) {
-        AlertDialog(
-            onDismissRequest = { viewModel.clearAiSuggestions() },
-            title = { Text("AI提案エラー") },
-            text = { Text(aiError) },
-            confirmButton = {
-                TextButton(onClick = { viewModel.clearAiSuggestions() }) { Text("OK") }
-            }
-        )
-    }
-}
-
-// ─── AI提案結果ダイアログ ────────────────────────────────────────────────────
-
-@Composable
-private fun AiSuggestionDialog(
-    suggestions: List<GeneralReceiptViewModel.AiSuggestion>,
-    usageStats: GeminiReceiptClient.AiUsageStats?,
-    onApply: (List<GeneralReceiptViewModel.AiSuggestion>) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val checked = remember(suggestions) {
-        mutableStateListOf(*Array(suggestions.size) { true })
-    }
-    val approvedCount = checked.count { it }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("AI提案結果（${suggestions.size}件）") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
-                usageStats?.let {
-                    Text(
-                        text = it.toDisplayString(),
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    itemsIndexed(suggestions) { index, suggestion ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Checkbox(
-                                checked = checked[index],
-                                onCheckedChange = { checked[index] = it }
-                            )
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(start = 4.dp, top = 10.dp)
-                            ) {
-                                Text(
-                                    text = suggestion.itemName,
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = 13.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("→ ", fontSize = 12.sp)
-                                    Text(
-                                        text = suggestion.accountName,
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                                Text(
-                                    text = suggestion.reason,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Divider()
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val approved = suggestions.filterIndexed { i, _ -> checked[i] }
-                    onApply(approved)
-                },
-                enabled = approvedCount > 0
-            ) {
-                Text("承認（${approvedCount}件）")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("キャンセル") }
-        }
-    )
-}
-
-// ─── 共通コンポーネント ──────────────────────────────────────────────────────
-
-@Composable
-private fun StatColumn(label: String, value: String, valueColor: Color = Color.Unspecified) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, fontSize = 12.sp)
-        Text(value, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = valueColor)
-    }
-}
-
-@Composable
-private fun ItemGroupCard(
-    group: GeneralItemGroup,
-    onClick: () -> Unit
-) {
-    val isMatched = group.yayoiAccountId != null
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isMatched)
-                MaterialTheme.colorScheme.surface
-            else
-                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = if (isMatched) Icons.Default.CheckCircle else Icons.Default.Warning,
-                contentDescription = null,
-                tint = if (isMatched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = group.itemName,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "${group.count}件  合計 ¥${"%,d".format(group.totalPrice)}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.Edit, contentDescription = "編集", modifier = Modifier.size(18.dp))
-            }
-        }
-    }
-}
-
-// ─── 科目選択ダイアログ ──────────────────────────────────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ItemAccountEditDialog(
-    group: GeneralItemGroup,
-    yayoiAccounts: List<YayoiAccount>,
-    onDismiss: () -> Unit,
-    onSave: (itemName: String, accountId: Long?) -> Unit,
-    onLoadAccounts: (List<YayoiAccount>) -> Unit,
-    viewModel: GeneralReceiptViewModel
-) {
-    var selectedAccountId by remember(group) { mutableStateOf(group.yayoiAccountId) }
-    var searchText by remember { mutableStateOf("") }
-    var selectedCategoryA by remember { mutableStateOf<String?>(null) }
-    var localAccounts by remember { mutableStateOf(yayoiAccounts) }
-
-    LaunchedEffect(Unit) {
-        val accounts = viewModel.loadYayoiAccounts()
-        localAccounts = accounts
-        onLoadAccounts(accounts)
-    }
-
-    val categoryAList = remember(localAccounts) {
-        localAccounts.map { it.categoryA }.distinct().filter { it.isNotBlank() }.sorted()
-    }
-
-    val filtered = remember(localAccounts, searchText, selectedCategoryA) {
-        localAccounts.filter { acc ->
-            (selectedCategoryA == null || acc.categoryA == selectedCategoryA) &&
-            (searchText.isEmpty() ||
-             acc.accountName.contains(searchText, ignoreCase = true) ||
-             (acc.accountCode?.contains(searchText) == true) ||
-             acc.searchKeyAlpha.contains(searchText, ignoreCase = true))
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Column {
-                Text(group.itemName, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${group.count}件  ¥${"%,d".format(group.totalPrice)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
-                // 区分Aフィルター
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    contentPadding = PaddingValues(vertical = 2.dp)
-                ) {
-                    item {
-                        FilterChip(
-                            selected = selectedCategoryA == null,
-                            onClick = { selectedCategoryA = null },
-                            label = { Text("全て", fontSize = 12.sp) }
-                        )
-                    }
-                    items(categoryAList.size) { idx ->
-                        val cat = categoryAList[idx]
-                        FilterChip(
-                            selected = selectedCategoryA == cat,
-                            onClick = { selectedCategoryA = if (selectedCategoryA == cat) null else cat },
-                            label = { Text(cat, fontSize = 12.sp) }
-                        )
-                    }
-                }
-                OutlinedTextField(
-                    value = searchText,
-                    onValueChange = { searchText = it },
-                    label = { Text("検索") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Default.Search, "検索") }
-                )
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedAccountId = null }
-                                .background(if (selectedAccountId == null) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(selected = selectedAccountId == null, onClick = { selectedAccountId = null })
-                            Spacer(Modifier.width(8.dp))
-                            Text("（未設定）", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    items(filtered, key = { it.id }) { account ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedAccountId = account.id }
-                                .background(if (selectedAccountId == account.id) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(selected = selectedAccountId == account.id, onClick = { selectedAccountId = account.id })
-                            Spacer(Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(account.accountName, fontWeight = FontWeight.Medium)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    account.accountCode?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary) }
-                                    Text("${account.categoryA} / ${account.categoryB}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(group.itemName, selectedAccountId) }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
     )
 }

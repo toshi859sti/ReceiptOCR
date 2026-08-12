@@ -23,9 +23,10 @@ import com.example.greenframeocr.util.toCanonicalKey
         OcrFallbackLog::class,
         GeneralReceipt::class,
         GeneralReceiptItem::class,
-        InvoiceStore::class
+        InvoiceStore::class,
+        GeneralItemMaster::class
     ],
-    version = 29,
+    version = 30,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -40,6 +41,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun ocrFallbackLogDao(): OcrFallbackLogDao
     abstract fun generalReceiptDao(): GeneralReceiptDao
     abstract fun invoiceStoreDao(): InvoiceStoreDao
+    abstract fun generalItemMasterDao(): GeneralItemMasterDao
 
     companion object {
         @Volatile
@@ -748,6 +750,62 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 29 → 30（一般レシート品目別マッチングの正規化グルーピング対応。
+        // general_receipt_items に canonicalKey 追加、general_item_master でグループのデフォルト
+        // 科目を管理。個別明細の yayoiAccountId は「グループのデフォルトからの個別上書き」に意味変更）
+        private val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE general_receipt_items ADD COLUMN canonicalKey TEXT NOT NULL DEFAULT ''"
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS general_item_master (
+                        canonicalKey TEXT NOT NULL PRIMARY KEY,
+                        yayoiAccountId INTEGER
+                    )
+                    """.trimIndent()
+                )
+
+                // 既存行の canonicalKey をバックフィル
+                val itemCursor = database.query("SELECT id, itemName FROM general_receipt_items")
+                while (itemCursor.moveToNext()) {
+                    val id = itemCursor.getLong(0)
+                    val itemName = itemCursor.getString(1)
+                    database.execSQL(
+                        "UPDATE general_receipt_items SET canonicalKey = ? WHERE id = ?",
+                        arrayOf(toCanonicalKey(itemName), id)
+                    )
+                }
+                itemCursor.close()
+
+                // 既存の個別科目設定から、canonicalKeyごとの最頻値をグループのデフォルト科目として登録
+                // （新規追加される明細は、これまで手動で確定していた科目を自動で引き継げるようにする）
+                val voteCursor = database.query(
+                    """
+                    SELECT canonicalKey, yayoiAccountId
+                    FROM general_receipt_items
+                    WHERE itemName != '' AND isExcluded = 0 AND yayoiAccountId IS NOT NULL
+                    """.trimIndent()
+                )
+                val votes = mutableMapOf<String, MutableMap<Long, Int>>()
+                while (voteCursor.moveToNext()) {
+                    val key = voteCursor.getString(0)
+                    val accountId = voteCursor.getLong(1)
+                    val perKey = votes.getOrPut(key) { mutableMapOf() }
+                    perKey[accountId] = (perKey[accountId] ?: 0) + 1
+                }
+                voteCursor.close()
+                votes.forEach { (key, accountCounts) ->
+                    val bestAccountId = accountCounts.maxByOrNull { it.value }?.key ?: return@forEach
+                    database.execSQL(
+                        "INSERT OR REPLACE INTO general_item_master (canonicalKey, yayoiAccountId) VALUES (?, ?)",
+                        arrayOf(key, bestAccountId)
+                    )
+                }
+            }
+        }
+
         // マイグレーション: version 26 → 27（receipt_items に productMasterId 追加、
         // canonicalKey での過去データバックフィル。MIGRATION_16_17 と同じカーソル走査パターン）
         // マイグレーション: version 28 → 29（toCanonicalKey()の記号幅正規化漏れ修正に伴う再計算）
@@ -1081,7 +1139,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30)
                     .build()
                 INSTANCE = instance
                 instance

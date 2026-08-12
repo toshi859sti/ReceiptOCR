@@ -33,6 +33,7 @@ import com.example.greenframeocr.ui.BookkeepingMenuScreen
 import com.example.greenframeocr.ui.RakurakuAccountSettingsScreen
 import com.example.greenframeocr.ui.YayoiAccountEditScreen
 import com.example.greenframeocr.ui.YayoiAccountSettingsScreen
+import com.example.greenframeocr.ui.GeneralItemMatchingScreen
 import com.example.greenframeocr.ui.GeneralPurchaseMenuScreen
 import com.example.greenframeocr.ui.GeneralReceiptCaptureScreen
 import com.example.greenframeocr.ui.GeneralReceiptConfirmScreen
@@ -72,6 +73,7 @@ sealed class Screen(val route: String) {
     object GeneralReceiptCapture : Screen("general_receipt_capture")
     object GeneralReceiptConfirm : Screen("general_receipt_confirm")
     object GeneralReceiptList : Screen("general_receipt_list")
+    object GeneralItemMatching : Screen("general_item_matching")
     object GeneralReceiptOutput : Screen("general_receipt_output")
     object InvoiceStoreList : Screen("invoice_store_list")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
@@ -311,6 +313,7 @@ fun ReceiptNavGraph(
                 onBack = { navController.popBackStack() },
                 onNavigateToCapture = { navController.navigate(Screen.GeneralReceiptCapture.route) },
                 onNavigateToList = { navController.navigate(Screen.GeneralReceiptList.route) },
+                onNavigateToItemMatching = { navController.navigate(Screen.GeneralItemMatching.route) },
                 onNavigateToOutput = { navController.navigate(Screen.GeneralReceiptOutput.route) },
                 onNavigateToStoreList = { navController.navigate(Screen.InvoiceStoreList.route) }
             )
@@ -356,6 +359,15 @@ fun ReceiptNavGraph(
         // 一般レシート一覧画面
         composable(Screen.GeneralReceiptList.route) {
             GeneralReceiptListScreen(
+                viewModel = generalReceiptViewModel,
+                appPreferences = appPreferences,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 品目別マッチング画面
+        composable(Screen.GeneralItemMatching.route) {
+            GeneralItemMatchingScreen(
                 viewModel = generalReceiptViewModel,
                 appPreferences = appPreferences,
                 onBack = { navController.popBackStack() }

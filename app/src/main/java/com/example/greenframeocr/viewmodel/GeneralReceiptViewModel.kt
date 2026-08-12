@@ -9,10 +9,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralItemGroup
+import com.example.greenframeocr.data.GeneralItemMaster
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.InvoiceStore
 import com.example.greenframeocr.data.ReceiptDatabase
+import com.example.greenframeocr.data.ReceiptItemPreview
 import com.example.greenframeocr.data.YayoiAccount
 import com.example.greenframeocr.util.CsvUtils
 import com.example.greenframeocr.util.GeminiApiException
@@ -20,10 +22,13 @@ import com.example.greenframeocr.util.GeminiApiKeyMissingException
 import com.example.greenframeocr.util.GeminiQuotaExhaustedException
 import com.example.greenframeocr.util.GeminiRateLimitException
 import com.example.greenframeocr.util.GeminiReceiptClient
+import com.example.greenframeocr.util.toCanonicalKey
+import com.example.greenframeocr.util.withComputedKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,11 +59,18 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     val itemGroups: StateFlow<List<GeneralItemGroup>> =
         dao.getItemGroups().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    // 一覧カードの商品名プレビュー用（receiptId → 商品名連結文字列・経費対象件数）
+    val itemPreviews: StateFlow<Map<Long, ReceiptItemPreview>> =
+        dao.getItemNamePreviews()
+            .map { list -> list.associate { it.receiptId to it } }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyMap())
+
     val invoiceStores: StateFlow<List<InvoiceStore>> =
         db.invoiceStoreDao().getAll().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // AI提案結果
     data class AiSuggestion(
+        val canonicalKey: String,
         val itemName: String,
         val accountId: Long,
         val accountName: String,
@@ -101,7 +113,7 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     fun saveReceipt(receipt: GeneralReceipt, items: List<GeneralReceiptItem>) {
         viewModelScope.launch(Dispatchers.IO) {
             val receiptId = dao.insertReceipt(receipt)
-            val itemsWithId = items.map { it.copy(receiptId = receiptId) }
+            val itemsWithId = items.map { it.copy(receiptId = receiptId).withComputedKey() }
             dao.insertItems(itemsWithId)
             // 登録番号があれば invoice_stores に登録（未登録の場合のみ）
             if (receipt.registrationNumber.isNotBlank()) {
@@ -153,11 +165,23 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
-    fun updateAccountForItemName(itemName: String, accountId: Long?) {
+    /** グループのデフォルト科目を変更する。グループ内の個別上書きは全解除される
+     *  （預金摘要集約リストと同じ「グループ保存時は全件リセット」挙動） */
+    fun updateGroupDefaultAccount(canonicalKey: String, accountId: Long?) {
         viewModelScope.launch(Dispatchers.IO) {
-            dao.updateAccountForItemName(itemName, accountId)
+            db.generalItemMasterDao().upsert(GeneralItemMaster(canonicalKey, accountId))
+            dao.clearOverridesForGroup(canonicalKey)
         }
     }
+
+    /** グループ内の個別明細だけ科目を上書きする。accountId=nullでグループのデフォルトに戻す */
+    fun updateItemOverride(itemId: Long, accountId: Long?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.updateAccountForItem(itemId, accountId)
+        }
+    }
+
+    fun getItemsByCanonicalKey(canonicalKey: String) = dao.getItemsByCanonicalKey(canonicalKey)
 
     fun suggestAccountsForItems(
         unmatchedGroups: List<GeneralItemGroup>,
@@ -173,8 +197,15 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                     accounts = accounts,
                     apiKey = prefs.geminiApiKey
                 )
+                val canonicalKeyByName = unmatchedGroups.associate { it.itemName to it.canonicalKey }
                 _aiSuggestions.value = result.suggestions.map {
-                    AiSuggestion(it.productName, it.suggestedAccountId, it.suggestedAccountName, it.reason)
+                    AiSuggestion(
+                        canonicalKey = canonicalKeyByName[it.productName] ?: toCanonicalKey(it.productName),
+                        itemName = it.productName,
+                        accountId = it.suggestedAccountId,
+                        accountName = it.suggestedAccountName,
+                        reason = it.reason
+                    )
                 }
                 _aiUsageStats.value = result.usageStats
             } catch (e: GeminiApiKeyMissingException) {
@@ -292,10 +323,17 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             val updatedIds = updatedItems.filter { it.id != 0L }.map { it.id }.toSet()
             originalItems.filter { it.id !in updatedIds }.forEach { dao.deleteItem(it) }
             updatedItems.forEach { item ->
-                if (item.id == 0L) dao.insertItem(item.copy(receiptId = receipt.id))
-                else dao.updateItem(item)
+                val keyed = item.copy(receiptId = receipt.id).withComputedKey()
+                if (item.id == 0L) dao.insertItem(keyed)
+                else dao.updateItem(keyed)
             }
         }
+    }
+
+    /** 個別上書き（item.yayoiAccountId）があればそちら優先、なければグループのデフォルトを使う */
+    private suspend fun resolveEffectiveAccountId(item: GeneralReceiptItem): Long? {
+        item.yayoiAccountId?.let { return it }
+        return db.generalItemMasterDao().getByKey(item.canonicalKey)?.yayoiAccountId
     }
 
     suspend fun loadOutputItems(): List<GeneralReceiptOutputItem> =
@@ -304,7 +342,7 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             val allAccounts = db.yayoiAccountDao().getAll().associateBy { it.id }
             allItems.map { item ->
                 val receipt = dao.getReceiptById(item.receiptId)
-                val account = item.yayoiAccountId?.let { allAccounts[it] }
+                val account = resolveEffectiveAccountId(item)?.let { allAccounts[it] }
                 val parentAccount = account?.parentId?.let { allAccounts[it] }
                 val debitAccountName = parentAccount?.accountName ?: account?.accountName ?: ""
                 val debitSubAccountName = if (parentAccount != null) account?.accountName ?: "" else ""
@@ -333,7 +371,7 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                     val receipt = dao.getReceiptById(item.receiptId)
                     val date = receipt?.date?.replace("-", "/") ?: ""
                     val store = receipt?.storeName ?: ""
-                    val account = item.yayoiAccountId?.let { accountMap[it] }
+                    val account = resolveEffectiveAccountId(item)?.let { accountMap[it] }
                     val accountName = account?.accountName ?: ""
                     val accountCode = account?.accountCode ?: ""
                     appendLine(

@@ -22,6 +22,11 @@ data class GeneralReceiptItem(
     val price: Int = 0,
     val category: String = "未分類",
     val tekiyouId: Int? = null,
+    // グループのデフォルト科目（general_item_master.yayoiAccountId）からの個別上書き。
+    // null = グループのデフォルトに従う、非null = この行だけ個別に指定
     val yayoiAccountId: Long? = null,
-    val isExcluded: Boolean = false
+    val isExcluded: Boolean = false,
+    // itemNameの正規化キー（スペース除去・文字種統一）。品目別マッチングのグルーピングに使用。
+    // INSERT/UPDATE前に必ず withComputedKey() で設定すること
+    val canonicalKey: String = ""
 )

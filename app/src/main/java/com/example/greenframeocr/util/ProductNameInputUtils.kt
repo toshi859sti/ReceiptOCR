@@ -1,5 +1,6 @@
 package com.example.greenframeocr.util
 
+import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.ProductMaster
 
 /**
@@ -61,6 +62,10 @@ fun toCanonicalKey(name: String): String {
 /** INSERT 前に canonicalKey を canonicalName から自動計算する。 */
 fun ProductMaster.withComputedKey(): ProductMaster =
     copy(canonicalKey = toCanonicalKey(canonicalName))
+
+/** INSERT/UPDATE 前に canonicalKey を itemName から自動計算する。 */
+fun GeneralReceiptItem.withComputedKey(): GeneralReceiptItem =
+    copy(canonicalKey = toCanonicalKey(itemName))
 
 fun charFullWidthWeight(c: Char): Double =
     if (c.code in 0x20..0x7E || c.code in 0xFF61..0xFF9F) 0.5 else 1.0
