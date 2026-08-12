@@ -23,7 +23,7 @@ class AppPreferences(context: Context) {
     private fun migrateSecretsToSecurePrefs() {
         val editor = securePrefs.edit()
         var migrated = false
-        for (key in listOf(KEY_GEMINI_API_KEY, KEY_NTA_APPLICATION_ID)) {
+        for (key in listOf(KEY_GEMINI_API_KEY)) {
             if (!securePrefs.contains(key) && prefs.contains(key)) {
                 editor.putString(key, prefs.getString(key, ""))
                 migrated = true
@@ -31,7 +31,14 @@ class AppPreferences(context: Context) {
         }
         if (migrated) {
             editor.apply()
-            prefs.edit().remove(KEY_GEMINI_API_KEY).remove(KEY_NTA_APPLICATION_ID).apply()
+            prefs.edit().remove(KEY_GEMINI_API_KEY).apply()
+        }
+        // 廃止した国税庁インボイス照会機能の旧設定値（平文prefs・秘匿ファイル両方）を除去
+        if (prefs.contains(KEY_NTA_APPLICATION_ID_LEGACY)) {
+            prefs.edit().remove(KEY_NTA_APPLICATION_ID_LEGACY).apply()
+        }
+        if (securePrefs.contains(KEY_NTA_APPLICATION_ID_LEGACY)) {
+            securePrefs.edit().remove(KEY_NTA_APPLICATION_ID_LEGACY).apply()
         }
     }
 
@@ -76,8 +83,8 @@ class AppPreferences(context: Context) {
         // Gemini API キー（一般購買OCR用）
         private const val KEY_GEMINI_API_KEY = "gemini_api_key"
 
-        // 国税庁インボイス照会 アプリケーションID
-        private const val KEY_NTA_APPLICATION_ID = "nta_application_id"
+        // 廃止済み：国税庁インボイス照会 アプリケーションID（旧設定値の削除用にキー名のみ残す）
+        private const val KEY_NTA_APPLICATION_ID_LEGACY = "nta_application_id"
 
         // 連携会計ソフト
         private const val KEY_ACCOUNTING_SOFTWARE = "accounting_software"
@@ -144,11 +151,6 @@ class AppPreferences(context: Context) {
     var geminiApiKey: String
         get() = securePrefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
         set(value) = securePrefs.edit().putString(KEY_GEMINI_API_KEY, value).apply()
-
-    // 国税庁インボイス照会 アプリケーションID（秘匿ファイル・バックアップ除外）
-    var ntaApplicationId: String
-        get() = securePrefs.getString(KEY_NTA_APPLICATION_ID, "") ?: ""
-        set(value) = securePrefs.edit().putString(KEY_NTA_APPLICATION_ID, value).apply()
 
     // 一覧文字サイズ（PassbookDataScreen / GeneralReceiptListScreen / TekiyouMatchingScreen 共通）
     var listFontSize: Float

@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -38,6 +39,7 @@ import java.util.concurrent.atomic.AtomicLong
 fun GeneralReceiptCaptureScreen(
     viewModel: GeneralReceiptViewModel,
     onNavigateToConfirm: () -> Unit,
+    onNavigateToList: () -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -45,6 +47,16 @@ fun GeneralReceiptCaptureScreen(
 
     val uiState by viewModel.uiState.collectAsState()
     val pendingReceipt by viewModel.pendingReceipt.collectAsState()
+    val receipts by viewModel.receipts.collectAsState()
+    // 撮影件数は領収書の購入日（date）ではなく、撮影・保存日時（createdAt）で判定する
+    // （過去の日付の領収書を今日撮影するケースが多く、購入日で判定すると常に0件になるため）
+    val todayLabel = remember {
+        java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.JAPAN).format(java.util.Date())
+    }
+    val todayCount = remember(receipts, todayLabel) {
+        val fmt = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.JAPAN)
+        receipts.count { fmt.format(java.util.Date(it.createdAt)) == todayLabel }
+    }
 
     var isCapturing by remember { mutableStateOf(false) }
     var ocrStarted by remember { mutableStateOf(false) }
@@ -140,6 +152,11 @@ fun GeneralReceiptCaptureScreen(
                 imageCapture,
                 imageAnalyzer
             )
+            // JA伝票のCameraScreenと同じ「フラッシュ」設定を共有し、ONなら起動時に自動点灯
+            if (appPreferences.cameraFlash) {
+                cameraRef?.cameraControl?.enableTorch(true)
+                isTorchOn = true
+            }
         } catch (e: Exception) {
             Log.e("GeneralReceiptCapture", "Camera bind failed: ${e.message}")
         }
@@ -156,10 +173,15 @@ fun GeneralReceiptCaptureScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("レシート撮影") },
+                title = { Text("レシート撮影（本日 ${todayCount}件）") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onNavigateToList) {
+                        Icon(Icons.Default.FormatListBulleted, contentDescription = "レシート一覧")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

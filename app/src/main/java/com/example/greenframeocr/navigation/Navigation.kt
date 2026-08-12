@@ -334,6 +334,7 @@ fun ReceiptNavGraph(
                         popUpTo(Screen.GeneralReceiptCapture.route) { inclusive = true }
                     }
                 },
+                onNavigateToList = { navController.navigate(Screen.GeneralReceiptList.route) },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -343,8 +344,9 @@ fun ReceiptNavGraph(
             GeneralReceiptConfirmScreen(
                 viewModel = generalReceiptViewModel,
                 onBack = { navController.popBackStack() },
-                onNavigateToList = {
-                    navController.navigate(Screen.GeneralReceiptList.route) {
+                onSaved = {
+                    // 連続撮影のため一覧ではなく撮影画面へループバックする
+                    navController.navigate(Screen.GeneralReceiptCapture.route) {
                         popUpTo(Screen.GeneralPurchaseMenu.route)
                     }
                 }

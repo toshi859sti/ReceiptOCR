@@ -20,7 +20,6 @@ import com.example.greenframeocr.util.GeminiApiKeyMissingException
 import com.example.greenframeocr.util.GeminiQuotaExhaustedException
 import com.example.greenframeocr.util.GeminiRateLimitException
 import com.example.greenframeocr.util.GeminiReceiptClient
-import com.example.greenframeocr.util.NtaInvoiceClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -76,9 +75,6 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
 
     private val _isAiMatching = MutableStateFlow(false)
     val isAiMatching: StateFlow<Boolean> = _isAiMatching
-
-    private val _storeRefreshState = MutableStateFlow<Set<String>>(emptySet())
-    val storeRefreshState: StateFlow<Set<String>> = _storeRefreshState
 
     private val _isLookingUpStore = MutableStateFlow(false)
     val isLookingUpStore: StateFlow<Boolean> = _isLookingUpStore
@@ -223,21 +219,10 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
-    /** ローカルキャッシュ → NTA API の順で照会し店舗名を返す */
+    /** ローカルキャッシュ（過去に保存・編集した登録番号）から店舗名を照会する */
     private suspend fun resolveStoreName(registrationNumber: String): String? =
         withContext(Dispatchers.IO) {
-            val cached = db.invoiceStoreDao().findByNumber(registrationNumber)
-            if (cached != null) return@withContext cached.storeName
-
-            val info = NtaInvoiceClient.lookup(registrationNumber, prefs.ntaApplicationId) ?: return@withContext null
-            db.invoiceStoreDao().upsert(
-                InvoiceStore(
-                    registrationNumber = info.registrationNumber,
-                    storeName = info.storeName,
-                    address = info.address
-                )
-            )
-            info.storeName
+            db.invoiceStoreDao().findByNumber(registrationNumber)?.storeName
         }
 
     fun clearStoreLookupError() { _storeLookupError.value = null }
@@ -277,26 +262,6 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             )
             if (feedbackToReceipts) {
                 dao.updateStoreNameByRegistrationNumber(registrationNumber, newName)
-            }
-        }
-    }
-
-    fun refreshStore(registrationNumber: String) {
-        viewModelScope.launch {
-            _storeRefreshState.value = _storeRefreshState.value + registrationNumber
-            try {
-                withContext(Dispatchers.IO) {
-                    val info = NtaInvoiceClient.lookup(registrationNumber, prefs.ntaApplicationId) ?: return@withContext
-                    db.invoiceStoreDao().upsert(
-                        InvoiceStore(
-                            registrationNumber = info.registrationNumber,
-                            storeName = info.storeName,
-                            address = info.address
-                        )
-                    )
-                }
-            } finally {
-                _storeRefreshState.value = _storeRefreshState.value - registrationNumber
             }
         }
     }

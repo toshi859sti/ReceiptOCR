@@ -35,7 +35,7 @@ data class EditableGeneralItem(
 fun GeneralReceiptConfirmScreen(
     viewModel: GeneralReceiptViewModel,
     onBack: () -> Unit,
-    onNavigateToList: () -> Unit
+    onSaved: () -> Unit
 ) {
     val pendingReceipt by viewModel.pendingReceipt.collectAsState()
     val pendingItems by viewModel.pendingItems.collectAsState()
@@ -61,10 +61,10 @@ fun GeneralReceiptConfirmScreen(
         }
     }
 
-    // 保存完了 → 一覧画面へ
+    // 保存完了 → 連続撮影のため撮影画面へ戻る
     LaunchedEffect(uiState) {
         if (uiState is GeneralReceiptViewModel.UiState.Done) {
-            onNavigateToList()
+            onSaved()
         }
     }
 
@@ -287,7 +287,7 @@ fun GeneralReceiptConfirmScreen(
                     modifier = Modifier.weight(1f),
                     enabled = uiState !is GeneralReceiptViewModel.UiState.GeminiRunning
                 ) {
-                    Text("保存")
+                    Text("保存して次を撮影")
                 }
             }
         }

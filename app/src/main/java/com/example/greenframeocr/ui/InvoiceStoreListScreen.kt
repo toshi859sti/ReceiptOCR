@@ -8,7 +8,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,7 +28,6 @@ fun InvoiceStoreListScreen(
     onBack: () -> Unit
 ) {
     val stores by viewModel.invoiceStores.collectAsState()
-    val refreshing by viewModel.storeRefreshState.collectAsState()
     var deleteTarget by remember { mutableStateOf<InvoiceStore?>(null) }
     var editTarget by remember { mutableStateOf<InvoiceStore?>(null) }
     var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
@@ -94,7 +92,6 @@ fun InvoiceStoreListScreen(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(stores, key = { it.registrationNumber }) { store ->
-                    val isRefreshing = store.registrationNumber in refreshing
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -128,32 +125,15 @@ fun InvoiceStoreListScreen(
                                     )
                                 }
                             }
-                            if (isRefreshing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.dp
+                            IconButton(
+                                onClick = { editTarget = store },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = "編集",
+                                    modifier = Modifier.size(18.dp)
                                 )
-                            } else {
-                                IconButton(
-                                    onClick = { editTarget = store },
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Edit,
-                                        contentDescription = "編集",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { viewModel.refreshStore(store.registrationNumber) },
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Refresh,
-                                        contentDescription = "NTA再照会",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
                             }
                         }
                     }

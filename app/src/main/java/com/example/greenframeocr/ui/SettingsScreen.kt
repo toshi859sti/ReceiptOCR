@@ -70,7 +70,6 @@ fun SettingsScreen(
     var selectedDarkMode by remember { mutableStateOf(appPreferences.darkMode) }
     var geminiApiKey by remember { mutableStateOf(appPreferences.geminiApiKey) }
     var geminiKeyVisible by remember { mutableStateOf(false) }
-    var ntaApplicationId by remember { mutableStateOf(appPreferences.ntaApplicationId) }
 
     // メッセージ状態
     var allExportMessage by remember { mutableStateOf<String?>(null) }
@@ -523,33 +522,6 @@ fun SettingsScreen(
                         }) {
                             Icon(Icons.Default.Save, contentDescription = "保存")
                         }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "国税庁インボイス照会 アプリケーションID",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-            )
-            Text(
-                text = "登録番号から事業者名を自動取得します。未設定でも動作する場合があります。",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            OutlinedTextField(
-                value = ntaApplicationId,
-                onValueChange = { ntaApplicationId = it },
-                placeholder = { Text("アプリケーションID") },
-                trailingIcon = {
-                    IconButton(onClick = { appPreferences.ntaApplicationId = ntaApplicationId }) {
-                        Icon(Icons.Default.Save, contentDescription = "保存")
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
