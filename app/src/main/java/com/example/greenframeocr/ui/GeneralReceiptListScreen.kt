@@ -389,8 +389,58 @@ private data class EditableItem(
 private fun List<GeneralReceiptItem>.toEditableItems(): List<EditableItem> =
     map { EditableItem(originalId = it.id, itemName = it.itemName, priceStr = it.price.toString(), isExcluded = it.isExcluded) }
 
+// ─── 店舗名オートコンプリート入力欄（過去のレシートのstoreName実績から候補表示） ─────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StoreNameAutocompleteField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    suggestions: List<String>,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val filtered = remember(value, suggestions) {
+        if (value.isBlank()) emptyList()
+        else suggestions.filter { it != value && it.contains(value) }.take(5)
+    }
+    ExposedDropdownMenuBox(
+        expanded = expanded && filtered.isNotEmpty(),
+        onExpandedChange = { },
+        modifier = modifier
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {
+                onValueChange(it)
+                expanded = true
+            },
+            label = { Text("店舗名") },
+            singleLine = true,
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded && filtered.isNotEmpty(),
+            onDismissRequest = { expanded = false }
+        ) {
+            filtered.forEach { suggestion ->
+                DropdownMenuItem(
+                    text = { Text(suggestion) },
+                    onClick = {
+                        onValueChange(suggestion)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
 // ─── 新規レシート手入力ダイアログ ────────────────────────────────────────────
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NewReceiptDialog(
     viewModel: GeneralReceiptViewModel,
@@ -399,6 +449,7 @@ private fun NewReceiptDialog(
     val todayDate = remember {
         java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.JAPAN).format(java.util.Date())
     }
+    val storeNameSuggestions by viewModel.storeNameSuggestions.collectAsState()
     var storeName by remember { mutableStateOf("") }
     var date by remember { mutableStateOf(todayDate) }
     val items = remember { mutableStateListOf(EditableItem()) }
@@ -411,11 +462,10 @@ private fun NewReceiptDialog(
         title = { Text("レシートを手入力で追加") },
         text = {
             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
-                OutlinedTextField(
+                StoreNameAutocompleteField(
                     value = storeName,
                     onValueChange = { storeName = it },
-                    label = { Text("店舗名") },
-                    singleLine = true,
+                    suggestions = storeNameSuggestions,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(4.dp))
@@ -528,12 +578,14 @@ private fun NewReceiptDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ReceiptDetailDialog(
     receipt: GeneralReceipt,
     viewModel: GeneralReceiptViewModel,
     onDismiss: () -> Unit
 ) {
+    val storeNameSuggestions by viewModel.storeNameSuggestions.collectAsState()
     var originalItems by remember { mutableStateOf<List<GeneralReceiptItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var isEditMode by remember { mutableStateOf(false) }
@@ -595,11 +647,10 @@ private fun ReceiptDetailDialog(
             } else {
                 Column(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
                     if (isEditMode) {
-                        OutlinedTextField(
+                        StoreNameAutocompleteField(
                             value = editStoreName,
                             onValueChange = { editStoreName = it },
-                            label = { Text("店舗名") },
-                            singleLine = true,
+                            suggestions = storeNameSuggestions,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(4.dp))

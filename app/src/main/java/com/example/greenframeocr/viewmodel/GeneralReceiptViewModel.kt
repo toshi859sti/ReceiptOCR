@@ -56,6 +56,11 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     val receipts: StateFlow<List<GeneralReceipt>> =
         dao.getAllReceipts().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    // 店舗名手入力時のオートコンプリート候補（過去のレシートのstoreName実績、新しい順）
+    val storeNameSuggestions: StateFlow<List<String>> =
+        receipts.map { list -> list.map { it.storeName }.filter { it.isNotBlank() }.distinct() }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
     val itemGroups: StateFlow<List<GeneralItemGroup>> =
         dao.getItemGroups().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
