@@ -43,6 +43,7 @@ fun GeneralReceiptListScreen(
     val itemPreviews by viewModel.itemPreviews.collectAsState()
 
     var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
+    var showNewReceiptDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -58,6 +59,11 @@ fun GeneralReceiptListScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showNewReceiptDialog = true }) {
+                Icon(Icons.Default.Add, contentDescription = "手入力で新規追加")
+            }
         }
     ) { paddingValues ->
         Column(
@@ -91,6 +97,13 @@ fun GeneralReceiptListScreen(
                 appPreferences = appPreferences
             )
         }
+    }
+
+    if (showNewReceiptDialog) {
+        NewReceiptDialog(
+            viewModel = viewModel,
+            onDismiss = { showNewReceiptDialog = false }
+        )
     }
 }
 
@@ -375,6 +388,145 @@ private data class EditableItem(
 
 private fun List<GeneralReceiptItem>.toEditableItems(): List<EditableItem> =
     map { EditableItem(originalId = it.id, itemName = it.itemName, priceStr = it.price.toString(), isExcluded = it.isExcluded) }
+
+// ─── 新規レシート手入力ダイアログ ────────────────────────────────────────────
+
+@Composable
+private fun NewReceiptDialog(
+    viewModel: GeneralReceiptViewModel,
+    onDismiss: () -> Unit
+) {
+    val todayDate = remember {
+        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.JAPAN).format(java.util.Date())
+    }
+    var storeName by remember { mutableStateOf("") }
+    var date by remember { mutableStateOf(todayDate) }
+    val items = remember { mutableStateListOf(EditableItem()) }
+
+    val calculatedTotal = items.sumOf { it.priceStr.toIntOrNull() ?: 0 }
+    val hasValidItem = items.any { it.itemName.isNotBlank() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("レシートを手入力で追加") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
+                OutlinedTextField(
+                    value = storeName,
+                    onValueChange = { storeName = it },
+                    label = { Text("店舗名") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = date,
+                    onValueChange = { date = it },
+                    label = { Text("日付（yyyy-MM-dd）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Divider()
+                LazyColumn(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    itemsIndexed(items, key = { _, item -> item.localId }) { index, item ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = item.itemName,
+                                onValueChange = { items[index] = item.copy(itemName = it) },
+                                label = { Text("品目名") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            OutlinedTextField(
+                                value = item.priceStr,
+                                onValueChange = { items[index] = item.copy(priceStr = it.filter(Char::isDigit)) },
+                                label = { Text("¥") },
+                                singleLine = true,
+                                modifier = Modifier.width(88.dp),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                            IconButton(
+                                onClick = { items.removeAt(index) },
+                                enabled = items.size > 1,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "削除",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                    item {
+                        TextButton(
+                            onClick = { items.add(EditableItem()) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("品目を追加", fontSize = 13.sp)
+                        }
+                    }
+                }
+                Divider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("合計", fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "¥${"%,d".format(calculatedTotal)}",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val receipt = GeneralReceipt(
+                        date = date,
+                        storeName = storeName,
+                        total = calculatedTotal,
+                        geminiUsed = false
+                    )
+                    val receiptItems = items
+                        .filter { it.itemName.isNotBlank() }
+                        .map {
+                            GeneralReceiptItem(
+                                receiptId = 0,
+                                itemName = it.itemName,
+                                price = it.priceStr.toIntOrNull() ?: 0
+                            )
+                        }
+                    viewModel.saveReceipt(receipt, receiptItems)
+                    onDismiss()
+                },
+                enabled = hasValidItem
+            ) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("キャンセル") }
+        }
+    )
+}
 
 @Composable
 private fun ReceiptDetailDialog(
