@@ -389,15 +389,17 @@ private data class EditableItem(
 private fun List<GeneralReceiptItem>.toEditableItems(): List<EditableItem> =
     map { EditableItem(originalId = it.id, itemName = it.itemName, priceStr = it.price.toString(), isExcluded = it.isExcluded) }
 
-// ─── 店舗名オートコンプリート入力欄（過去のレシートのstoreName実績から候補表示） ─────
+// ─── オートコンプリート入力欄（過去の入力実績から候補表示。店舗名／品目名で共用） ─────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StoreNameAutocompleteField(
+private fun AutocompleteTextField(
     value: String,
     onValueChange: (String) -> Unit,
     suggestions: List<String>,
-    modifier: Modifier = Modifier
+    label: String? = null,
+    modifier: Modifier = Modifier,
+    colors: TextFieldColors = OutlinedTextFieldDefaults.colors()
 ) {
     var expanded by remember { mutableStateOf(false) }
     val filtered = remember(value, suggestions) {
@@ -415,8 +417,9 @@ private fun StoreNameAutocompleteField(
                 onValueChange(it)
                 expanded = true
             },
-            label = { Text("店舗名") },
+            label = label?.let { { Text(it) } },
             singleLine = true,
+            colors = colors,
             modifier = Modifier
                 .menuAnchor()
                 .fillMaxWidth()
@@ -450,6 +453,7 @@ private fun NewReceiptDialog(
         java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.JAPAN).format(java.util.Date())
     }
     val storeNameSuggestions by viewModel.storeNameSuggestions.collectAsState()
+    val itemNameSuggestions by viewModel.itemNameSuggestions.collectAsState()
     var storeName by remember { mutableStateOf("") }
     var date by remember { mutableStateOf(todayDate) }
     val items = remember { mutableStateListOf(EditableItem()) }
@@ -462,10 +466,11 @@ private fun NewReceiptDialog(
         title = { Text("レシートを手入力で追加") },
         text = {
             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
-                StoreNameAutocompleteField(
+                AutocompleteTextField(
                     value = storeName,
                     onValueChange = { storeName = it },
                     suggestions = storeNameSuggestions,
+                    label = "店舗名",
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(4.dp))
@@ -489,11 +494,11 @@ private fun NewReceiptDialog(
                                 .padding(vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedTextField(
+                            AutocompleteTextField(
                                 value = item.itemName,
                                 onValueChange = { items[index] = item.copy(itemName = it) },
-                                label = { Text("品目名") },
-                                singleLine = true,
+                                suggestions = itemNameSuggestions,
+                                label = "品目名",
                                 modifier = Modifier.weight(1f)
                             )
                             Spacer(Modifier.width(4.dp))
@@ -586,6 +591,7 @@ private fun ReceiptDetailDialog(
     onDismiss: () -> Unit
 ) {
     val storeNameSuggestions by viewModel.storeNameSuggestions.collectAsState()
+    val itemNameSuggestions by viewModel.itemNameSuggestions.collectAsState()
     var originalItems by remember { mutableStateOf<List<GeneralReceiptItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var isEditMode by remember { mutableStateOf(false) }
@@ -647,10 +653,11 @@ private fun ReceiptDetailDialog(
             } else {
                 Column(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
                     if (isEditMode) {
-                        StoreNameAutocompleteField(
+                        AutocompleteTextField(
                             value = editStoreName,
                             onValueChange = { editStoreName = it },
                             suggestions = storeNameSuggestions,
+                            label = "店舗名",
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(4.dp))
@@ -688,10 +695,10 @@ private fun ReceiptDetailDialog(
                                         onCheckedChange = { editItems[index] = item.copy(isExcluded = !it) },
                                         modifier = Modifier.size(32.dp)
                                     )
-                                    OutlinedTextField(
+                                    AutocompleteTextField(
                                         value = item.itemName,
                                         onValueChange = { editItems[index] = item.copy(itemName = it) },
-                                        singleLine = true,
+                                        suggestions = itemNameSuggestions,
                                         modifier = Modifier.weight(1f),
                                         colors = if (item.isExcluded)
                                             OutlinedTextFieldDefaults.colors(

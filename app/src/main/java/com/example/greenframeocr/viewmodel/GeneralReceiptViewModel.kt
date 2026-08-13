@@ -64,6 +64,12 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     val itemGroups: StateFlow<List<GeneralItemGroup>> =
         dao.getItemGroups().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    // 品目名（＝但し書き）手入力時のオートコンプリート候補。canonicalKeyで正規化グルーピング済みの
+    // itemGroupsをそのまま使う（表記ゆれを吸収済み・件数の多い順）
+    val itemNameSuggestions: StateFlow<List<String>> =
+        itemGroups.map { groups -> groups.map { it.itemName }.filter { it.isNotBlank() } }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
     // 一覧カードの商品名プレビュー用（receiptId → 商品名連結文字列・経費対象件数）
     val itemPreviews: StateFlow<Map<Long, ReceiptItemPreview>> =
         dao.getItemNamePreviews()
