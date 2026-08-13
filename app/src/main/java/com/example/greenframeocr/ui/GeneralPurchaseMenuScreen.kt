@@ -62,7 +62,7 @@ fun GeneralPurchaseMenuScreen(
             Spacer(modifier = Modifier.height(16.dp))
             GeneralMenuButton(text = "CSV出力", onClick = onNavigateToOutput)
             Spacer(modifier = Modifier.height(16.dp))
-            GeneralMenuButton(text = "登録番号・店舗一覧", onClick = onNavigateToStoreList)
+            GeneralMenuButton(text = "登録番号・店舗・発行者一覧", onClick = onNavigateToStoreList)
         }
     }
 }

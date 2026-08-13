@@ -3,6 +3,7 @@ package com.example.greenframeocr.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -71,29 +73,20 @@ fun GeneralReceiptListScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                FontSizeControl(
-                    fontSize = listFontSize,
-                    onDecrease = {
-                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
-                        appPreferences.listFontSize = listFontSize
-                    },
-                    onIncrease = {
-                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
-                        appPreferences.listFontSize = listFontSize
-                    }
-                )
-            }
-
             ReceiptListTab(
                 receipts = receipts,
                 itemPreviews = itemPreviews,
                 viewModel = viewModel,
                 onDelete = { viewModel.deleteReceipt(it) },
                 fontSize = listFontSize,
+                onDecreaseFontSize = {
+                    listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                    appPreferences.listFontSize = listFontSize
+                },
+                onIncreaseFontSize = {
+                    listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                    appPreferences.listFontSize = listFontSize
+                },
                 appPreferences = appPreferences
             )
         }
@@ -115,7 +108,9 @@ private fun ReceiptListTab(
     viewModel: GeneralReceiptViewModel,
     onDelete: (GeneralReceipt) -> Unit,
     appPreferences: AppPreferences,
-    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
+    onDecreaseFontSize: () -> Unit = {},
+    onIncreaseFontSize: () -> Unit = {}
 ) {
     var deleteTarget by remember { mutableStateOf<GeneralReceipt?>(null) }
     var detailTarget by remember { mutableStateOf<GeneralReceipt?>(null) }
@@ -178,10 +173,9 @@ private fun ReceiptListTab(
     val showFilters = availableYears.isNotEmpty() || availableStores.size >= 2 || availableMonths.size >= 2
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 年フィルター（データがあれば常に表示、ドロップダウンで1年ずつ表示）
+        // 1行目：年フィルター・作業年で固定・フォントサイズ（データがあれば常に表示）
         if (availableYears.isNotEmpty()) {
             var yearDropdownExpanded by remember { mutableStateOf(false) }
-            var monthDropdownExpanded by remember { mutableStateOf(false) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -191,7 +185,7 @@ private fun ReceiptListTab(
                 ExposedDropdownMenuBox(
                     expanded = yearDropdownExpanded && !lockYearToWorking,
                     onExpandedChange = { if (!lockYearToWorking) yearDropdownExpanded = it },
-                    modifier = Modifier.width(128.dp)
+                    modifier = Modifier.width(148.dp)
                 ) {
                     OutlinedTextField(
                         value = selectedYear?.let { "${it}年" } ?: "-",
@@ -220,9 +214,48 @@ private fun ReceiptListTab(
                         }
                     }
                 }
-                // 月フィルター（選択中の年内に2ヶ月以上データがある場合のみ、年の隣に表示）
+                Spacer(modifier = Modifier.width(4.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable {
+                            lockYearToWorking = !lockYearToWorking
+                            appPreferences.lockYearToWorking = lockYearToWorking
+                        }
+                ) {
+                    Checkbox(
+                        checked = lockYearToWorking,
+                        onCheckedChange = {
+                            lockYearToWorking = it
+                            appPreferences.lockYearToWorking = it
+                        },
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text("作業年で固定", fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                FontSizeControl(
+                    fontSize = fontSize,
+                    onDecrease = onDecreaseFontSize,
+                    onIncrease = onIncreaseFontSize
+                )
+            }
+        }
+
+        // 2行目：月フィルター・店舗フィルター（それぞれ条件を満たす場合のみ表示）
+        if (availableMonths.size >= 2 || availableStores.size >= 2) {
+            var monthDropdownExpanded by remember { mutableStateOf(false) }
+            var storeDropdownExpanded by remember { mutableStateOf(false) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 月フィルター（選択中の年内に2ヶ月以上データがある場合のみ表示）
                 if (availableMonths.size >= 2) {
-                    Spacer(modifier = Modifier.width(8.dp))
                     ExposedDropdownMenuBox(
                         expanded = monthDropdownExpanded,
                         onExpandedChange = { monthDropdownExpanded = it },
@@ -258,62 +291,41 @@ private fun ReceiptListTab(
                             }
                         }
                     }
+                    if (availableStores.size >= 2) Spacer(modifier = Modifier.width(4.dp))
                 }
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
-                    .clickable {
-                        lockYearToWorking = !lockYearToWorking
-                        appPreferences.lockYearToWorking = lockYearToWorking
-                    },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Checkbox(
-                    checked = lockYearToWorking,
-                    onCheckedChange = {
-                        lockYearToWorking = it
-                        appPreferences.lockYearToWorking = it
-                    }
-                )
-                Text("作業年で固定", fontSize = 12.sp)
-            }
-        }
 
-        // 店舗フィルター（現在の年・月フィルター内に2店舗以上ある場合のみ表示）
-        if (availableStores.size >= 2) {
-            var storeDropdownExpanded by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(
-                expanded = storeDropdownExpanded,
-                onExpandedChange = { storeDropdownExpanded = !storeDropdownExpanded },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                OutlinedTextField(
-                    value = selectedStore ?: "全店舗",
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("店舗・発行者") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = storeDropdownExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor()
-                )
-                ExposedDropdownMenu(
-                    expanded = storeDropdownExpanded,
-                    onDismissRequest = { storeDropdownExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("全店舗") },
-                        onClick = { selectedStore = null; storeDropdownExpanded = false }
-                    )
-                    availableStores.forEach { store ->
-                        DropdownMenuItem(
-                            text = { Text(store) },
-                            onClick = { selectedStore = store; storeDropdownExpanded = false }
+                // 店舗フィルター（現在の年・月フィルター内に2店舗以上ある場合のみ表示）
+                if (availableStores.size >= 2) {
+                    ExposedDropdownMenuBox(
+                        expanded = storeDropdownExpanded,
+                        onExpandedChange = { storeDropdownExpanded = !storeDropdownExpanded },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        OutlinedTextField(
+                            value = selectedStore ?: "全店舗",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("店舗・発行者") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = storeDropdownExpanded) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor()
                         )
+                        ExposedDropdownMenu(
+                            expanded = storeDropdownExpanded,
+                            onDismissRequest = { storeDropdownExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("全店舗") },
+                                onClick = { selectedStore = null; storeDropdownExpanded = false }
+                            )
+                            availableStores.forEach { store ->
+                                DropdownMenuItem(
+                                    text = { Text(store) },
+                                    onClick = { selectedStore = store; storeDropdownExpanded = false }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -446,6 +458,85 @@ private data class EditableItem(
 private fun List<GeneralReceiptItem>.toEditableItems(): List<EditableItem> =
     map { EditableItem(originalId = it.id, itemName = it.itemName, priceStr = it.price.toString(), isExcluded = it.isExcluded) }
 
+// ─── 日付入力欄（カレンダーピッカー） ────────────────────────────────────────
+
+// "yyyy-MM-dd" ⇔ UTC深夜0時ミリ秒（DatePickerStateはUTC基準のため、ローカルタイムゾーンで
+// 変換すると日付がずれることがある）
+private fun dateStringToUtcMillis(dateStr: String): Long? {
+    val parts = dateStr.split("-")
+    if (parts.size != 3) return null
+    val year = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    val day = parts[2].toIntOrNull() ?: return null
+    val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+    cal.clear()
+    cal.set(year, month - 1, day)
+    return cal.timeInMillis
+}
+
+private fun utcMillisToDateString(millis: Long): String {
+    val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+    cal.timeInMillis = millis
+    return "%04d-%02d-%02d".format(
+        cal.get(java.util.Calendar.YEAR),
+        cal.get(java.util.Calendar.MONTH) + 1,
+        cal.get(java.util.Calendar.DAY_OF_MONTH)
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DateOutlinedField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    var showPicker by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            singleLine = true,
+            trailingIcon = {
+                Icon(Icons.Default.CalendarMonth, contentDescription = "日付を選択")
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        // OutlinedTextFieldはreadOnlyでもタップでフォーカスされるだけなので、
+        // 透明なオーバーレイでタップを拾ってピッカーを開く
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() }
+                ) { showPicker = true }
+        )
+    }
+    if (showPicker) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = dateStringToUtcMillis(value) ?: System.currentTimeMillis()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { onValueChange(utcMillisToDateString(it)) }
+                    showPicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("キャンセル") }
+            }
+        ) {
+            DatePicker(state = state)
+        }
+    }
+}
+
 // ─── オートコンプリート入力欄（過去の入力実績から候補表示。店舗名／品目名で共用） ─────
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -531,11 +622,10 @@ private fun NewReceiptDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(4.dp))
-                OutlinedTextField(
+                DateOutlinedField(
                     value = date,
                     onValueChange = { date = it },
-                    label = { Text("日付（yyyy-MM-dd）") },
-                    singleLine = true,
+                    label = "日付",
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
@@ -545,39 +635,42 @@ private fun NewReceiptDialog(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     itemsIndexed(items, key = { _, item -> item.localId }) { index, item ->
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(vertical = 2.dp)
                         ) {
                             AutocompleteTextField(
                                 value = item.itemName,
                                 onValueChange = { items[index] = item.copy(itemName = it) },
                                 suggestions = itemNameSuggestions,
                                 label = "品目名",
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.fillMaxWidth()
                             )
-                            Spacer(Modifier.width(4.dp))
-                            OutlinedTextField(
-                                value = item.priceStr,
-                                onValueChange = { items[index] = item.copy(priceStr = it.filter(Char::isDigit)) },
-                                label = { Text("¥") },
-                                singleLine = true,
-                                modifier = Modifier.width(88.dp),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                            )
-                            IconButton(
-                                onClick = { items.removeAt(index) },
-                                enabled = items.size > 1,
-                                modifier = Modifier.size(32.dp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = "削除",
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.error
+                                OutlinedTextField(
+                                    value = item.priceStr,
+                                    onValueChange = { items[index] = item.copy(priceStr = it.filter(Char::isDigit)) },
+                                    label = { Text("¥") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                                 )
+                                IconButton(
+                                    onClick = { items.removeAt(index) },
+                                    enabled = items.size > 1,
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "削除",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
                             }
                         }
                     }
@@ -724,11 +817,10 @@ private fun ReceiptDetailDialog(
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(4.dp))
-                        OutlinedTextField(
+                        DateOutlinedField(
                             value = editDate,
                             onValueChange = { editDate = it },
-                            label = { Text("日付") },
-                            singleLine = true,
+                            label = "日付",
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(8.dp))
@@ -747,92 +839,100 @@ private fun ReceiptDetailDialog(
                     ) {
                         itemsIndexed(editItems, key = { _, item -> item.localId }) { index, item ->
                             if (isEditMode) {
-                                Row(
+                                val fieldColors = if (item.isExcluded)
+                                    OutlinedTextFieldDefaults.colors(
+                                        unfocusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        focusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                else OutlinedTextFieldDefaults.colors()
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .padding(vertical = 2.dp)
                                 ) {
-                                    Checkbox(
-                                        checked = !item.isExcluded,
-                                        onCheckedChange = { editItems[index] = item.copy(isExcluded = !it) },
-                                        modifier = Modifier.size(32.dp)
-                                    )
-                                    AutocompleteTextField(
-                                        value = item.itemName,
-                                        onValueChange = { editItems[index] = item.copy(itemName = it) },
-                                        suggestions = itemNameSuggestions,
-                                        modifier = Modifier.weight(1f),
-                                        colors = if (item.isExcluded)
-                                            OutlinedTextFieldDefaults.colors(
-                                                unfocusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                                focusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                            )
-                                        else OutlinedTextFieldDefaults.colors()
-                                    )
-                                    Spacer(Modifier.width(4.dp))
-                                    OutlinedTextField(
-                                        value = item.priceStr,
-                                        onValueChange = { editItems[index] = item.copy(priceStr = it.filter(Char::isDigit)) },
-                                        singleLine = true,
-                                        modifier = Modifier.width(88.dp),
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        label = { Text("¥") },
-                                        colors = if (item.isExcluded)
-                                            OutlinedTextFieldDefaults.colors(
-                                                unfocusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                                focusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                            )
-                                        else OutlinedTextFieldDefaults.colors()
-                                    )
-                                    IconButton(
-                                        onClick = { editItems.removeAt(index) },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "削除",
-                                            modifier = Modifier.size(18.dp),
-                                            tint = MaterialTheme.colorScheme.error
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(
+                                            checked = !item.isExcluded,
+                                            onCheckedChange = { editItems[index] = item.copy(isExcluded = !it) },
+                                            modifier = Modifier.size(32.dp)
                                         )
+                                        AutocompleteTextField(
+                                            value = item.itemName,
+                                            onValueChange = { editItems[index] = item.copy(itemName = it) },
+                                            suggestions = itemNameSuggestions,
+                                            modifier = Modifier.weight(1f),
+                                            colors = fieldColors
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Spacer(Modifier.width(32.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        OutlinedTextField(
+                                            value = item.priceStr,
+                                            onValueChange = { editItems[index] = item.copy(priceStr = it.filter(Char::isDigit)) },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f),
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            label = { Text("¥") },
+                                            colors = fieldColors
+                                        )
+                                        IconButton(
+                                            onClick = { editItems.removeAt(index) },
+                                            modifier = Modifier.size(40.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "削除",
+                                                modifier = Modifier.size(18.dp),
+                                                tint = MaterialTheme.colorScheme.error
+                                            )
+                                        }
                                     }
                                 }
                             } else {
                                 val excluded = item.isExcluded
-                                Row(
+                                val itemColor = if (excluded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                                 else MaterialTheme.colorScheme.onSurface
+                                val itemDecoration = if (excluded) TextDecoration.LineThrough else TextDecoration.None
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 6.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .padding(vertical = 6.dp)
                                 ) {
-                                    if (excluded) {
-                                        Icon(
-                                            Icons.Default.Block,
-                                            contentDescription = "除外",
-                                            modifier = Modifier.size(14.dp).padding(end = 2.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (excluded) {
+                                            Icon(
+                                                Icons.Default.Block,
+                                                contentDescription = "除外",
+                                                modifier = Modifier.size(14.dp).padding(end = 2.dp),
+                                                tint = itemColor
+                                            )
+                                        }
+                                        Text(
+                                            text = item.itemName.ifBlank { "（品目名なし）" },
+                                            fontSize = bodyFontSize.sp,
+                                            modifier = Modifier.weight(1f),
+                                            overflow = TextOverflow.Ellipsis,
+                                            maxLines = 2,
+                                            color = itemColor,
+                                            textDecoration = itemDecoration
                                         )
                                     }
-                                    Text(
-                                        text = item.itemName.ifBlank { "（品目名なし）" },
-                                        fontSize = bodyFontSize.sp,
-                                        modifier = Modifier.weight(1f),
-                                        overflow = TextOverflow.Ellipsis,
-                                        maxLines = 1,
-                                        color = if (excluded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                                else MaterialTheme.colorScheme.onSurface,
-                                        textDecoration = if (excluded) TextDecoration.LineThrough else TextDecoration.None
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = "¥${"%,d".format(item.priceStr.toIntOrNull() ?: 0)}",
-                                        fontSize = bodyFontSize.sp,
-                                        fontWeight = if (excluded) FontWeight.Normal else FontWeight.Medium,
-                                        color = if (excluded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                                else MaterialTheme.colorScheme.onSurface,
-                                        textDecoration = if (excluded) TextDecoration.LineThrough else TextDecoration.None
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End
+                                    ) {
+                                        Text(
+                                            text = "¥${"%,d".format(item.priceStr.toIntOrNull() ?: 0)}",
+                                            fontSize = bodyFontSize.sp,
+                                            fontWeight = if (excluded) FontWeight.Normal else FontWeight.Medium,
+                                            color = itemColor,
+                                            textDecoration = itemDecoration
+                                        )
+                                    }
                                 }
                             }
                         }

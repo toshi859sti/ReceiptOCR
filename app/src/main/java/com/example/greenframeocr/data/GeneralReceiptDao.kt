@@ -113,6 +113,10 @@ interface GeneralReceiptDao {
     @Query("UPDATE general_receipts SET storeName = :storeName WHERE registrationNumber = :registrationNumber")
     suspend fun updateStoreNameByRegistrationNumber(registrationNumber: String, storeName: String)
 
+    // 登録番号未登録の発行者名を一括リネーム（登録番号・店舗一覧の未登録発行者編集用）
+    @Query("UPDATE general_receipts SET storeName = :newName WHERE storeName = :oldName")
+    suspend fun updateStoreNameByOldName(oldName: String, newName: String)
+
     @Query("""
         SELECT * FROM general_receipt_items
         WHERE (:from IS NULL OR (SELECT date FROM general_receipts WHERE id = receiptId) >= :from)

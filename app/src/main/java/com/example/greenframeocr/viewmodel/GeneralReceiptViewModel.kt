@@ -28,10 +28,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+// 登録番号・店舗一覧に表示する1件。登録番号ありはinvoice_stores由来、
+// なしはレシートのstoreName実績のみから作る（registrationNumber=null）
+data class IssuerEntry(
+    val storeName: String,
+    val registrationNumber: String?,
+    val address: String = ""
+)
 
 data class GeneralReceiptOutputItem(
     val itemId: Long,
@@ -78,6 +87,22 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
 
     val invoiceStores: StateFlow<List<InvoiceStore>> =
         db.invoiceStoreDao().getAll().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    // 登録番号・店舗一覧画面用：登録番号ありの法人（invoice_stores）＋
+    // 登録番号が取れていないレシートの発行者名（storeNameのみ）をマージした一覧
+    val issuerList: StateFlow<List<IssuerEntry>> =
+        combine(invoiceStores, receipts) { stores, receiptList ->
+            val registeredNames = stores.map { it.storeName }.toSet()
+            val registered = stores.map {
+                IssuerEntry(storeName = it.storeName, registrationNumber = it.registrationNumber, address = it.address)
+            }
+            val unregistered = receiptList
+                .map { it.storeName }
+                .filter { it.isNotBlank() && it !in registeredNames }
+                .distinct()
+                .map { IssuerEntry(storeName = it, registrationNumber = null) }
+            (registered + unregistered).sortedBy { it.storeName }
+        }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // AI提案結果
     data class AiSuggestion(
@@ -293,6 +318,12 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope.launch(Dispatchers.IO) { db.invoiceStoreDao().delete(store) }
     }
 
+    fun deleteInvoiceStoreByRegistrationNumber(registrationNumber: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            db.invoiceStoreDao().findByNumber(registrationNumber)?.let { db.invoiceStoreDao().delete(it) }
+        }
+    }
+
     fun updateInvoiceStoreName(
         registrationNumber: String,
         newName: String,
@@ -305,6 +336,13 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             if (feedbackToReceipts) {
                 dao.updateStoreNameByRegistrationNumber(registrationNumber, newName)
             }
+        }
+    }
+
+    /** 登録番号未登録の発行者名をリネーム（該当storeNameの全レシートに反映） */
+    fun renameUnregisteredIssuer(oldName: String, newName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.updateStoreNameByOldName(oldName, newName)
         }
     }
 

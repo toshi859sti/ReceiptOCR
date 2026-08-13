@@ -27,23 +27,23 @@ fun FontSizeControl(
         IconButton(
             onClick = onDecrease,
             enabled = fontSize > 10f,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(44.dp)
         ) {
-            Text("A-", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            Text("A-", fontSize = 15.sp, fontWeight = FontWeight.Medium)
         }
         Text(
             text = "${fontSize.toInt()}",
-            fontSize = 12.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
-            modifier = Modifier.width(22.dp),
+            modifier = Modifier.width(30.dp),
             textAlign = TextAlign.Center
         )
         IconButton(
             onClick = onIncrease,
             enabled = fontSize < 20f,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(44.dp)
         ) {
-            Text("A+", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text("A+", fontSize = 17.sp, fontWeight = FontWeight.Medium)
         }
     }
 }
