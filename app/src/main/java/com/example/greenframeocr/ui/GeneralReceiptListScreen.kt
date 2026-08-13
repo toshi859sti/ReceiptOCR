@@ -1,10 +1,10 @@
 package com.example.greenframeocr.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
@@ -87,7 +87,8 @@ fun GeneralReceiptListScreen(
                 itemPreviews = itemPreviews,
                 viewModel = viewModel,
                 onDelete = { viewModel.deleteReceipt(it) },
-                fontSize = listFontSize
+                fontSize = listFontSize,
+                appPreferences = appPreferences
             )
         }
     }
@@ -100,28 +101,32 @@ private fun ReceiptListTab(
     itemPreviews: Map<Long, ReceiptItemPreview>,
     viewModel: GeneralReceiptViewModel,
     onDelete: (GeneralReceipt) -> Unit,
+    appPreferences: AppPreferences,
     fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE
 ) {
     var deleteTarget by remember { mutableStateOf<GeneralReceipt?>(null) }
     var detailTarget by remember { mutableStateOf<GeneralReceipt?>(null) }
 
-    val currentCalendarYear = remember {
-        java.util.Calendar.getInstance().get(java.util.Calendar.YEAR).toString()
-    }
+    val workingCalendarYear = remember { appPreferences.workingCalendarYear.toString() }
+    var lockYearToWorking by remember { mutableStateOf(appPreferences.lockYearToWorking) }
     val availableYears = remember(receipts) {
         receipts.mapNotNull { Regex("20\\d{2}").find(it.date)?.value }
             .distinct()
             .sortedDescending()
     }
-    // 当年データがあれば当年、なければ最新年、データなしはnull
+    // 作業年のデータがあれば作業年、なければ最新年、データなしはnull
     var selectedYear by remember(availableYears) {
         mutableStateOf(
             when {
-                availableYears.contains(currentCalendarYear) -> currentCalendarYear
+                availableYears.contains(workingCalendarYear) -> workingCalendarYear
                 availableYears.isNotEmpty() -> availableYears.first()
                 else -> null
             }
         )
+    }
+    // 「作業年で固定」がONの間は他の年を選べないよう強制的に作業年へ戻す
+    LaunchedEffect(lockYearToWorking, workingCalendarYear) {
+        if (lockYearToWorking) selectedYear = workingCalendarYear
     }
     var selectedStore by remember { mutableStateOf<String?>(null) }
 
@@ -146,26 +151,63 @@ private fun ReceiptListTab(
     val showFilters = availableYears.isNotEmpty() || availableStores.size >= 2
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 年フィルター（データがあれば常に表示）
+        // 年フィルター（データがあれば常に表示、ドロップダウンで1年ずつ表示）
         if (availableYears.isNotEmpty()) {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            var yearDropdownExpanded by remember { mutableStateOf(false) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                item {
-                    FilterChip(
-                        selected = selectedYear == null,
-                        onClick = { selectedYear = null },
-                        label = { Text("全て") }
+                ExposedDropdownMenuBox(
+                    expanded = yearDropdownExpanded && !lockYearToWorking,
+                    onExpandedChange = { if (!lockYearToWorking) yearDropdownExpanded = it },
+                    modifier = Modifier.width(130.dp)
+                ) {
+                    OutlinedTextField(
+                        value = selectedYear?.let { "${it}年" } ?: "-",
+                        onValueChange = {},
+                        readOnly = true,
+                        enabled = !lockYearToWorking,
+                        label = { Text("年", fontSize = 11.sp) },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearDropdownExpanded && !lockYearToWorking)
+                        },
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth(),
+                        singleLine = true,
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
                     )
+                    ExposedDropdownMenu(
+                        expanded = yearDropdownExpanded && !lockYearToWorking,
+                        onDismissRequest = { yearDropdownExpanded = false }
+                    ) {
+                        availableYears.forEach { year ->
+                            DropdownMenuItem(
+                                text = { Text("${year}年") },
+                                onClick = { selectedYear = year; yearDropdownExpanded = false }
+                            )
+                        }
+                    }
                 }
-                items(availableYears) { year ->
-                    FilterChip(
-                        selected = selectedYear == year,
-                        onClick = { selectedYear = if (selectedYear == year) null else year },
-                        label = { Text("${year}年") }
+                Spacer(modifier = Modifier.width(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable {
+                        lockYearToWorking = !lockYearToWorking
+                        appPreferences.lockYearToWorking = lockYearToWorking
+                    }
+                ) {
+                    Checkbox(
+                        checked = lockYearToWorking,
+                        onCheckedChange = {
+                            lockYearToWorking = it
+                            appPreferences.lockYearToWorking = it
+                        }
                     )
+                    Text("作業年で固定", fontSize = 12.sp)
                 }
             }
         }

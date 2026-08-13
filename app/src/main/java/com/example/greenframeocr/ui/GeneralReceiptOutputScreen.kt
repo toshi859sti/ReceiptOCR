@@ -71,6 +71,12 @@ fun GeneralReceiptOutputScreen(
         isLoading = true
         allItems = viewModel.loadOutputItems()
         outputItems = allItems
+        // 作業年（設定画面のeraYear）のデータがあれば作業年をデフォルト選択、なければ全年のまま
+        val years = allItems.mapNotNull { it.date.take(4).toIntOrNull() }.distinct()
+        val workingYear = appPreferences.workingCalendarYear
+        if (years.contains(workingYear)) {
+            selectedYear = workingYear
+        }
         isLoading = false
     }
 

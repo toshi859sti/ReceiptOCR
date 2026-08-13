@@ -213,6 +213,55 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            // ========== 作業年 ==========
+            SettingSection(title = "作業年")
+
+            Text(
+                text = "JA購買伝票・JA預金・レシートの入力／一覧のデフォルト年になります（1月〜12月区切り）。年をまたぐ作業をする際に間違えやすいため、必要な時だけここで切り替えてください。",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            SettingItem(
+                title = "現在の作業年",
+                subtitle = "令和${eraYear}年 / 西暦${eraYear + 2018}年"
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (eraYear > 1) {
+                                eraYear--
+                                appPreferences.eraYear = eraYear
+                            }
+                        }
+                    ) {
+                        Text("-", fontSize = 24.sp)
+                    }
+
+                    Text(
+                        text = "${eraYear}年",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.width(60.dp)
+                    )
+
+                    IconButton(
+                        onClick = {
+                            eraYear++
+                            appPreferences.eraYear = eraYear
+                        }
+                    ) {
+                        Text("+", fontSize = 24.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // ========== 連携会計ソフト ==========
             SettingSection(title = "📊 連携会計ソフト")
 
@@ -347,43 +396,6 @@ fun SettingsScreen(
 
             // ========== JA購買伝票 ==========
             SettingSection(title = "🌾 JA購買伝票")
-
-            SettingItem(
-                title = "撮影・入力のデフォルト年",
-                subtitle = "令和${eraYear}年 / 西暦${2018 + eraYear}年　（年月固定・新規伝票に適用）"
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    IconButton(
-                        onClick = {
-                            if (eraYear > 1) {
-                                eraYear--
-                                appPreferences.eraYear = eraYear
-                            }
-                        }
-                    ) {
-                        Text("-", fontSize = 24.sp)
-                    }
-
-                    Text(
-                        text = "${eraYear}年",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.width(60.dp)
-                    )
-
-                    IconButton(
-                        onClick = {
-                            eraYear++
-                            appPreferences.eraYear = eraYear
-                        }
-                    ) {
-                        Text("+", fontSize = 24.sp)
-                    }
-                }
-            }
 
             SettingItem(
                 title = "最低鮮鋭度",

@@ -46,9 +46,14 @@ class AppPreferences(context: Context) {
         private const val PREFS_NAME = "receipt_ocr_preferences"
         private const val SECURE_PREFS_NAME = "receipt_ocr_secrets"
 
-        // 年号設定
+        // 年号設定（作業年。1月〜12月区切りの暦年で、年度＝4月始まりではない）
         private const val KEY_ERA_YEAR = "era_year"
         private const val DEFAULT_ERA_YEAR = 7  // 令和7年（デフォルト）
+        private const val REIWA_TO_SEIREKI_OFFSET = 2018  // 令和1年 = 西暦2019年
+
+        // 通帳データ・レシート一覧の年フィルターを作業年に固定するか
+        private const val KEY_LOCK_YEAR_TO_WORKING = "lock_year_to_working"
+        private const val DEFAULT_LOCK_YEAR_TO_WORKING = false
 
         // 現在の月設定（OCR撮影時に使用）
         private const val KEY_CURRENT_ISSUE_MONTH = "current_issue_month"
@@ -95,10 +100,19 @@ class AppPreferences(context: Context) {
         const val DEFAULT_LIST_FONT_SIZE = 14f
     }
 
-    // 年号設定
+    // 年号設定（作業年・JA購買伝票／JA預金／レシートの初期表示年に共通で使用）
     var eraYear: Int
         get() = prefs.getInt(KEY_ERA_YEAR, DEFAULT_ERA_YEAR)
         set(value) = prefs.edit().putInt(KEY_ERA_YEAR, value).apply()
+
+    // 作業年を西暦に変換したもの（JA預金・レシート画面の年フィルターのデフォルト値に使用）
+    val workingCalendarYear: Int
+        get() = eraYear + REIWA_TO_SEIREKI_OFFSET
+
+    // 通帳データ・レシート一覧の年フィルターを作業年に固定するか
+    var lockYearToWorking: Boolean
+        get() = prefs.getBoolean(KEY_LOCK_YEAR_TO_WORKING, DEFAULT_LOCK_YEAR_TO_WORKING)
+        set(value) = prefs.edit().putBoolean(KEY_LOCK_YEAR_TO_WORKING, value).apply()
 
     // 現在の月設定（OCR撮影時に使用）
     var currentIssueMonth: Int

@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -51,23 +52,27 @@ fun PassbookDataScreen(
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var importResultMessage by remember { mutableStateOf<String?>(null) }
 
-    val currentCalendarYear = remember {
-        java.util.Calendar.getInstance().get(java.util.Calendar.YEAR).toString()
-    }
+    val workingCalendarYear = remember { appPreferences.workingCalendarYear.toString() }
+    var lockYearToWorking by remember { mutableStateOf(appPreferences.lockYearToWorking) }
     val availableYears = remember(meisaiList) {
         meisaiList.map { it.transactionDate.take(4) }
             .filter { it.matches(Regex("\\d{4}")) }
             .distinct()
             .sortedDescending()
     }
+    // 作業年（設定画面のeraYear）のデータがあれば作業年、なければ最新年、データなしはnull
     var selectedYear by remember(availableYears) {
         mutableStateOf(
             when {
-                availableYears.contains(currentCalendarYear) -> currentCalendarYear
+                availableYears.contains(workingCalendarYear) -> workingCalendarYear
                 availableYears.isNotEmpty() -> availableYears.first()
                 else -> null
             }
         )
+    }
+    // 「作業年で固定」がONの間は他の年を選べないよう強制的に作業年へ戻す
+    LaunchedEffect(lockYearToWorking, workingCalendarYear) {
+        if (lockYearToWorking) selectedYear = workingCalendarYear
     }
     val displayedMeisai = remember(meisaiList, selectedYear) {
         if (selectedYear == null) meisaiList
@@ -248,17 +253,18 @@ fun PassbookDataScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 ExposedDropdownMenuBox(
-                    expanded = yearDropdownExpanded,
-                    onExpandedChange = { yearDropdownExpanded = it },
+                    expanded = yearDropdownExpanded && !lockYearToWorking,
+                    onExpandedChange = { if (!lockYearToWorking) yearDropdownExpanded = it },
                     modifier = Modifier.width(130.dp)
                 ) {
                     OutlinedTextField(
                         value = selectedYear ?: "全て",
                         onValueChange = {},
                         readOnly = true,
+                        enabled = !lockYearToWorking,
                         label = { Text("年", fontSize = 11.sp) },
                         trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearDropdownExpanded)
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearDropdownExpanded && !lockYearToWorking)
                         },
                         modifier = Modifier
                             .menuAnchor()
@@ -267,7 +273,7 @@ fun PassbookDataScreen(
                         colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
                     )
                     ExposedDropdownMenu(
-                        expanded = yearDropdownExpanded,
+                        expanded = yearDropdownExpanded && !lockYearToWorking,
                         onDismissRequest = { yearDropdownExpanded = false }
                     ) {
                         DropdownMenuItem(
@@ -281,6 +287,23 @@ fun PassbookDataScreen(
                             )
                         }
                     }
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable {
+                        lockYearToWorking = !lockYearToWorking
+                        appPreferences.lockYearToWorking = lockYearToWorking
+                    }
+                ) {
+                    Checkbox(
+                        checked = lockYearToWorking,
+                        onCheckedChange = {
+                            lockYearToWorking = it
+                            appPreferences.lockYearToWorking = it
+                        }
+                    )
+                    Text("作業年で固定", fontSize = 12.sp)
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 Text(

@@ -63,6 +63,10 @@ fun ReceiptInputScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    // 作業年（設定画面のeraYearで初期化。画面上の令和X年バッジからその場で変更できる）
+    var workingEraYear by remember { mutableIntStateOf(eraYear) }
+    var showEraYearDialog by remember { mutableStateOf(false) }
+
     // 基本状態
     var selectedMonth by remember { mutableIntStateOf(1) }
     var currentSheetNumber by remember { mutableIntStateOf(1) }
@@ -122,7 +126,7 @@ fun ReceiptInputScreen(
         scope.launch {
             saveMonthData(
                 database = database,
-                year = eraYear,
+                year = workingEraYear,
                 month = selectedMonth,
                 allSheetsData = allSheetsData
             )
@@ -130,14 +134,14 @@ fun ReceiptInputScreen(
             // カテゴリ再計算を実行
             com.example.greenframeocr.util.CategoryRecalculator.recalculateMonthlyCategories(
                 dao = database.receiptDao(),
-                year = eraYear,
+                year = workingEraYear,
                 month = selectedMonth
             )
 
             // データ再ロード
             loadMonthData(
                 database = database,
-                year = eraYear,
+                year = workingEraYear,
                 month = selectedMonth,
                 onDataLoaded = { sheets, sheetsData ->
                     totalSheets = sheets
@@ -159,12 +163,12 @@ fun ReceiptInputScreen(
     val appPreferences = remember { com.example.greenframeocr.data.AppPreferences(context) }
     var fixYearMonth by remember { mutableStateOf(appPreferences.fixYearMonth) }
 
-    // 初回ロード
-    LaunchedEffect(selectedMonth) {
+    // 初回ロード（月・作業年のいずれかが変わったら再ロード）
+    LaunchedEffect(selectedMonth, workingEraYear) {
         if (viewMode == ViewMode.VIEW) {
             loadMonthData(
                 database = database,
-                year = eraYear,
+                year = workingEraYear,
                 month = selectedMonth,
                 onDataLoaded = { sheets, sheetsData ->
                     totalSheets = sheets
@@ -174,6 +178,57 @@ fun ReceiptInputScreen(
                 }
             )
         }
+    }
+
+    // 作業年切替ダイアログ（年表示バッジをタップした時）
+    if (showEraYearDialog) {
+        var tempEraYear by remember(showEraYearDialog) { mutableIntStateOf(workingEraYear) }
+        AlertDialog(
+            onDismissRequest = { showEraYearDialog = false },
+            title = { Text("作業年の切替") },
+            text = {
+                Column {
+                    Text(
+                        "JA購買伝票・JA預金・レシートの初期表示年が変わります。",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IconButton(onClick = { if (tempEraYear > 1) tempEraYear-- }) {
+                            Text("-", fontSize = 24.sp)
+                        }
+                        Text(
+                            text = "令和${tempEraYear}年",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(100.dp),
+                            textAlign = TextAlign.Center
+                        )
+                        IconButton(onClick = { tempEraYear++ }) {
+                            Text("+", fontSize = 24.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    workingEraYear = tempEraYear
+                    appPreferences.eraYear = tempEraYear
+                    showEraYearDialog = false
+                }) {
+                    Text("切替")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEraYearDialog = false }) {
+                    Text("キャンセル")
+                }
+            }
+        )
     }
 
     // 伝票削除確認ダイアログ
@@ -448,7 +503,7 @@ fun ReceiptInputScreen(
                             parsedRows = outcome.parsedRows,
                             sheetNumber = currentSheetNumber,
                             fixYearMonth = fixYearMonth,
-                            defaultYear = eraYear,
+                            defaultYear = workingEraYear,
                             defaultMonth = selectedMonth
                         )
                         // 他の伝票（同じ月内）で既に検出済みの小計カテゴリと重複していないかチェック。
@@ -520,7 +575,7 @@ fun ReceiptInputScreen(
                             if (index in outcome.rowRange && row.selectedCells.isNotEmpty()) {
                                 val ocrRow = outcome.rows[index - outcome.rowRange.first]
                                 val newDate = if (row.selectedCells.contains(CellType.DATE))
-                                    formatOcrDate(ocrRow.date, fixYearMonth, eraYear, selectedMonth) else row.date
+                                    formatOcrDate(ocrRow.date, fixYearMonth, workingEraYear, selectedMonth) else row.date
                                 val newProductName = if (row.selectedCells.contains(CellType.PRODUCT_NAME))
                                     (ocrRow.productName ?: "") else row.productName
                                 val newAmount = if (row.selectedCells.contains(CellType.AMOUNT))
@@ -605,13 +660,16 @@ fun ReceiptInputScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 年表示（目立つように）
+                    // 年表示（目立つように・タップで作業年を切替可能）
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = MaterialTheme.shapes.small
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.clickable(enabled = viewMode == ViewMode.VIEW) {
+                            showEraYearDialog = true
+                        }
                     ) {
                         Text(
-                            text = "令和${eraYear}年",
+                            text = "令和${workingEraYear}年",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -629,7 +687,7 @@ fun ReceiptInputScreen(
                             scope.launch {
                                 loadMonthData(
                                     database = database,
-                                    year = eraYear,
+                                    year = workingEraYear,
                                     month = selectedMonth,
                                     onDataLoaded = { sheets, sheetsData ->
                                         totalSheets = sheets
@@ -898,7 +956,7 @@ fun ReceiptInputScreen(
                         }
                         allSheetsData = recalculateCategoriesInMemory(tempSheetsData)
                     },
-                    defaultYear = eraYear,
+                    defaultYear = workingEraYear,
                     defaultMonth = selectedMonth,
                     productMasterDao = database.productMasterDao(),
                     subtotalFlags = calculateSubtotalFlags(allSheetsData),
@@ -1154,7 +1212,7 @@ fun ReceiptInputScreen(
                                 scope.launch {
                                     loadMonthData(
                                         database = database,
-                                        year = eraYear,
+                                        year = workingEraYear,
                                         month = selectedMonth,
                                         onDataLoaded = { sheets, sheetsData ->
                                             totalSheets = sheets
