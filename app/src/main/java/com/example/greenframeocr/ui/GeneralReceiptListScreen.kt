@@ -48,7 +48,7 @@ fun GeneralReceiptListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("レシート一覧") },
+                title = { Text("レシート領収書一覧") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
@@ -142,31 +142,46 @@ private fun ReceiptListTab(
         if (lockYearToWorking) selectedYear = workingCalendarYear
     }
     var selectedStore by remember { mutableStateOf<String?>(null) }
+    var selectedMonth by remember { mutableStateOf<String?>(null) }
 
-    // 年フィルター適用後（店舗の選択肢はこちらを元に算出）
+    // 年フィルター適用後（月の選択肢はこちらを元に算出）
     val yearFiltered = remember(receipts, selectedYear) {
         val year = selectedYear
         if (year == null) receipts else receipts.filter { it.date.contains(year) }
     }
 
-    val availableStores = remember(yearFiltered) {
-        yearFiltered.map { it.storeName }.filter { it.isNotBlank() }.distinct().sorted()
+    val availableMonths = remember(yearFiltered) {
+        yearFiltered.mapNotNull { Regex("\\d{4}-(\\d{2})-\\d{2}").find(it.date)?.groupValues?.get(1) }
+            .distinct()
+            .sortedBy { it.toIntOrNull() ?: 0 }
     }
 
-    // 年が変わったら店舗フィルターをリセット
-    LaunchedEffect(selectedYear) { selectedStore = null }
+    // 月フィルター適用後（店舗の選択肢はこちらを元に算出）
+    val monthFiltered = remember(yearFiltered, selectedMonth) {
+        val month = selectedMonth
+        if (month == null) yearFiltered
+        else yearFiltered.filter { Regex("\\d{4}-(\\d{2})-\\d{2}").find(it.date)?.groupValues?.get(1) == month }
+    }
 
-    val filteredReceipts = remember(yearFiltered, selectedStore) {
+    val availableStores = remember(monthFiltered) {
+        monthFiltered.map { it.storeName }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+
+    // 年が変わったら月・店舗フィルターをリセット
+    LaunchedEffect(selectedYear) { selectedMonth = null; selectedStore = null }
+
+    val filteredReceipts = remember(monthFiltered, selectedStore) {
         val store = selectedStore
-        if (store == null) yearFiltered else yearFiltered.filter { it.storeName == store }
+        if (store == null) monthFiltered else monthFiltered.filter { it.storeName == store }
     }
 
-    val showFilters = availableYears.isNotEmpty() || availableStores.size >= 2
+    val showFilters = availableYears.isNotEmpty() || availableStores.size >= 2 || availableMonths.size >= 2
 
     Column(modifier = Modifier.fillMaxSize()) {
         // 年フィルター（データがあれば常に表示、ドロップダウンで1年ずつ表示）
         if (availableYears.isNotEmpty()) {
             var yearDropdownExpanded by remember { mutableStateOf(false) }
+            var monthDropdownExpanded by remember { mutableStateOf(false) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -176,7 +191,7 @@ private fun ReceiptListTab(
                 ExposedDropdownMenuBox(
                     expanded = yearDropdownExpanded && !lockYearToWorking,
                     onExpandedChange = { if (!lockYearToWorking) yearDropdownExpanded = it },
-                    modifier = Modifier.width(130.dp)
+                    modifier = Modifier.width(128.dp)
                 ) {
                     OutlinedTextField(
                         value = selectedYear?.let { "${it}年" } ?: "-",
@@ -205,27 +220,68 @@ private fun ReceiptListTab(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.width(12.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable {
+                // 月フィルター（選択中の年内に2ヶ月以上データがある場合のみ、年の隣に表示）
+                if (availableMonths.size >= 2) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    ExposedDropdownMenuBox(
+                        expanded = monthDropdownExpanded,
+                        onExpandedChange = { monthDropdownExpanded = it },
+                        modifier = Modifier.width(100.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = selectedMonth?.let { "${it.toIntOrNull() ?: it}月" } ?: "全月",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("月", fontSize = 11.sp) },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = monthDropdownExpanded)
+                            },
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth(),
+                            singleLine = true,
+                            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                        )
+                        ExposedDropdownMenu(
+                            expanded = monthDropdownExpanded,
+                            onDismissRequest = { monthDropdownExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("全月") },
+                                onClick = { selectedMonth = null; monthDropdownExpanded = false }
+                            )
+                            availableMonths.forEach { month ->
+                                DropdownMenuItem(
+                                    text = { Text("${month.toIntOrNull() ?: month}月") },
+                                    onClick = { selectedMonth = month; monthDropdownExpanded = false }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+                    .clickable {
                         lockYearToWorking = !lockYearToWorking
                         appPreferences.lockYearToWorking = lockYearToWorking
+                    },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = lockYearToWorking,
+                    onCheckedChange = {
+                        lockYearToWorking = it
+                        appPreferences.lockYearToWorking = it
                     }
-                ) {
-                    Checkbox(
-                        checked = lockYearToWorking,
-                        onCheckedChange = {
-                            lockYearToWorking = it
-                            appPreferences.lockYearToWorking = it
-                        }
-                    )
-                    Text("作業年で固定", fontSize = 12.sp)
-                }
+                )
+                Text("作業年で固定", fontSize = 12.sp)
             }
         }
 
-        // 店舗フィルター（現在の年フィルター内に2店舗以上ある場合のみ表示）
+        // 店舗フィルター（現在の年・月フィルター内に2店舗以上ある場合のみ表示）
         if (availableStores.size >= 2) {
             var storeDropdownExpanded by remember { mutableStateOf(false) }
             ExposedDropdownMenuBox(
@@ -239,7 +295,7 @@ private fun ReceiptListTab(
                     value = selectedStore ?: "全店舗",
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("店舗") },
+                    label = { Text("店舗・発行者") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = storeDropdownExpanded) },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -371,6 +427,7 @@ private fun ReceiptListTab(
         ReceiptDetailDialog(
             receipt = receipt,
             viewModel = viewModel,
+            fontSize = fontSize,
             onDismiss = { detailTarget = null }
         )
     }
@@ -588,6 +645,7 @@ private fun NewReceiptDialog(
 private fun ReceiptDetailDialog(
     receipt: GeneralReceipt,
     viewModel: GeneralReceiptViewModel,
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onDismiss: () -> Unit
 ) {
     val storeNameSuggestions by viewModel.storeNameSuggestions.collectAsState()
@@ -619,6 +677,11 @@ private fun ReceiptDetailDialog(
     val calculatedTotal = editItems.sumOf { it.priceStr.toIntOrNull() ?: 0 }
     val calculatedExpenseTotal = editItems.filter { !it.isExcluded }.sumOf { it.priceStr.toIntOrNull() ?: 0 }
 
+    val titleFontSize = (fontSize + 2f).coerceAtLeast(12f)
+    val subFontSize = (fontSize - 2f).coerceAtLeast(10f)
+    val bodyFontSize = fontSize
+    val smallFontSize = (fontSize - 1f).coerceAtLeast(10f)
+
     AlertDialog(
         onDismissRequest = { if (!isEditMode) onDismiss() },
         title = {
@@ -627,13 +690,13 @@ private fun ReceiptDetailDialog(
                     Text(
                         text = if (receipt.storeName.isNotBlank()) receipt.storeName else "（店舗名なし）",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
+                        fontSize = titleFontSize.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = receipt.date.ifBlank { "日付不明" },
-                        fontSize = 12.sp,
+                        fontSize = subFontSize.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -672,7 +735,7 @@ private fun ReceiptDetailDialog(
                     } else if (receipt.registrationNumber.isNotBlank()) {
                         Text(
                             text = "登録番号: ${receipt.registrationNumber}",
-                            fontSize = 11.sp,
+                            fontSize = subFontSize.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(4.dp))
@@ -753,7 +816,7 @@ private fun ReceiptDetailDialog(
                                     }
                                     Text(
                                         text = item.itemName.ifBlank { "（品目名なし）" },
-                                        fontSize = 13.sp,
+                                        fontSize = bodyFontSize.sp,
                                         modifier = Modifier.weight(1f),
                                         overflow = TextOverflow.Ellipsis,
                                         maxLines = 1,
@@ -764,7 +827,7 @@ private fun ReceiptDetailDialog(
                                     Spacer(Modifier.width(8.dp))
                                     Text(
                                         text = "¥${"%,d".format(item.priceStr.toIntOrNull() ?: 0)}",
-                                        fontSize = 13.sp,
+                                        fontSize = bodyFontSize.sp,
                                         fontWeight = if (excluded) FontWeight.Normal else FontWeight.Medium,
                                         color = if (excluded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                                 else MaterialTheme.colorScheme.onSurface,
@@ -793,10 +856,11 @@ private fun ReceiptDetailDialog(
                             .padding(top = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("合計", fontWeight = FontWeight.Bold)
+                        Text("合計", fontWeight = FontWeight.Bold, fontSize = titleFontSize.sp)
                         Text(
                             text = "¥${"%,d".format(if (isEditMode) calculatedTotal else receipt.total)}",
                             fontWeight = FontWeight.Bold,
+                            fontSize = titleFontSize.sp,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -805,10 +869,10 @@ private fun ReceiptDetailDialog(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("経費計", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("経費計", fontSize = smallFontSize.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
                                 text = "¥${"%,d".format(calculatedExpenseTotal)}",
-                                fontSize = 13.sp,
+                                fontSize = smallFontSize.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }

@@ -75,7 +75,7 @@ fun GeneralItemMatchingScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("品目別マッチング") },
+                title = { Text("品目但し書き別マッチング") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")

@@ -181,7 +181,7 @@ fun GeneralReceiptCaptureScreen(
                 },
                 actions = {
                     IconButton(onClick = onNavigateToList) {
-                        Icon(Icons.Default.FormatListBulleted, contentDescription = "レシート一覧")
+                        Icon(Icons.Default.FormatListBulleted, contentDescription = "レシート領収書一覧")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
