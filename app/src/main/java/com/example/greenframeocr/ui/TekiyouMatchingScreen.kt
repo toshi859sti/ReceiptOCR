@@ -37,6 +37,13 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import kotlin.math.abs
 
+// 摘要ルールの並び替え順。NAMEは既存のDAO取得順（入金/出金→五十音順）をそのまま使う
+private enum class TekiyouSortOrder(val label: String) {
+    NAME("五十音順"),
+    COUNT("件数順"),
+    UNMATCHED_FIRST("未マッチ優先")
+}
+
 /**
  * 摘要マッチング画面
  */
@@ -69,10 +76,13 @@ fun TekiyouMatchingScreen(
     var selectedMeisaiGroupKamoku by remember { mutableStateOf<String?>(null) }
     var selectedMeisaiGroupYayoiAccountName by remember { mutableStateOf<String?>(null) }
 
-    // フィルタ
+    // フィルタ・検索・並び替え
     var filterType by remember { mutableStateOf<Boolean?>(null) }
     var showOnlyWithData by remember { mutableStateOf(false) }
     var showOnlyUnmatched by remember { mutableStateOf(false) }
+    var searchText by remember { mutableStateOf("") }
+    var sortOrder by remember { mutableStateOf(TekiyouSortOrder.NAME) }
+    var filterPanelExpanded by remember { mutableStateOf(false) }
 
     // AI提案（弥生モードのみ）
     var showAiTekiyouDialog by remember { mutableStateOf(false) }
@@ -89,8 +99,8 @@ fun TekiyouMatchingScreen(
         else -> rule.rakurakuTekiyouId != null
     }
 
-    val filteredRules = remember(matchingRules, filterType, showOnlyWithData, showOnlyUnmatched, activePatterns) {
-        matchingRules.filter { rule ->
+    val filteredRules = remember(matchingRules, filterType, showOnlyWithData, showOnlyUnmatched, activePatterns, searchText, sortOrder) {
+        val filtered = matchingRules.filter { rule ->
             val typeMatch = when (filterType) {
                 true -> rule.isDeposit
                 false -> !rule.isDeposit
@@ -98,7 +108,15 @@ fun TekiyouMatchingScreen(
             }
             val dataMatch = if (showOnlyWithData) rule.pattern in activePatterns else true
             val unmatchedMatch = if (showOnlyUnmatched) !isRuleMatched(rule) else true
-            typeMatch && dataMatch && unmatchedMatch
+            val searchMatch = searchText.isBlank() ||
+                rule.normalizedTekiyou.contains(searchText, ignoreCase = true) ||
+                rule.sampleText.contains(searchText, ignoreCase = true)
+            typeMatch && dataMatch && unmatchedMatch && searchMatch
+        }
+        when (sortOrder) {
+            TekiyouSortOrder.NAME -> filtered // 既にDAOで入金/出金→五十音順にソート済み
+            TekiyouSortOrder.COUNT -> filtered.sortedByDescending { it.matchCount }
+            TekiyouSortOrder.UNMATCHED_FIRST -> filtered.sortedWith(compareBy({ isRuleMatched(it) }, { -it.matchCount }))
         }
     }
     val matchedCount = filteredRules.count { isRuleMatched(it) }
@@ -286,72 +304,92 @@ fun TekiyouMatchingScreen(
                 }
             }
 
-            // フィルタチップ
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            CollapsibleFilterPanel(
+                expanded = filterPanelExpanded,
+                onExpandedChange = { filterPanelExpanded = it },
+                hasActiveFilter = filterType != null || showOnlyWithData || showOnlyUnmatched || searchText.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                FilterChip(
-                    selected = filterType == null,
-                    onClick = { filterType = null },
-                    label = { Text("全て (${matchingRules.size})") }
-                )
-                FilterChip(
-                    selected = filterType == true,
-                    onClick = { filterType = true },
-                    label = { Text("入金 ($depositCount)") },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFF4CAF50).copy(alpha = 0.2f)
+                // フィルタチップ
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = filterType == null,
+                        onClick = { filterType = null },
+                        label = { Text("全て (${matchingRules.size})") }
                     )
-                )
-                FilterChip(
-                    selected = filterType == false,
-                    onClick = { filterType = false },
-                    label = { Text("出金 ($withdrawalCount)") },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFFE53935).copy(alpha = 0.2f)
+                    FilterChip(
+                        selected = filterType == true,
+                        onClick = { filterType = true },
+                        label = { Text("入金 ($depositCount)") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFF4CAF50).copy(alpha = 0.2f)
+                        )
                     )
-                )
-            }
+                    FilterChip(
+                        selected = filterType == false,
+                        onClick = { filterType = false },
+                        label = { Text("出金 ($withdrawalCount)") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFFE53935).copy(alpha = 0.2f)
+                        )
+                    )
+                }
 
-            // フィルタチェックボックス行
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Checkbox(
-                    checked = showOnlyWithData,
-                    onCheckedChange = { showOnlyWithData = it }
-                )
-                Text(
-                    text = "通帳データあり",
-                    fontSize = 13.sp,
-                    modifier = Modifier.clickable { showOnlyWithData = !showOnlyWithData }
+                // 検索欄
+                ListSearchField(
+                    value = searchText,
+                    onValueChange = { searchText = it },
+                    label = "摘要で検索",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
                 )
 
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
-                Checkbox(
-                    checked = showOnlyUnmatched,
-                    onCheckedChange = { showOnlyUnmatched = it }
-                )
-                Text(
-                    text = "未マッチのみ",
-                    fontSize = 13.sp,
-                    color = if (showOnlyUnmatched) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.clickable { showOnlyUnmatched = !showOnlyUnmatched }
+                // 絞り込みチップ
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ToggleFilterChip(
+                        label = "通帳データあり",
+                        checked = showOnlyWithData,
+                        onCheckedChange = { showOnlyWithData = it }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    ToggleFilterChip(
+                        label = "未マッチのみ",
+                        checked = showOnlyUnmatched,
+                        onCheckedChange = { showOnlyUnmatched = it }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // 並び替えチップ
+                FilterChipGroup(
+                    label = "並び替え:",
+                    options = TekiyouSortOrder.values().toList(),
+                    selected = sortOrder,
+                    onSelect = { sortOrder = it },
+                    optionLabel = { it.label },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
                 )
 
-                Spacer(modifier = Modifier.weight(1f))
-                Text(
-                    text = "表示: ${filteredRules.size}件",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    ListCountText(filteredRules.size)
+                }
             }
 
             Divider()

@@ -38,6 +38,13 @@ import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 private val MatchedAccountColor = Color(0xFF2E7D32)
 private val OverriddenAccountColor = Color(0xFFC62828)
 
+// 品目グループの並び替え順。COUNTはDAOの既定順（件数DESC・品目名ASC）をそのまま使う
+private enum class ItemSortOrder(val label: String) {
+    COUNT("件数順"),
+    NAME("五十音順"),
+    UNMATCHED_FIRST("未マッチ優先")
+}
+
 /**
  * 品目別マッチング画面。
  * 通帳摘要集約リスト（TekiyouMatchingScreen）と同じ「グループのデフォルト＋個別上書き」
@@ -63,6 +70,10 @@ fun GeneralItemMatchingScreen(
     var itemEditTarget by remember { mutableStateOf<GeneralReceiptItem?>(null) }
     var itemEditGroupDefaultName by remember { mutableStateOf<String?>(null) }
     var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
+    var searchText by remember { mutableStateOf("") }
+    var sortOrder by remember { mutableStateOf(ItemSortOrder.COUNT) }
+    var unmatchedOnly by remember { mutableStateOf(false) }
+    var filterPanelExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         yayoiAccounts = viewModel.loadYayoiAccounts()
@@ -71,6 +82,17 @@ fun GeneralItemMatchingScreen(
     val matchedCount = itemGroups.count { it.yayoiAccountId != null }
     val totalCount = itemGroups.size
     val unmatchedCount = totalCount - matchedCount
+
+    val filteredGroups = remember(itemGroups, searchText, sortOrder, unmatchedOnly) {
+        var list = itemGroups
+        if (unmatchedOnly) list = list.filter { it.yayoiAccountId == null }
+        if (searchText.isNotBlank()) list = list.filter { it.itemName.contains(searchText, ignoreCase = true) }
+        when (sortOrder) {
+            ItemSortOrder.COUNT -> list
+            ItemSortOrder.NAME -> list.sortedBy { it.itemName }
+            ItemSortOrder.UNMATCHED_FIRST -> list.sortedWith(compareBy({ it.yayoiAccountId != null }, { -it.count }))
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -154,9 +176,55 @@ fun GeneralItemMatchingScreen(
                 }
             }
 
+            if (itemGroups.isNotEmpty()) {
+                CollapsibleFilterPanel(
+                    expanded = filterPanelExpanded,
+                    onExpandedChange = { filterPanelExpanded = it },
+                    hasActiveFilter = searchText.isNotBlank() || unmatchedOnly,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    ListSearchField(
+                        value = searchText,
+                        onValueChange = { searchText = it },
+                        label = "品目名で検索",
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ToggleFilterChip(
+                            label = "未マッチのみ",
+                            checked = unmatchedOnly,
+                            onCheckedChange = { unmatchedOnly = it }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        FilterChipGroup(
+                            label = "並び替え:",
+                            options = ItemSortOrder.values().toList(),
+                            selected = sortOrder,
+                            onSelect = { sortOrder = it },
+                            optionLabel = { it.label },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        ListCountText(filteredGroups.size)
+                    }
+                }
+            }
+
             if (itemGroups.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("品目データがありません", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else if (filteredGroups.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("条件に一致する品目がありません", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 LazyColumn(
@@ -164,7 +232,7 @@ fun GeneralItemMatchingScreen(
                     contentPadding = PaddingValues(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(itemGroups, key = { it.canonicalKey }) { group ->
+                    items(filteredGroups, key = { it.canonicalKey }) { group ->
                         val isExpanded = group.canonicalKey in expandedKeys
                         val matchedAccount = yayoiAccounts.find { it.id == group.yayoiAccountId }
                         ItemGroupCard(
@@ -405,7 +473,7 @@ private fun ItemGroupCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${group.count}件  合計 ¥${"%,d".format(group.totalPrice)}",
+                        text = "${group.count}件",
                         fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -580,7 +648,7 @@ private fun GroupDefaultEditDialog(
         title = {
             Column {
                 Text(group.itemName, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${group.count}件  ¥${"%,d".format(group.totalPrice)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${group.count}件", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     text = "保存するとグループ全件に適用され、個別変更はリセットされます",
                     fontSize = 11.sp,
