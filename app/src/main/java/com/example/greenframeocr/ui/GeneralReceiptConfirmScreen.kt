@@ -114,10 +114,10 @@ fun GeneralReceiptConfirmScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
+                    DateOutlinedField(
                         value = dateText,
                         onValueChange = { dateText = it },
-                        label = { Text("日付（yyyy-MM-dd）") },
+                        label = "日付",
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(4.dp))

@@ -3,7 +3,6 @@ package com.example.greenframeocr.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -13,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -27,6 +25,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
@@ -458,85 +458,6 @@ private data class EditableItem(
 private fun List<GeneralReceiptItem>.toEditableItems(): List<EditableItem> =
     map { EditableItem(originalId = it.id, itemName = it.itemName, priceStr = it.price.toString(), isExcluded = it.isExcluded) }
 
-// ─── 日付入力欄（カレンダーピッカー） ────────────────────────────────────────
-
-// "yyyy-MM-dd" ⇔ UTC深夜0時ミリ秒（DatePickerStateはUTC基準のため、ローカルタイムゾーンで
-// 変換すると日付がずれることがある）
-private fun dateStringToUtcMillis(dateStr: String): Long? {
-    val parts = dateStr.split("-")
-    if (parts.size != 3) return null
-    val year = parts[0].toIntOrNull() ?: return null
-    val month = parts[1].toIntOrNull() ?: return null
-    val day = parts[2].toIntOrNull() ?: return null
-    val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
-    cal.clear()
-    cal.set(year, month - 1, day)
-    return cal.timeInMillis
-}
-
-private fun utcMillisToDateString(millis: Long): String {
-    val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
-    cal.timeInMillis = millis
-    return "%04d-%02d-%02d".format(
-        cal.get(java.util.Calendar.YEAR),
-        cal.get(java.util.Calendar.MONTH) + 1,
-        cal.get(java.util.Calendar.DAY_OF_MONTH)
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DateOutlinedField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    label: String,
-    modifier: Modifier = Modifier
-) {
-    var showPicker by remember { mutableStateOf(false) }
-    Box(modifier = modifier) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text(label) },
-            singleLine = true,
-            trailingIcon = {
-                Icon(Icons.Default.CalendarMonth, contentDescription = "日付を選択")
-            },
-            modifier = Modifier.fillMaxWidth()
-        )
-        // OutlinedTextFieldはreadOnlyでもタップでフォーカスされるだけなので、
-        // 透明なオーバーレイでタップを拾ってピッカーを開く
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() }
-                ) { showPicker = true }
-        )
-    }
-    if (showPicker) {
-        val state = rememberDatePickerState(
-            initialSelectedDateMillis = dateStringToUtcMillis(value) ?: System.currentTimeMillis()
-        )
-        DatePickerDialog(
-            onDismissRequest = { showPicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    state.selectedDateMillis?.let { onValueChange(utcMillisToDateString(it)) }
-                    showPicker = false
-                }) { Text("OK") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPicker = false }) { Text("キャンセル") }
-            }
-        ) {
-            DatePicker(state = state)
-        }
-    }
-}
-
 // ─── オートコンプリート入力欄（過去の入力実績から候補表示。店舗名／品目名で共用） ─────
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -775,39 +696,64 @@ private fun ReceiptDetailDialog(
     val bodyFontSize = fontSize
     val smallFontSize = (fontSize - 1f).coerceAtLeast(10f)
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = { if (!isEditMode) onDismiss() },
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (receipt.storeName.isNotBlank()) receipt.storeName else "（店舗名なし）",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = titleFontSize.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = receipt.date.ifBlank { "日付不明" },
-                        fontSize = subFontSize.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = { if (isEditMode) resetEdit() else isEditMode = true }) {
-                    Icon(
-                        imageVector = if (isEditMode) Icons.Default.Close else Icons.Default.Edit,
-                        contentDescription = if (isEditMode) "編集キャンセル" else "編集"
-                    )
-                }
-            }
-        },
-        text = {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.surface
+    ) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = if (receipt.storeName.isNotBlank()) receipt.storeName else "（店舗名なし）",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = titleFontSize.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = receipt.date.ifBlank { "日付不明" },
+                            fontSize = subFontSize.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = { if (isEditMode) resetEdit() else onDismiss() }) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { if (isEditMode) resetEdit() else isEditMode = true }) {
+                        Icon(
+                            imageVector = if (isEditMode) Icons.Default.Close else Icons.Default.Edit,
+                            contentDescription = if (isEditMode) "編集キャンセル" else "編集"
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            )
+        }
+    ) { paddingValues ->
             if (isLoading) {
-                Box(modifier = Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
             } else {
-                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)
+                        .padding(16.dp)
+                ) {
                     if (isEditMode) {
                         AutocompleteTextField(
                             value = editStoreName,
@@ -834,7 +780,7 @@ private fun ReceiptDetailDialog(
                     }
                     Divider()
                     LazyColumn(
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(if (isEditMode) 4.dp else 2.dp)
                     ) {
                         itemsIndexed(editItems, key = { _, item -> item.localId }) { index, item ->
@@ -845,51 +791,45 @@ private fun ReceiptDetailDialog(
                                         focusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                     )
                                 else OutlinedTextFieldDefaults.colors()
-                                Column(
+                                // 全画面表示になり幅に余裕があるため1行に収める
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 2.dp)
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Checkbox(
-                                            checked = !item.isExcluded,
-                                            onCheckedChange = { editItems[index] = item.copy(isExcluded = !it) },
-                                            modifier = Modifier.size(32.dp)
-                                        )
-                                        AutocompleteTextField(
-                                            value = item.itemName,
-                                            onValueChange = { editItems[index] = item.copy(itemName = it) },
-                                            suggestions = itemNameSuggestions,
-                                            modifier = Modifier.weight(1f),
-                                            colors = fieldColors
-                                        )
-                                    }
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                                    Checkbox(
+                                        checked = !item.isExcluded,
+                                        onCheckedChange = { editItems[index] = item.copy(isExcluded = !it) },
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                    AutocompleteTextField(
+                                        value = item.itemName,
+                                        onValueChange = { editItems[index] = item.copy(itemName = it) },
+                                        suggestions = itemNameSuggestions,
+                                        modifier = Modifier.weight(1f),
+                                        colors = fieldColors
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    OutlinedTextField(
+                                        value = item.priceStr,
+                                        onValueChange = { editItems[index] = item.copy(priceStr = it.filter(Char::isDigit)) },
+                                        singleLine = true,
+                                        modifier = Modifier.width(110.dp),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        label = { Text("¥") },
+                                        colors = fieldColors
+                                    )
+                                    IconButton(
+                                        onClick = { editItems.removeAt(index) },
+                                        modifier = Modifier.size(40.dp)
                                     ) {
-                                        Spacer(Modifier.width(32.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        OutlinedTextField(
-                                            value = item.priceStr,
-                                            onValueChange = { editItems[index] = item.copy(priceStr = it.filter(Char::isDigit)) },
-                                            singleLine = true,
-                                            modifier = Modifier.weight(1f),
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            label = { Text("¥") },
-                                            colors = fieldColors
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = "削除",
+                                            modifier = Modifier.size(18.dp),
+                                            tint = MaterialTheme.colorScheme.error
                                         )
-                                        IconButton(
-                                            onClick = { editItems.removeAt(index) },
-                                            modifier = Modifier.size(40.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Delete,
-                                                contentDescription = "削除",
-                                                modifier = Modifier.size(18.dp),
-                                                tint = MaterialTheme.colorScheme.error
-                                            )
-                                        }
                                     }
                                 }
                             } else {
@@ -977,38 +917,47 @@ private fun ReceiptDetailDialog(
                             )
                         }
                     }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (isEditMode) {
-                    coroutineScope.launch {
-                        val updatedItems = editItems.map { ei ->
-                            GeneralReceiptItem(
-                                id = ei.originalId ?: 0L,
-                                receiptId = receipt.id,
-                                itemName = ei.itemName,
-                                price = ei.priceStr.toIntOrNull() ?: 0,
-                                isExcluded = ei.isExcluded
-                            )
+                    if (isEditMode) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { resetEdit() },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("キャンセル")
+                            }
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val updatedItems = editItems.map { ei ->
+                                            GeneralReceiptItem(
+                                                id = ei.originalId ?: 0L,
+                                                receiptId = receipt.id,
+                                                itemName = ei.itemName,
+                                                price = ei.priceStr.toIntOrNull() ?: 0,
+                                                isExcluded = ei.isExcluded
+                                            )
+                                        }
+                                        viewModel.saveReceiptEdits(
+                                            receipt.copy(storeName = editStoreName, date = editDate, total = calculatedTotal),
+                                            updatedItems,
+                                            originalItems
+                                        )
+                                        onDismiss()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("保存")
+                            }
                         }
-                        viewModel.saveReceiptEdits(
-                            receipt.copy(storeName = editStoreName, date = editDate, total = calculatedTotal),
-                            updatedItems,
-                            originalItems
-                        )
-                        onDismiss()
                     }
-                } else {
-                    onDismiss()
                 }
-            }) {
-                Text(if (isEditMode) "保存" else "閉じる")
             }
-        },
-        dismissButton = if (isEditMode) {
-            { TextButton(onClick = { resetEdit() }) { Text("キャンセル") } }
-        } else null
-    )
+    }
+    }
+    }
 }
