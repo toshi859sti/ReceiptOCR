@@ -58,7 +58,7 @@ fun GeneralPurchaseMenuScreen(
             Spacer(modifier = Modifier.height(16.dp))
             GeneralMenuButton(text = "レシート領収書一覧", onClick = onNavigateToList)
             Spacer(modifier = Modifier.height(16.dp))
-            GeneralMenuButton(text = "品目但し書き別マッチング", onClick = onNavigateToItemMatching)
+            GeneralMenuButton(text = "商品名・但し書きリスト", onClick = onNavigateToItemMatching)
             Spacer(modifier = Modifier.height(16.dp))
             GeneralMenuButton(text = "CSV出力", onClick = onNavigateToOutput)
             Spacer(modifier = Modifier.height(16.dp))

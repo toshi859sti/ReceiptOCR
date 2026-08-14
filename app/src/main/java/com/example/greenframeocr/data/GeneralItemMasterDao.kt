@@ -16,4 +16,8 @@ interface GeneralItemMasterDao {
 
     @Query("SELECT * FROM general_item_master")
     suspend fun getAll(): List<GeneralItemMaster>
+
+    // 類似グループ統合で吸収された側のグループデフォルト設定を削除する
+    @Query("DELETE FROM general_item_master WHERE canonicalKey = :canonicalKey")
+    suspend fun deleteByKey(canonicalKey: String)
 }

@@ -110,6 +110,16 @@ interface GeneralReceiptDao {
     @Query("UPDATE general_receipt_items SET yayoiAccountId = NULL WHERE canonicalKey = :canonicalKey")
     suspend fun clearOverridesForGroup(canonicalKey: String)
 
+    // 類似グループ統合：OCR誤読等でcanonicalKeyが完全一致しなかった別グループを
+    // 1つのグループに付け替える（個別上書きの値はそのまま持ち越す）
+    @Query("UPDATE general_receipt_items SET canonicalKey = :targetKey WHERE canonicalKey = :sourceKey")
+    suspend fun reassignCanonicalKey(sourceKey: String, targetKey: String)
+
+    // グループ一括リネーム：レジ番号等のノイズを除いた品目名にグループ内の全明細を書き換える。
+    // canonicalKeyも新しい品目名から再計算した値に合わせて更新する
+    @Query("UPDATE general_receipt_items SET itemName = :newName, canonicalKey = :newCanonicalKey WHERE canonicalKey = :oldCanonicalKey")
+    suspend fun renameGroupItems(oldCanonicalKey: String, newCanonicalKey: String, newName: String)
+
     @Query("UPDATE general_receipts SET storeName = :storeName WHERE registrationNumber = :registrationNumber")
     suspend fun updateStoreNameByRegistrationNumber(registrationNumber: String, storeName: String)
 

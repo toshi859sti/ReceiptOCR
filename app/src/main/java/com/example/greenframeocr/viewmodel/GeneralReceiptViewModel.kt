@@ -22,6 +22,10 @@ import com.example.greenframeocr.util.GeminiApiKeyMissingException
 import com.example.greenframeocr.util.GeminiQuotaExhaustedException
 import com.example.greenframeocr.util.GeminiRateLimitException
 import com.example.greenframeocr.util.GeminiReceiptClient
+import com.example.greenframeocr.util.NumericPrefixCandidate
+import com.example.greenframeocr.util.SimilarGroupPair
+import com.example.greenframeocr.util.findNumericPrefixCandidates
+import com.example.greenframeocr.util.findSimilarGroupPairs
 import com.example.greenframeocr.util.toCanonicalKey
 import com.example.greenframeocr.util.withComputedKey
 import kotlinx.coroutines.Dispatchers
@@ -218,6 +222,87 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun getItemsByCanonicalKey(canonicalKey: String) = dao.getItemsByCanonicalKey(canonicalKey)
+
+    private val _similarGroupPairs = MutableStateFlow<List<SimilarGroupPair>>(emptyList())
+    val similarGroupPairs: StateFlow<List<SimilarGroupPair>> = _similarGroupPairs
+
+    private val _isFindingSimilarGroups = MutableStateFlow(false)
+    val isFindingSimilarGroups: StateFlow<Boolean> = _isFindingSimilarGroups
+
+    /** OCR誤読でcanonicalKeyが完全一致しなかった別グループを編集距離で検出する（候補提示のみ） */
+    fun findSimilarGroups(groups: List<GeneralItemGroup>) {
+        viewModelScope.launch {
+            _isFindingSimilarGroups.value = true
+            _similarGroupPairs.value = withContext(Dispatchers.Default) { findSimilarGroupPairs(groups) }
+            _isFindingSimilarGroups.value = false
+        }
+    }
+
+    fun clearSimilarGroupPairs() {
+        _similarGroupPairs.value = emptyList()
+    }
+
+    /** 承認された統合候補を実行する。merge側の明細をkeep側のcanonicalKeyへ付け替え、
+     *  merge側のグループデフォルト設定は破棄する（個別上書きの値はそのまま持ち越す） */
+    fun mergeGroups(pairs: List<SimilarGroupPair>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            pairs.forEach { pair ->
+                dao.reassignCanonicalKey(pair.merge.canonicalKey, pair.keep.canonicalKey)
+                db.generalItemMasterDao().deleteByKey(pair.merge.canonicalKey)
+            }
+        }
+        _similarGroupPairs.value = emptyList()
+    }
+
+    /** グループ内の全明細の品目名を一括リネームする（レジ番号等のノイズ除去用）。
+     *  canonicalKeyも新品目名から再計算し直すため、リネーム後に既存の別グループへ吸収される
+     *  こともある（その場合、統合先に既存のデフォルト科目がなければ元のデフォルトを引き継ぐ） */
+    fun renameGroup(oldCanonicalKey: String, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) { performRenameGroup(oldCanonicalKey, trimmed) }
+    }
+
+    private suspend fun performRenameGroup(oldCanonicalKey: String, newName: String) {
+        val newKey = toCanonicalKey(newName)
+        dao.renameGroupItems(oldCanonicalKey, newKey, newName)
+        if (newKey != oldCanonicalKey) {
+            val oldMaster = db.generalItemMasterDao().getByKey(oldCanonicalKey)
+            val existingMaster = db.generalItemMasterDao().getByKey(newKey)
+            if (existingMaster == null && oldMaster != null) {
+                db.generalItemMasterDao().upsert(GeneralItemMaster(newKey, oldMaster.yayoiAccountId))
+            }
+            db.generalItemMasterDao().deleteByKey(oldCanonicalKey)
+        }
+    }
+
+    private val _numericPrefixCandidates = MutableStateFlow<List<NumericPrefixCandidate>>(emptyList())
+    val numericPrefixCandidates: StateFlow<List<NumericPrefixCandidate>> = _numericPrefixCandidates
+
+    private val _isFindingNumericPrefixes = MutableStateFlow(false)
+    val isFindingNumericPrefixes: StateFlow<Boolean> = _isFindingNumericPrefixes
+
+    /** 品目名先頭の数字接頭辞（伝票行番号らしきノイズ）を正規表現で検出する（候補提示のみ） */
+    fun findNumericPrefixes(groups: List<GeneralItemGroup>) {
+        viewModelScope.launch {
+            _isFindingNumericPrefixes.value = true
+            _numericPrefixCandidates.value = withContext(Dispatchers.Default) { findNumericPrefixCandidates(groups) }
+            _isFindingNumericPrefixes.value = false
+        }
+    }
+
+    fun clearNumericPrefixCandidates() {
+        _numericPrefixCandidates.value = emptyList()
+    }
+
+    /** 承認された数字接頭辞除去候補を順番に適用する（同じ除去結果に集約されるケースの
+     *  競合を避けるため、performRenameGroupを1つのコルーチン内で逐次実行する） */
+    fun applyNumericPrefixCleanup(candidates: List<NumericPrefixCandidate>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            candidates.forEach { performRenameGroup(it.group.canonicalKey, it.cleanedName) }
+        }
+        _numericPrefixCandidates.value = emptyList()
+    }
 
     fun suggestAccountsForItems(
         unmatchedGroups: List<GeneralItemGroup>,

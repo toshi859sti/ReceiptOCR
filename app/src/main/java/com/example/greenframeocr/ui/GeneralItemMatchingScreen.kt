@@ -9,9 +9,12 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CallMerge
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -31,6 +34,8 @@ import com.example.greenframeocr.data.GeneralItemGroup
 import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.YayoiAccount
 import com.example.greenframeocr.util.GeminiReceiptClient
+import com.example.greenframeocr.util.NumericPrefixCandidate
+import com.example.greenframeocr.util.SimilarGroupPair
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 
 // 科目名の表示色。グループのデフォルトでマッチした分は緑系、個別に上書きした分は赤系で固定
@@ -46,10 +51,11 @@ private enum class ItemSortOrder(val label: String) {
 }
 
 /**
- * 品目別マッチング画面。
+ * 商品名・但し書きリスト画面。
  * 通帳摘要集約リスト（TekiyouMatchingScreen）と同じ「グループのデフォルト＋個別上書き」
  * 操作方式に合わせている：グループ行タップで展開、✏でグループのデフォルト変更（個別上書きは
  * 全解除）、展開後の個別明細タップで1件だけ上書き（「グループのデフォルトに戻す」あり）。
+ * ✎でグループ内の全明細の品目名を一括リネーム（レジ番号等のノイズ除去用、canonicalKeyも再計算）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,10 +69,15 @@ fun GeneralItemMatchingScreen(
     val aiSuggestions by viewModel.aiSuggestions.collectAsState()
     val isAiMatching by viewModel.isAiMatching.collectAsState()
     val aiUsageStats by viewModel.aiUsageStats.collectAsState()
+    val similarGroupPairs by viewModel.similarGroupPairs.collectAsState()
+    val isFindingSimilarGroups by viewModel.isFindingSimilarGroups.collectAsState()
+    val numericPrefixCandidates by viewModel.numericPrefixCandidates.collectAsState()
+    val isFindingNumericPrefixes by viewModel.isFindingNumericPrefixes.collectAsState()
 
     var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
     var expandedKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     var groupEditTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
+    var groupRenameTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
     var itemEditTarget by remember { mutableStateOf<GeneralReceiptItem?>(null) }
     var itemEditGroupDefaultName by remember { mutableStateOf<String?>(null) }
     var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
@@ -74,6 +85,8 @@ fun GeneralItemMatchingScreen(
     var sortOrder by remember { mutableStateOf(ItemSortOrder.COUNT) }
     var unmatchedOnly by remember { mutableStateOf(false) }
     var filterPanelExpanded by remember { mutableStateOf(false) }
+    var hasSearchedSimilarGroups by remember { mutableStateOf(false) }
+    var hasSearchedNumericPrefixes by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         yayoiAccounts = viewModel.loadYayoiAccounts()
@@ -97,7 +110,7 @@ fun GeneralItemMatchingScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("品目但し書き別マッチング") },
+                title = { Text("商品名・但し書きリスト") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
@@ -176,6 +189,52 @@ fun GeneralItemMatchingScreen(
                 }
             }
 
+            // 類似グループ統合候補の検出ボタン。OCR誤読でノイズ文字が混入し、
+            // canonicalKeyの完全一致だけでは吸収できなかった別グループを編集距離で拾う
+            OutlinedButton(
+                onClick = {
+                    hasSearchedSimilarGroups = true
+                    viewModel.findSimilarGroups(itemGroups)
+                },
+                enabled = !isFindingSimilarGroups && itemGroups.size >= 2,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                if (isFindingSimilarGroups) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("類似グループを検索中...")
+                } else {
+                    Icon(Icons.Default.CallMerge, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("類似グループ候補を検出")
+                }
+            }
+
+            // 数字接頭辞（伝票行番号らしきノイズ）検出ボタン。正規表現ベースで判定するため
+            // AIは使わない（パターンが規則的でコスト・レイテンシをかける必要がないため）
+            OutlinedButton(
+                onClick = {
+                    hasSearchedNumericPrefixes = true
+                    viewModel.findNumericPrefixes(itemGroups)
+                },
+                enabled = !isFindingNumericPrefixes && itemGroups.isNotEmpty(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                if (isFindingNumericPrefixes) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("数字接頭辞を検索中...")
+                } else {
+                    Icon(Icons.Default.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("数字接頭辞候補を検出")
+                }
+            }
+
             if (itemGroups.isNotEmpty()) {
                 CollapsibleFilterPanel(
                     expanded = filterPanelExpanded,
@@ -247,6 +306,7 @@ fun GeneralItemMatchingScreen(
                                                else expandedKeys + group.canonicalKey
                             },
                             onEditGroup = { groupEditTarget = group },
+                            onRenameGroup = { groupRenameTarget = group },
                             onEditIndividual = { item ->
                                 itemEditTarget = item
                                 itemEditGroupDefaultName = yayoiAccounts.find { it.id == group.yayoiAccountId }?.accountName
@@ -273,6 +333,54 @@ fun GeneralItemMatchingScreen(
         )
     }
 
+    // 類似グループ統合候補ダイアログ
+    if (similarGroupPairs.isNotEmpty()) {
+        SimilarGroupMergeDialog(
+            pairs = similarGroupPairs,
+            onApply = { approved ->
+                viewModel.mergeGroups(approved)
+                hasSearchedSimilarGroups = false
+            },
+            onDismiss = {
+                viewModel.clearSimilarGroupPairs()
+                hasSearchedSimilarGroups = false
+            }
+        )
+    } else if (hasSearchedSimilarGroups && !isFindingSimilarGroups) {
+        AlertDialog(
+            onDismissRequest = { hasSearchedSimilarGroups = false },
+            title = { Text("類似グループ候補") },
+            text = { Text("類似している可能性のあるグループは見つかりませんでした") },
+            confirmButton = {
+                TextButton(onClick = { hasSearchedSimilarGroups = false }) { Text("OK") }
+            }
+        )
+    }
+
+    // 数字接頭辞除去候補ダイアログ
+    if (numericPrefixCandidates.isNotEmpty()) {
+        NumericPrefixCleanupDialog(
+            candidates = numericPrefixCandidates,
+            onApply = { approved ->
+                viewModel.applyNumericPrefixCleanup(approved)
+                hasSearchedNumericPrefixes = false
+            },
+            onDismiss = {
+                viewModel.clearNumericPrefixCandidates()
+                hasSearchedNumericPrefixes = false
+            }
+        )
+    } else if (hasSearchedNumericPrefixes && !isFindingNumericPrefixes) {
+        AlertDialog(
+            onDismissRequest = { hasSearchedNumericPrefixes = false },
+            title = { Text("数字接頭辞候補") },
+            text = { Text("数字接頭辞らしきものは見つかりませんでした") },
+            confirmButton = {
+                TextButton(onClick = { hasSearchedNumericPrefixes = false }) { Text("OK") }
+            }
+        )
+    }
+
     // グループのデフォルト科目編集ダイアログ（保存すると個別上書きは全解除）
     if (groupEditTarget != null) {
         GroupDefaultEditDialog(
@@ -285,6 +393,18 @@ fun GeneralItemMatchingScreen(
             },
             onLoadAccounts = { accounts -> yayoiAccounts = accounts },
             viewModel = viewModel
+        )
+    }
+
+    // グループ一括リネームダイアログ（レジ番号等のノイズ除去用）
+    if (groupRenameTarget != null) {
+        GroupRenameDialog(
+            group = groupRenameTarget!!,
+            onDismiss = { groupRenameTarget = null },
+            onSave = { canonicalKey, newName ->
+                viewModel.renameGroup(canonicalKey, newName)
+                groupRenameTarget = null
+            }
         )
     }
 
@@ -407,6 +527,192 @@ private fun AiSuggestionDialog(
     )
 }
 
+// ─── 類似グループ統合候補ダイアログ ─────────────────────────────────────────────
+
+@Composable
+private fun SimilarGroupMergeDialog(
+    pairs: List<SimilarGroupPair>,
+    onApply: (List<SimilarGroupPair>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val checked = remember(pairs) {
+        mutableStateListOf(*Array(pairs.size) { true })
+    }
+    val approvedCount = checked.count { it }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("類似グループ候補（${pairs.size}件）") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
+                Text(
+                    text = "OCRの誤読で表記が少し異なるだけの同じ品目である可能性があります。" +
+                        "統合すると件数の少ない方が多い方に吸収され、少ない方のグループ設定は破棄されます。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    itemsIndexed(pairs) { index, pair ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Checkbox(
+                                checked = checked[index],
+                                onCheckedChange = { checked[index] = it }
+                            )
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(start = 4.dp, top = 10.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = pair.merge.itemName,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Text("（${pair.merge.count}件）", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("→ ", fontSize = 12.sp)
+                                    Text(
+                                        text = pair.keep.itemName,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Text("（${pair.keep.count}件）", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                        Divider()
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onApply(pairs.filterIndexed { i, _ -> checked[i] }) },
+                enabled = approvedCount > 0
+            ) {
+                Text("統合（${approvedCount}件）")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("キャンセル") }
+        }
+    )
+}
+
+// ─── 数字接頭辞除去候補ダイアログ ───────────────────────────────────────────────
+
+@Composable
+private fun NumericPrefixCleanupDialog(
+    candidates: List<NumericPrefixCandidate>,
+    onApply: (List<NumericPrefixCandidate>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // 高信頼（＃等の区切りあり）はデフォルトでチェック、低信頼（数字+空白のみ）は
+    // 商品名の一部の数字と紛らわしいためデフォルトでチェックを外しておく
+    val checked = remember(candidates) {
+        mutableStateListOf(*Array(candidates.size) { candidates[it].highConfidence })
+    }
+    val approvedCount = checked.count { it }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("数字接頭辞候補（${candidates.size}件）") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
+                Text(
+                    text = "伝票の行番号らしき数字が品目名の先頭に付いています。" +
+                        "「＃」等の区切りがあるものは高信頼（デフォルトON）、数字と空白のみのものは" +
+                        "商品名の一部の可能性もあるため低信頼（デフォルトOFF）としています。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    itemsIndexed(candidates) { index, candidate ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Checkbox(
+                                checked = checked[index],
+                                onCheckedChange = { checked[index] = it }
+                            )
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(start = 4.dp, top = 10.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = candidate.group.itemName,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (!candidate.highConfidence) {
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            "低信頼",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("→ ", fontSize = 12.sp)
+                                    Text(
+                                        text = candidate.cleanedName,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                        Divider()
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onApply(candidates.filterIndexed { i, _ -> checked[i] }) },
+                enabled = approvedCount > 0
+            ) {
+                Text("適用（${approvedCount}件）")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("キャンセル") }
+        }
+    )
+}
+
 // ─── 共通コンポーネント ──────────────────────────────────────────────────────
 
 @Composable
@@ -429,6 +735,7 @@ private fun ItemGroupCard(
     viewModel: GeneralReceiptViewModel,
     onToggleExpand: () -> Unit,
     onEditGroup: () -> Unit,
+    onRenameGroup: () -> Unit,
     onEditIndividual: (GeneralReceiptItem) -> Unit
 ) {
     val isMatched = group.yayoiAccountId != null
@@ -509,8 +816,11 @@ private fun ItemGroupCard(
                         )
                     }
                 }
+                IconButton(onClick = onRenameGroup, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Edit, contentDescription = "品目名を編集", modifier = Modifier.size(18.dp))
+                }
                 IconButton(onClick = onEditGroup, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Edit, contentDescription = "グループ編集", modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.AccountBalance, contentDescription = "勘定科目を設定", modifier = Modifier.size(18.dp))
                 }
             }
 
@@ -604,6 +914,47 @@ private fun GeneralItemRow(
             }
         }
     }
+}
+
+// ─── グループ一括リネームダイアログ ─────────────────────────────────────────────
+
+@Composable
+private fun GroupRenameDialog(
+    group: GeneralItemGroup,
+    onDismiss: () -> Unit,
+    onSave: (canonicalKey: String, newName: String) -> Unit
+) {
+    var text by remember(group) { mutableStateOf(group.itemName) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("品目名を編集") },
+        text = {
+            Column {
+                Text(
+                    text = "レジ番号などのノイズを除いた品目名に修正できます。" +
+                        "このグループの明細${group.count}件すべてに反映されます。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("品目名") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(group.canonicalKey, text) },
+                enabled = text.isNotBlank()
+            ) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
+    )
 }
 
 // ─── グループのデフォルト科目編集ダイアログ ─────────────────────────────────────
