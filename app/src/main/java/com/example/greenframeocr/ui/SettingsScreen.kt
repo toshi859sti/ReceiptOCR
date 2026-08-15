@@ -85,6 +85,8 @@ fun SettingsScreen(
     var depositImportMessage by remember { mutableStateOf<String?>(null) }
     var masterExportMessage by remember { mutableStateOf<String?>(null) }
     var masterImportMessage by remember { mutableStateOf<String?>(null) }
+    var receiptExportMessage by remember { mutableStateOf<String?>(null) }
+    var receiptImportMessage by remember { mutableStateOf<String?>(null) }
     var recountMessage by remember { mutableStateOf<String?>(null) }
     var isRecounting by remember { mutableStateOf(false) }
 
@@ -188,6 +190,30 @@ fun SettingsScreen(
             scope.launch {
                 val result = importMasterData(context, db, it)
                 masterImportMessage = result
+            }
+        }
+    }
+
+    // レシート・領収書エクスポート用ランチャー
+    val receiptExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri?.let {
+            scope.launch {
+                val result = exportReceiptData(context, db, it)
+                receiptExportMessage = result
+            }
+        }
+    }
+
+    // レシート・領収書インポート用ランチャー
+    val receiptImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            scope.launch {
+                val result = importReceiptData(context, db, it)
+                receiptImportMessage = result
             }
         }
     }
@@ -399,45 +425,8 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ========== JA購買伝票 ==========
-            SettingSection(title = "🌾 JA購買伝票")
-
-            SettingItem(
-                title = "最低鮮鋭度",
-                subtitle = "撮影トリガーの鮮鋭度閾値（現在: $minSharpness）"
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    IconButton(
-                        onClick = {
-                            if (minSharpness > 500) {
-                                minSharpness -= 100
-                                appPreferences.minSharpness = minSharpness
-                            }
-                        }
-                    ) {
-                        Text("-", fontSize = 24.sp)
-                    }
-                    Text(
-                        text = "$minSharpness",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.width(60.dp)
-                    )
-                    IconButton(
-                        onClick = {
-                            if (minSharpness < 3000) {
-                                minSharpness += 100
-                                appPreferences.minSharpness = minSharpness
-                            }
-                        }
-                    ) {
-                        Text("+", fontSize = 24.sp)
-                    }
-                }
-            }
+            // ========== 撮影設定 ==========
+            SettingSection(title = "📷 撮影設定")
 
             SettingItem(
                 title = "フラッシュ",
@@ -463,26 +452,8 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ========== JA預金 ==========
-            SettingSection(title = "🏦 JA預金")
-
-            SettingItem(
-                title = "金額を非表示",
-                subtitle = if (depositHideAmount) "金額は *** で表示" else "金額を表示"
-            ) {
-                Switch(
-                    checked = depositHideAmount,
-                    onCheckedChange = {
-                        depositHideAmount = it
-                        appPreferences.depositHideAmount = it
-                    }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // ========== レシート・領収書 ==========
-            SettingSection(title = "🛒 レシート・領収書")
+            // ========== AI設定 ==========
+            SettingSection(title = "🤖 AI設定")
 
             Text(
                 text = "Gemini APIキー",
@@ -608,6 +579,66 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // ========== JA購買伝票 ==========
+            SettingSection(title = "🌾 JA購買伝票")
+
+            SettingItem(
+                title = "最低鮮鋭度",
+                subtitle = "撮影トリガーの鮮鋭度閾値（現在: $minSharpness）"
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (minSharpness > 500) {
+                                minSharpness -= 100
+                                appPreferences.minSharpness = minSharpness
+                            }
+                        }
+                    ) {
+                        Text("-", fontSize = 24.sp)
+                    }
+                    Text(
+                        text = "$minSharpness",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.width(60.dp)
+                    )
+                    IconButton(
+                        onClick = {
+                            if (minSharpness < 3000) {
+                                minSharpness += 100
+                                appPreferences.minSharpness = minSharpness
+                            }
+                        }
+                    ) {
+                        Text("+", fontSize = 24.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ========== JA預金 ==========
+            SettingSection(title = "🏦 JA預金")
+
+            SettingItem(
+                title = "金額を非表示",
+                subtitle = if (depositHideAmount) "金額は *** で表示" else "金額を表示"
+            ) {
+                Switch(
+                    checked = depositHideAmount,
+                    onCheckedChange = {
+                        depositHideAmount = it
+                        appPreferences.depositHideAmount = it
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // ========== データ管理 ==========
             SettingSection(title = "💾 データ管理")
 
@@ -621,6 +652,7 @@ fun SettingsScreen(
                     DataType.PURCHASE -> purchaseExportMessage
                     DataType.DEPOSIT -> depositExportMessage
                     DataType.MASTER -> masterExportMessage
+                    DataType.RECEIPT -> receiptExportMessage
                 },
                 onExecute = {
                     val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
@@ -629,6 +661,7 @@ fun SettingsScreen(
                         DataType.PURCHASE -> purchaseExportLauncher.launch("purchase_$timestamp.json")
                         DataType.DEPOSIT -> depositExportLauncher.launch("deposit_$timestamp.json")
                         DataType.MASTER -> masterExportLauncher.launch("master_$timestamp.json")
+                        DataType.RECEIPT -> receiptExportLauncher.launch("receipt_$timestamp.json")
                     }
                 }
             )
@@ -645,6 +678,7 @@ fun SettingsScreen(
                     DataType.PURCHASE -> purchaseImportMessage
                     DataType.DEPOSIT -> depositImportMessage
                     DataType.MASTER -> masterImportMessage
+                    DataType.RECEIPT -> receiptImportMessage
                 },
                 onExecute = {
                     when (importDataType) {
@@ -652,6 +686,7 @@ fun SettingsScreen(
                         DataType.PURCHASE -> purchaseImportLauncher.launch(arrayOf("application/json"))
                         DataType.DEPOSIT -> depositImportLauncher.launch(arrayOf("application/json"))
                         DataType.MASTER -> masterImportLauncher.launch(arrayOf("application/json"))
+                        DataType.RECEIPT -> receiptImportLauncher.launch(arrayOf("application/json"))
                     }
                 }
             )
@@ -896,9 +931,10 @@ private fun SettingItem(
  */
 enum class DataType(val displayName: String) {
     ALL("全データ"),
+    MASTER("マスタデータ"),
     PURCHASE("購買伝票"),
     DEPOSIT("通帳データ"),
-    MASTER("マスタデータ")
+    RECEIPT("レシート・領収書")
 }
 
 /**
@@ -927,64 +963,38 @@ private fun DataManagementSection(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // ラジオボタングループ（2行表示）
-        // 1行目: 全データ、マスタデータ
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            listOf(DataType.ALL, DataType.MASTER).forEach { type ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    RadioButton(
-                        selected = selectedType == type,
-                        onClick = { onTypeSelected(type) },
-                        colors = if (isDestructive) {
-                            RadioButtonDefaults.colors(
-                                selectedColor = MaterialTheme.colorScheme.error
-                            )
-                        } else {
-                            RadioButtonDefaults.colors()
-                        }
-                    )
-                    Text(
-                        text = type.displayName,
-                        fontSize = 14.sp,
-                        maxLines = 1
-                    )
+        // ラジオボタングループ（2列×N行。DataType.entriesの宣言順に2件ずつ並べる）
+        DataType.entries.chunked(2).forEach { rowTypes ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                rowTypes.forEach { type ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        RadioButton(
+                            selected = selectedType == type,
+                            onClick = { onTypeSelected(type) },
+                            colors = if (isDestructive) {
+                                RadioButtonDefaults.colors(
+                                    selectedColor = MaterialTheme.colorScheme.error
+                                )
+                            } else {
+                                RadioButtonDefaults.colors()
+                            }
+                        )
+                        Text(
+                            text = type.displayName,
+                            fontSize = 14.sp,
+                            maxLines = 1
+                        )
+                    }
                 }
-            }
-        }
-        // 2行目: 購買伝票、通帳データ
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            listOf(DataType.PURCHASE, DataType.DEPOSIT).forEach { type ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    RadioButton(
-                        selected = selectedType == type,
-                        onClick = { onTypeSelected(type) },
-                        colors = if (isDestructive) {
-                            RadioButtonDefaults.colors(
-                                selectedColor = MaterialTheme.colorScheme.error
-                            )
-                        } else {
-                            RadioButtonDefaults.colors()
-                        }
-                    )
-                    Text(
-                        text = type.displayName,
-                        fontSize = 14.sp,
-                        maxLines = 1
-                    )
+                if (rowTypes.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -1088,11 +1098,27 @@ data class DepositExportData(
 data class MasterExportData(
     val exportDate: String,
     val dataType: String = "master",
-    val version: Int = 2,
+    val version: Int = 3,
     val productMasters: List<com.example.greenframeocr.data.ProductMaster>,
     val ocrVariants: List<com.example.greenframeocr.data.OcrVariant>,
     val rakurakuTekiyou: List<com.example.greenframeocr.data.RakurakuTekiyou>? = null,
-    val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>? = null
+    val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>? = null,
+    // v3で追加：簿記ソフトの勘定科目マスタ
+    val yayoiAccounts: List<com.example.greenframeocr.data.YayoiAccount>? = null,
+    val rakurakuAccounts: List<com.example.greenframeocr.data.RakurakuAccount>? = null
+)
+
+/**
+ * レシート・領収書データエクスポート用のデータクラス
+ */
+data class ReceiptExportData(
+    val exportDate: String,
+    val dataType: String = "receipt",
+    val generalReceipts: List<com.example.greenframeocr.data.GeneralReceipt>,
+    val generalReceiptItems: List<com.example.greenframeocr.data.GeneralReceiptItem>,
+    val invoiceStores: List<com.example.greenframeocr.data.InvoiceStore>,
+    val generalItemMasters: List<com.example.greenframeocr.data.GeneralItemMaster>,
+    val receiptPaymentMethodRules: List<com.example.greenframeocr.data.ReceiptPaymentMethodRule>
 )
 
 /**
@@ -1101,7 +1127,7 @@ data class MasterExportData(
 data class AllExportData(
     val exportDate: String,
     val dataType: String = "all",
-    val version: Int = 1,
+    val version: Int = 2,
     // 購買伝票
     val receiptItems: List<com.example.greenframeocr.data.ReceiptItem>,
     val sheetData: List<com.example.greenframeocr.data.SheetData>,
@@ -1112,7 +1138,15 @@ data class AllExportData(
     val productMasters: List<com.example.greenframeocr.data.ProductMaster>,
     val ocrVariants: List<com.example.greenframeocr.data.OcrVariant>,
     val rakurakuTekiyou: List<com.example.greenframeocr.data.RakurakuTekiyou>,
-    val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>
+    val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>,
+    // v2で追加：簿記ソフトの勘定科目マスタ・レシート領収書
+    val yayoiAccounts: List<com.example.greenframeocr.data.YayoiAccount>? = null,
+    val rakurakuAccounts: List<com.example.greenframeocr.data.RakurakuAccount>? = null,
+    val generalReceipts: List<com.example.greenframeocr.data.GeneralReceipt>? = null,
+    val generalReceiptItems: List<com.example.greenframeocr.data.GeneralReceiptItem>? = null,
+    val invoiceStores: List<com.example.greenframeocr.data.InvoiceStore>? = null,
+    val generalItemMasters: List<com.example.greenframeocr.data.GeneralItemMaster>? = null,
+    val receiptPaymentMethodRules: List<com.example.greenframeocr.data.ReceiptPaymentMethodRule>? = null
 )
 
 /**
@@ -1133,7 +1167,14 @@ private suspend fun exportAllData(
             productMasters = db.productMasterDao().getAll(),
             ocrVariants = db.ocrVariantDao().getAll(),
             rakurakuTekiyou = db.rakurakuTekiyouDao().getAll(),
-            tekiyouMatchingRules = db.tekiyouMatchingRuleDao().getAll()
+            tekiyouMatchingRules = db.tekiyouMatchingRuleDao().getAll(),
+            yayoiAccounts = db.yayoiAccountDao().getAll(),
+            rakurakuAccounts = db.rakurakuAccountDao().getAll(),
+            generalReceipts = db.generalReceiptDao().getAllReceiptsOnce(),
+            generalReceiptItems = db.generalReceiptDao().getAllItemsOnce(),
+            invoiceStores = db.invoiceStoreDao().getAllOnce(),
+            generalItemMasters = db.generalItemMasterDao().getAll(),
+            receiptPaymentMethodRules = db.receiptPaymentMethodRuleDao().getAll()
         )
 
         val gson = GsonBuilder().setPrettyPrinting().create()
@@ -1143,7 +1184,7 @@ private suspend fun exportAllData(
             outputStream.write(json.toByteArray())
         }
 
-        "成功: 購買${exportData.receiptItems.size}件, 通帳${exportData.depositMeisai.size}件, マスタ${exportData.productMasters.size}件"
+        "成功: 購買${exportData.receiptItems.size}件, 通帳${exportData.depositMeisai.size}件, マスタ${exportData.productMasters.size}件, レシート${exportData.generalReceipts?.size ?: 0}件"
     } catch (e: Exception) {
         "失敗: ${e.message}"
     }
@@ -1178,8 +1219,18 @@ private suspend fun importAllData(
         importData.ocrVariants.forEach { db.ocrVariantDao().insertIgnore(it) }
         importData.rakurakuTekiyou.forEach { db.rakurakuTekiyouDao().insertIgnore(it) }
         importData.tekiyouMatchingRules.forEach { db.tekiyouMatchingRuleDao().insertIgnore(it) }
+        importData.yayoiAccounts?.let { mergeYayoiAccounts(db, it) }
+        importData.rakurakuAccounts?.let { mergeRakurakuAccounts(db, it) }
 
-        "成功: 購買${importData.receiptItems.size}件, 通帳${importData.depositMeisai.size}件"
+        // レシート・領収書（IDを保持したまま復元。general_receipt_itemsはreceiptId経由でFK参照するため
+        // 先にgeneral_receiptsを復元する）
+        importData.generalReceipts?.forEach { db.generalReceiptDao().insertReceipt(it) }
+        importData.generalReceiptItems?.let { db.generalReceiptDao().insertItems(it) }
+        importData.invoiceStores?.let { db.invoiceStoreDao().upsertAll(it) }
+        importData.generalItemMasters?.let { db.generalItemMasterDao().upsertAll(it) }
+        importData.receiptPaymentMethodRules?.let { db.receiptPaymentMethodRuleDao().insertAll(it) }
+
+        "成功: 購買${importData.receiptItems.size}件, 通帳${importData.depositMeisai.size}件, レシート${importData.generalReceipts?.size ?: 0}件"
     } catch (e: Exception) {
         "失敗: ${e.message}"
     }
@@ -1311,6 +1362,8 @@ private suspend fun exportMasterData(
         val ocrVariants = db.ocrVariantDao().getAll()
         val rakurakuTekiyou = db.rakurakuTekiyouDao().getAll()
         val tekiyouMatchingRules = db.tekiyouMatchingRuleDao().getAll()
+        val yayoiAccounts = db.yayoiAccountDao().getAll()
+        val rakurakuAccounts = db.rakurakuAccountDao().getAll()
 
         // エクスポート用データを作成
         val exportData = MasterExportData(
@@ -1318,7 +1371,9 @@ private suspend fun exportMasterData(
             productMasters = productMasters,
             ocrVariants = ocrVariants,
             rakurakuTekiyou = rakurakuTekiyou,
-            tekiyouMatchingRules = tekiyouMatchingRules
+            tekiyouMatchingRules = tekiyouMatchingRules,
+            yayoiAccounts = yayoiAccounts,
+            rakurakuAccounts = rakurakuAccounts
         )
 
         // JSONに変換
@@ -1330,7 +1385,7 @@ private suspend fun exportMasterData(
             outputStream.write(json.toByteArray())
         }
 
-        "成功: 商品${productMasters.size}件, 学習${ocrVariants.size}件, 摘要${rakurakuTekiyou.size}件, ルール${tekiyouMatchingRules.size}件"
+        "成功: 商品${productMasters.size}件, 学習${ocrVariants.size}件, 摘要${rakurakuTekiyou.size}件, ルール${tekiyouMatchingRules.size}件, 弥生科目${yayoiAccounts.size}件, らくらく科目${rakurakuAccounts.size}件"
     } catch (e: Exception) {
         "エクスポート失敗: ${e.message}"
     }
@@ -1418,9 +1473,128 @@ private suspend fun importMasterData(
             if (result > 0) ruleAdded++
         }
 
-        "成功: 商品+${productAdded}, 学習+${variantAdded}, 摘要+${tekiyouAdded}, ルール+${ruleAdded}"
+        // 簿記ソフト勘定科目のインポート（accountCodeで既存科目を更新／なければ新規追加）
+        val (yayoiAdded, yayoiUpdated) = importData.yayoiAccounts?.let { mergeYayoiAccounts(db, it) } ?: (0 to 0)
+        val (rakurakuAdded, rakurakuUpdated) = importData.rakurakuAccounts?.let { mergeRakurakuAccounts(db, it) } ?: (0 to 0)
+
+        "成功: 商品+${productAdded}, 学習+${variantAdded}, 摘要+${tekiyouAdded}, ルール+${ruleAdded}, " +
+            "弥生科目+${yayoiAdded}/更新${yayoiUpdated}, らくらく科目+${rakurakuAdded}/更新${rakurakuUpdated}"
     } catch (e: Exception) {
         "インポート失敗: ${e.message}"
+    }
+}
+
+/**
+ * 弥生勘定科目マスタのマージインポート（accountCodeが既存科目と一致すれば更新、なければ新規追加）。
+ * YayoiAccountSettingsScreenのCSVインポートと同じマージ方式（id/parentId/isEnabledは既存側を維持）
+ */
+private suspend fun mergeYayoiAccounts(
+    db: ReceiptDatabase,
+    accounts: List<com.example.greenframeocr.data.YayoiAccount>
+): Pair<Int, Int> {
+    val dao = db.yayoiAccountDao()
+    var added = 0
+    var updated = 0
+    accounts.forEach { account ->
+        val existing = account.accountCode?.let { dao.getByCode(it) }
+        if (existing != null) {
+            dao.update(account.copy(id = existing.id, parentId = existing.parentId, isEnabled = existing.isEnabled))
+            updated++
+        } else {
+            dao.insert(account.copy(id = 0, parentId = null))
+            added++
+        }
+    }
+    return added to updated
+}
+
+/**
+ * らくらく青色申告勘定科目マスタのマージインポート（accountCodeが既存科目と一致すれば更新、
+ * なければ新規追加）。accountCodeにDB側でunique制約があるため、必ずgetByCode経由で既存判定する
+ */
+private suspend fun mergeRakurakuAccounts(
+    db: ReceiptDatabase,
+    accounts: List<com.example.greenframeocr.data.RakurakuAccount>
+): Pair<Int, Int> {
+    val dao = db.rakurakuAccountDao()
+    var added = 0
+    var updated = 0
+    accounts.forEach { account ->
+        val existing = dao.getByCode(account.accountCode)
+        if (existing != null) {
+            dao.update(account.copy(id = existing.id, parentId = existing.parentId))
+            updated++
+        } else {
+            dao.insert(account.copy(id = 0, parentId = null))
+            added++
+        }
+    }
+    return added to updated
+}
+
+/**
+ * レシート・領収書データをエクスポート
+ */
+private suspend fun exportReceiptData(
+    context: Context,
+    db: ReceiptDatabase,
+    uri: android.net.Uri
+): String = withContext(Dispatchers.IO) {
+    try {
+        val generalReceipts = db.generalReceiptDao().getAllReceiptsOnce()
+        val generalReceiptItems = db.generalReceiptDao().getAllItemsOnce()
+        val invoiceStores = db.invoiceStoreDao().getAllOnce()
+        val generalItemMasters = db.generalItemMasterDao().getAll()
+        val receiptPaymentMethodRules = db.receiptPaymentMethodRuleDao().getAll()
+
+        val exportData = ReceiptExportData(
+            exportDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
+            generalReceipts = generalReceipts,
+            generalReceiptItems = generalReceiptItems,
+            invoiceStores = invoiceStores,
+            generalItemMasters = generalItemMasters,
+            receiptPaymentMethodRules = receiptPaymentMethodRules
+        )
+
+        val gson = GsonBuilder().setPrettyPrinting().create()
+        val json = gson.toJson(exportData)
+
+        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+            outputStream.write(json.toByteArray())
+        }
+
+        "成功: レシート${generalReceipts.size}件, 明細${generalReceiptItems.size}件"
+    } catch (e: Exception) {
+        "失敗: ${e.message}"
+    }
+}
+
+/**
+ * レシート・領収書データをインポート（IDを保持したまま復元。同一IDの既存データは上書きされる）
+ */
+private suspend fun importReceiptData(
+    context: Context,
+    db: ReceiptDatabase,
+    uri: android.net.Uri
+): String = withContext(Dispatchers.IO) {
+    try {
+        val json = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            inputStream.readBytes().toString(Charsets.UTF_8)
+        } ?: return@withContext "ファイル読み込み失敗"
+
+        val gson = Gson()
+        val importData = gson.fromJson(json, ReceiptExportData::class.java)
+
+        // general_receipt_itemsはreceiptId経由でFK参照するため、先にgeneral_receiptsを復元する
+        importData.generalReceipts.forEach { db.generalReceiptDao().insertReceipt(it) }
+        db.generalReceiptDao().insertItems(importData.generalReceiptItems)
+        db.invoiceStoreDao().upsertAll(importData.invoiceStores)
+        db.generalItemMasterDao().upsertAll(importData.generalItemMasters)
+        db.receiptPaymentMethodRuleDao().insertAll(importData.receiptPaymentMethodRules)
+
+        "成功: レシート${importData.generalReceipts.size}件, 明細${importData.generalReceiptItems.size}件"
+    } catch (e: Exception) {
+        "失敗: ${e.message}"
     }
 }
 
@@ -1485,6 +1659,13 @@ private suspend fun clearData(
                 db.productMasterDao().deleteAll()
                 db.rakurakuTekiyouDao().deleteAll()
                 db.tekiyouMatchingRuleDao().deleteAll()
+                db.yayoiAccountDao().deleteAll()
+                db.rakurakuAccountDao().deleteAll()
+                // レシート・領収書
+                db.generalReceiptDao().deleteAllReceipts()
+                db.invoiceStoreDao().deleteAll()
+                db.generalItemMasterDao().deleteAll()
+                db.receiptPaymentMethodRuleDao().deleteAll()
                 "全データを削除しました"
             }
             DataType.PURCHASE -> {
@@ -1502,7 +1683,16 @@ private suspend fun clearData(
                 db.productMasterDao().deleteAll()
                 db.rakurakuTekiyouDao().deleteAll()
                 db.tekiyouMatchingRuleDao().deleteAll()
-                "マスタデータを削除しました"
+                db.yayoiAccountDao().deleteAll()
+                db.rakurakuAccountDao().deleteAll()
+                "マスタデータ（簿記ソフト勘定科目を含む）を削除しました"
+            }
+            DataType.RECEIPT -> {
+                db.generalReceiptDao().deleteAllReceipts()
+                db.invoiceStoreDao().deleteAll()
+                db.generalItemMasterDao().deleteAll()
+                db.receiptPaymentMethodRuleDao().deleteAll()
+                "レシート・領収書データを削除しました"
             }
         }
     } catch (e: Exception) {

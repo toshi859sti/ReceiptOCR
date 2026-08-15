@@ -39,6 +39,14 @@ interface GeneralReceiptDao {
     @Query("SELECT * FROM general_receipts WHERE id = :id")
     suspend fun getReceiptById(id: Long): GeneralReceipt?
 
+    // バックアップ書き出し用（データ管理画面のエクスポート機能）
+    @Query("SELECT * FROM general_receipt_items ORDER BY receiptId, id")
+    suspend fun getAllItemsOnce(): List<GeneralReceiptItem>
+
+    // データ管理画面のクリア／全データ復元用（general_receipt_itemsはCASCADEで連動削除される）
+    @Query("DELETE FROM general_receipts")
+    suspend fun deleteAllReceipts()
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertItems(items: List<GeneralReceiptItem>)
 
