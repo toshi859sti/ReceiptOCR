@@ -21,7 +21,7 @@ GreenFrameOCR/
 │   ├── build.gradle.kts
 │   └── src/main/
 │       ├── AndroidManifest.xml
-│       ├── assets/                  ← ML Kit 日本語モデル（バンドル）
+│       ├── assets/                  ← 初期データCSV（商品/勘定科目/摘要マスタ）・アイコン素材
 │       └── java/com/example/greenframeocr/
 │           ├── MainActivity.kt
 │           ├── ReceiptOCRApplication.kt

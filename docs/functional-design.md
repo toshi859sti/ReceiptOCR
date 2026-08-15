@@ -164,34 +164,6 @@ erDiagram
         int matchCount
         int isDeposit
     }
-    ocr_explicit_joins {
-        int id PK
-        int productId FK
-        string normalizedPattern
-        string joinedText
-        string originalTexts
-        string confidenceLevel
-        int hitCount
-        int manualConfirmCount
-        string source
-        int isDisabled
-    }
-    correction_logs {
-        int id PK
-        string sessionId
-        string timestamp
-        string rawText
-        string decision
-        string correctedName
-    }
-    ocr_score_logs {
-        int id PK
-        string rawOcrText
-        int candidateProductId
-        string decision
-        int totalScore
-    }
-
     sheet_data ||--o{ receipt_items : "sheetNumber"
     product_master ||--o{ ocr_variants : "productId"
     product_master ||--o{ ocr_explicit_joins : "productId"
@@ -200,44 +172,19 @@ erDiagram
     rakuraku_tekiyou ||--o{ deposit_meisai : "overrideTekiyouId"
 ```
 
+（`ocr_explicit_joins`・`correction_logs`・`ocr_score_logs`はPhase6（v27→v28、`MIGRATION_27_28`）で
+DROP済みのためこの図から削除。上記以外にも`general_item_master`・`receipt_payment_method_rules`等の
+2026-08以降追加テーブルがある。全テーブルの最新一覧は`docs/architecture.md`参照）
+
 ---
 
 ## 3. OCR パイプライン
 
-### 購買伝票 OCR フロー（processUnderlayingBase）
-
-```
-CameraX 4K フレーム
- ↓ YuvToRgbConverter
-RGB Bitmap
- ↓ GreenFrameDetector.process(bitmap, debugMode=false)
-   Step1: HSV 緑マスク（lowerGreen=35,30,80 / upperGreen=85,255,255）
-   Step2: dilate×5 → findContours → 外側輪郭取得
-   Step3: 中央枠検出（適応二値化 + モルフォロジー）
-   Step4: 4コーナー算出
-   Step5: 透視変換 15px/mm → 3045×2220px
-   Step6: 中央枠内領域確定
-   Step7: 行切り抜き（debugMode=true のみ）
-   Step8: 適応二値化（表示用）
-warpedBitmap（3045×2220px）
- ↓ OCRProcessor.processUnderlayingBase()
-   Step2: ML Kit 全体 OCR（日本語モデル）
-   Step3-7: TextBox変換 → ノイズ除去 → 行クラスタリング → 行処理 → Y フィルタ
-   Step8: 数量列特化 OCR（Latin モデル・縦罫線除去）
-   Step8.5: 商品名列特化 OCR（日本語モデル・列全体）
-   Step8.6: 商品名フォールバック
-   Step9: 数量・商品名を上書き
-   Step11: カテゴリ判定
- ↓ ProductNameCorrectorV3.correctProductName()
-   Layer1: LOCKED / 手動 CONFIRMED バリアント（無条件適用）
-   Layer2: 自動 CONFIRMED バリアント（スコア検証後）
-   Layer3: AUTO（学習素材のみ・補正には使わない）
- ↓ Room DB 保存
-```
-
-### OCR ノイズクリーニング
-- `cleanLeadingRuleNoise()`: 商品名先頭の `|` と日本語前の `I` を除去
-  - 例: `|レギュラーガソリン` → `レギュラーガソリン`、`Iエンジンオイル` → `エンジンオイル`
+購買伝票OCRはGemini Vision API方式（`GreenFrameDetector` → `GeminiReceiptClient` →
+`JaSheetOcrMapper`）。`OCRProcessor`（ML Kit）・`ProductNameCorrectorV3`・
+`cleanLeadingRuleNoise()`はPhase6（2026-08-11）で削除済み。詳細なフロー図・各コンポーネントの
+役割は`docs/architecture.md`の「システムフロー（JA伝票、Gemini Vision API移行後）」節を
+参照（重複管理を避けるためここには再掲しない）。
 
 ---
 
@@ -257,9 +204,16 @@ warpedBitmap（3045×2220px）
 
 ---
 
-## 5. OCR 学習システム（V3）
+## 5. OCR 学習システム（V3・現在は非稼働）
 
-### バリアント昇格条件
+> **注意**: 以下は`OcrVariant`エンティティ（`ocr_variants`テーブル）に実装されている昇格
+> ロジックの設計であり、コード自体（`OcrVariant.kt`の`canPromoteToConfirmed()`等）は現存する。
+> ただし、この学習を駆動していた書き込み経路（`OcrVariantDao.registerLearning()`の呼び出し元・
+> `OcrLearningStatusScreen`）はPhase6（2026-08-11）で削除済みのため、現在このロジックは
+> 実行されていない。現行のGeminiパイプラインでは`ocr_variants`はCSV出力時の商品名照合
+> フォールバック（`ocrVariantDao.getByText()`、読み取り専用）としてのみ使われる。
+
+### バリアント昇格条件（非稼働）
 
 | 遷移 | 条件 |
 |---|---|
@@ -271,9 +225,9 @@ warpedBitmap（3045×2220px）
 - autoFailCount が閾値を超えた場合、CONFIRMED → AUTO に降格
 - isDisabled=1 で補正対象から除外（手動または自動）
 
-### 分離テキスト結合（ExplicitJoinMatcher）
-- OCR が `灯|油` のように分離した文字を `灯油` に結合するパターンを学習
-- hitCount≥5 または manualConfirmCount≥2 で昇格
+### 分離テキスト結合（削除済み）
+- `ExplicitJoinMatcher`・`ocr_explicit_joins`テーブルはPhase6（v27→v28、`MIGRATION_27_28`）で
+  クラス・テーブルともに削除済み
 
 ---
 

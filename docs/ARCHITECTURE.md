@@ -9,8 +9,7 @@
 | ナビゲーション | Navigation Compose | 2.7.5 |
 | カメラ | CameraX (camera2) | 1.3.0 |
 | 画像処理 | OpenCV for Android | 4.9.0 |
-| OCR（日本語） | ML Kit text-recognition-japanese | 16.0.1 |
-| OCR（ラテン文字） | ML Kit text-recognition | 16.0.1 |
+| OCR | Gemini Vision API（`gemini-3.5-flash-lite`） | — |
 | データベース | Room | 2.6.0 |
 | DI / ビルドツール | KSP (Room コンパイラ用) | — |
 | 非同期処理 | Kotlin Coroutines + Flow | 1.7.3 |
@@ -87,8 +86,9 @@ JA伝票の撮影・OCR結果確認・編集・保存は`viewmodel`を介さず`
 [らくらく／弥生 CSV 出力（productMasterId経由のFKルックアップ）]
 ```
 
-一般レシート（`GeneralReceiptCaptureScreen.kt`）は本フローとは独立しており、
-引き続きML Kit（テキスト抽出）+ オンライン時Gemini（構造化）のハイブリッド方式を使う。
+一般レシート（`GeneralReceiptCaptureScreen.kt`）は本フローとは独立した画面だが、
+2026-08-11にML Kitハイブリッド方式を廃止しGemini直接呼び出し（`parseReceiptFromImage`）に
+一本化済み。オフライン・APIキー未設定時のフォールバックはなくエラー表示のみ（ユーザー判断）。
 
 ---
 
@@ -145,8 +145,9 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 ## データベース設計
 
 - **DB 名**: `receipt_database`
-- **バージョン**: 28
-- **マイグレーション**: 1→2→...→28（全ステップ定義済み、`fallbackToDestructiveMigration()`は
+- **バージョン**: 33（`ReceiptDatabase.kt`の`entities`/`version`が一次情報源。このドキュメントの
+  値は更新が追いつかず古くなることがあるため、正確なバージョンは実装を確認すること）
+- **マイグレーション**: 1→2→...→33（全ステップ定義済み、`fallbackToDestructiveMigration()`は
   2026-07-12に削除済み。以後マイグレーション必須）
 
 | テーブル | 用途 |
@@ -155,15 +156,19 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 | `sheet_data` | 伝票単位の小計・合計 |
 | `monthly_data` | 月次サマリー |
 | `product_master` | 商品マスタ（正規名・確定フラグ） |
-| `ocr_variants` | OCR 誤認識パターン学習（Gemini経路の商品名照合・CSV出力FKフォールバックで現役） |
+| `ocr_variants` | OCR 誤認識パターン学習用（V3設計）。学習の書き込み経路（`registerLearning()`呼び出し元・
+  `OcrLearningStatusScreen`）はPhase6（2026-08-11）で削除済みで現在は非稼働。読み取りのみ
+  CSV出力時の商品名照合フォールバック（`ocrVariantDao.getByText()`）で現役 |
 | `yayoi_accounts` | 弥生会計 勘定科目マスタ |
 | `rakuraku_accounts` | らくらく青色申告 勘定科目マスタ |
 | `rakuraku_tekiyou` | 摘要辞書（購買・預金共用） |
 | `deposit_meisai` | 通帳明細データ |
 | `tekiyou_matching_rules` | 預金摘要マッチングルール |
 | `ocr_fallback_logs` | OCR フォールバックログ |
-| `general_receipts` / `general_receipt_items` | 一般レシート（ML Kit + Gemini） |
+| `general_receipts` / `general_receipt_items` | 一般レシート（Gemini） |
 | `invoice_stores` | 登録番号・店舗マスタ |
+| `general_item_master` | 商品名・但し書きリストの正規化グルーピング（canonicalKey、DB v30〜） |
+| `receipt_payment_method_rules` | レシート支払方法キーワード→科目ルール（DB v32〜） |
 
 （`correction_logs`・`ocr_score_logs`・`ocr_explicit_joins`はPhase6（v27→v28、
 `MIGRATION_27_28`）でDROP済み）
@@ -203,10 +208,10 @@ adb logcat -s GreenFrameDetector:D GeminiReceiptClient:D CameraViewModel:D Recei
 
 ## 技術的制約
 
-- ML Kit の日本語モデルはバンドル必須（オフライン動作のため assets に含める）
+- OCRはGemini Vision APIへのネットワーク呼び出しのため常時通信が必要（オフライン動作不可。
+  ML Kitのオフライン日本語モデルは2026-08-11に依存ごと全廃止済み）
 - OpenCV 4.9.0 は `org.opencv:opencv:4.9.0` の Maven 依存で取得（ネイティブライブラリ同梱）
 - `Utils.bitmapToMat` は RGBA 4ch を返すため、OpenCV 処理前に必ず BGR 変換が必要
-- ML Kit の最小文字高さ: 100px（40px 以下で精度急落）
 - CameraX ImageAnalysis の 4K 解像度はデバイスによってサポート外の場合あり
 - `WARP_PX_PER_MM = 15.0` は変更禁止（20px/mm は Step7 が 2.6 倍遅くなるため不採用済み）
 - Room `fallbackToDestructiveMigration` は本番リリース前に削除すること
