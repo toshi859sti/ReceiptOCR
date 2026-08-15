@@ -19,7 +19,8 @@ fun GeneralPurchaseMenuScreen(
     onNavigateToList: () -> Unit,
     onNavigateToItemMatching: () -> Unit,
     onNavigateToOutput: () -> Unit,
-    onNavigateToStoreList: () -> Unit
+    onNavigateToStoreList: () -> Unit,
+    onNavigateToPaymentMethodRules: () -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -63,6 +64,8 @@ fun GeneralPurchaseMenuScreen(
             GeneralMenuButton(text = "CSV出力", onClick = onNavigateToOutput)
             Spacer(modifier = Modifier.height(16.dp))
             GeneralMenuButton(text = "登録番号・店舗・発行者一覧", onClick = onNavigateToStoreList)
+            Spacer(modifier = Modifier.height(16.dp))
+            GeneralMenuButton(text = "支払方法の科目設定", onClick = onNavigateToPaymentMethodRules)
         }
     }
 }

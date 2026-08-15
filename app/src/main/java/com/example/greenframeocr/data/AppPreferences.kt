@@ -98,6 +98,12 @@ class AppPreferences(context: Context) {
         // 一覧文字サイズ
         private const val KEY_LIST_FONT_SIZE = "list_font_size"
         const val DEFAULT_LIST_FONT_SIZE = 14f
+
+        // APIトークン使用量の累計（他者への請求目的。リセット可能な単純合計）
+        private const val KEY_CUMULATIVE_PROMPT_TOKENS = "cumulative_prompt_tokens"
+        private const val KEY_CUMULATIVE_CANDIDATES_TOKENS = "cumulative_candidates_tokens"
+        private const val KEY_CUMULATIVE_TOTAL_TOKENS = "cumulative_total_tokens"
+        private const val KEY_TOKEN_USAGE_RESET_AT = "token_usage_reset_at"
     }
 
     // 年号設定（作業年・JA購買伝票／JA預金／レシートの初期表示年に共通で使用）
@@ -184,6 +190,35 @@ class AppPreferences(context: Context) {
             AppDarkMode.valueOf(prefs.getString(KEY_DARK_MODE, DEFAULT_DARK_MODE) ?: DEFAULT_DARK_MODE)
         } catch (_: IllegalArgumentException) { AppDarkMode.SYSTEM }
         set(value) = prefs.edit().putString(KEY_DARK_MODE, value.name).apply()
+
+    // APIトークン使用量の累計（入力・出力・合計）。起点は tokenUsageResetAt（未リセットなら0）
+    val cumulativePromptTokens: Long
+        get() = prefs.getLong(KEY_CUMULATIVE_PROMPT_TOKENS, 0L)
+    val cumulativeCandidatesTokens: Long
+        get() = prefs.getLong(KEY_CUMULATIVE_CANDIDATES_TOKENS, 0L)
+    val cumulativeTotalTokens: Long
+        get() = prefs.getLong(KEY_CUMULATIVE_TOTAL_TOKENS, 0L)
+    val tokenUsageResetAt: Long
+        get() = prefs.getLong(KEY_TOKEN_USAGE_RESET_AT, 0L)
+
+    /** AI呼び出し1回分のトークン使用量を累計に加算する（他者への請求目的の集計） */
+    fun addTokenUsage(promptTokens: Int, candidatesTokens: Int, totalTokens: Int) {
+        prefs.edit()
+            .putLong(KEY_CUMULATIVE_PROMPT_TOKENS, cumulativePromptTokens + promptTokens)
+            .putLong(KEY_CUMULATIVE_CANDIDATES_TOKENS, cumulativeCandidatesTokens + candidatesTokens)
+            .putLong(KEY_CUMULATIVE_TOTAL_TOKENS, cumulativeTotalTokens + totalTokens)
+            .apply()
+    }
+
+    /** 累計トークン数をリセットし、この時点を新しい集計起点として記録する */
+    fun resetTokenUsage() {
+        prefs.edit()
+            .putLong(KEY_CUMULATIVE_PROMPT_TOKENS, 0L)
+            .putLong(KEY_CUMULATIVE_CANDIDATES_TOKENS, 0L)
+            .putLong(KEY_CUMULATIVE_TOTAL_TOKENS, 0L)
+            .putLong(KEY_TOKEN_USAGE_RESET_AT, System.currentTimeMillis())
+            .apply()
+    }
 
     /**
      * カメラ解像度を幅と高さのペアに変換

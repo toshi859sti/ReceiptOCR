@@ -1,5 +1,6 @@
 package com.example.greenframeocr.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -10,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.material3.Divider
@@ -22,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
+import com.example.greenframeocr.data.YayoiAccount
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 
 data class EditableGeneralItem(
@@ -47,6 +50,10 @@ fun GeneralReceiptConfirmScreen(
     var dateText by remember { mutableStateOf("") }
     val editItems = remember { mutableStateListOf<EditableGeneralItem>() }
     var initialized by remember { mutableStateOf(false) }
+    var counterAccountOverride by remember { mutableStateOf<Long?>(null) }
+    var counterAccountName by remember { mutableStateOf<String?>(null) }
+    var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
+    var showPaymentAccountPicker by remember { mutableStateOf(false) }
 
     // ViewModel のデータで初期化（一度だけ）
     LaunchedEffect(pendingReceipt, pendingItems) {
@@ -80,6 +87,22 @@ fun GeneralReceiptConfirmScreen(
     val geminiUsed = pendingReceipt?.geminiUsed ?: false
     val rawOcrText = pendingReceipt?.rawOcrText ?: ""
     val registrationNumber = pendingReceipt?.registrationNumber ?: ""
+    val paymentMethodText = pendingReceipt?.paymentMethodText
+
+    LaunchedEffect(Unit) {
+        yayoiAccounts = viewModel.loadYayoiAccounts()
+    }
+
+    // 支払方法テキスト・個別上書きが変わるたびに相手科目のプレビューを再計算
+    LaunchedEffect(paymentMethodText, counterAccountOverride) {
+        counterAccountName = viewModel.resolveCounterAccountNameForReceipt(
+            GeneralReceipt(
+                date = "",
+                paymentMethodText = paymentMethodText,
+                paymentAccountOverride = counterAccountOverride
+            )
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -126,6 +149,37 @@ fun GeneralReceiptConfirmScreen(
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showPaymentAccountPicker = true },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "支払方法の科目: ${counterAccountName ?: "…"}",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (counterAccountOverride != null)
+                                    MaterialTheme.colorScheme.tertiary
+                                else MaterialTheme.colorScheme.primary
+                            )
+                            paymentMethodText?.takeIf { it.isNotBlank() }?.let {
+                                Text(
+                                    text = "読取: $it",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "支払方法の科目を変更",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                     if (registrationNumber.isNotBlank()) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(
@@ -273,7 +327,9 @@ fun GeneralReceiptConfirmScreen(
                             total = total,
                             rawOcrText = rawOcrText,
                             geminiUsed = geminiUsed,
-                            registrationNumber = registrationNumber
+                            registrationNumber = registrationNumber,
+                            paymentMethodText = paymentMethodText,
+                            paymentAccountOverride = counterAccountOverride
                         )
                         val items = editItems.map {
                             GeneralReceiptItem(
@@ -291,5 +347,17 @@ fun GeneralReceiptConfirmScreen(
                 }
             }
         }
+    }
+
+    if (showPaymentAccountPicker) {
+        PaymentAccountPickerDialog(
+            currentOverrideId = counterAccountOverride,
+            accounts = yayoiAccounts,
+            onDismiss = { showPaymentAccountPicker = false },
+            onSelect = { accountId ->
+                counterAccountOverride = accountId
+                showPaymentAccountPicker = false
+            }
+        )
     }
 }

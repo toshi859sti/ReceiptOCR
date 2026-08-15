@@ -63,6 +63,10 @@ fun toCanonicalKey(name: String): String {
 fun ProductMaster.withComputedKey(): ProductMaster =
     copy(canonicalKey = toCanonicalKey(canonicalName))
 
+/** スペース正規化（半角・全角スペースを1つの半角スペースに統一し前後をトリム）。
+ *  購買品リストの新規商品名重複チェックで使用（画面表示用と伝票保存時の自動同期の両方から呼ばれる）。 */
+fun String.normalizeSpaces() = trim().replace(Regex("[\\s　]+"), " ")
+
 /** INSERT/UPDATE 前に canonicalKey を itemName から自動計算する。 */
 fun GeneralReceiptItem.withComputedKey(): GeneralReceiptItem =
     copy(canonicalKey = toCanonicalKey(itemName))

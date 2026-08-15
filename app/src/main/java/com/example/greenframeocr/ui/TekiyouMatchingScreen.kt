@@ -165,6 +165,46 @@ fun TekiyouMatchingScreen(
         loadData()
     }
 
+    // AI科目提案
+    fun startAiMatching() {
+        val unmatched = matchingRules.filter { it.yayoiAccountId == null }
+        if (unmatched.isEmpty()) {
+            aiMatchingError = "未マッチングの摘要がありません"
+            return
+        }
+        if (yayoiAccountList.isEmpty()) {
+            aiMatchingError = "弥生勘定科目が登録されていません"
+            return
+        }
+        isAiMatching = true
+        aiMatchingError = null
+        scope.launch {
+            try {
+                val result = GeminiReceiptClient.matchTekiyouToAccounts(
+                    rules = unmatched,
+                    accounts = yayoiAccountList,
+                    apiKey = appPreferences.geminiApiKey
+                )
+                aiTekiyouSuggestions = result.suggestions
+                aiTekiyouUsageStats = result.usageStats
+                result.usageStats?.let { appPreferences.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
+                showAiTekiyouDialog = true
+            } catch (e: GeminiApiKeyMissingException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiQuotaExhaustedException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiRateLimitException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiApiException) {
+                aiMatchingError = e.message
+            } catch (e: Exception) {
+                aiMatchingError = "エラー: ${e.message}"
+            } finally {
+                isAiMatching = false
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -175,57 +215,6 @@ fun TekiyouMatchingScreen(
                     }
                 },
                 actions = {
-                    // AI科目提案ボタン（弥生モードのみ）
-                    if (accountingSoftware == AccountingSoftware.YAYOI) {
-                        TextButton(
-                            onClick = {
-                                val unmatched = matchingRules.filter { it.yayoiAccountId == null }
-                                if (unmatched.isEmpty()) {
-                                    aiMatchingError = "未マッチングの摘要がありません"
-                                    return@TextButton
-                                }
-                                if (yayoiAccountList.isEmpty()) {
-                                    aiMatchingError = "弥生勘定科目が登録されていません"
-                                    return@TextButton
-                                }
-                                isAiMatching = true
-                                aiMatchingError = null
-                                scope.launch {
-                                    try {
-                                        val result = GeminiReceiptClient.matchTekiyouToAccounts(
-                                            rules = unmatched,
-                                            accounts = yayoiAccountList,
-                                            apiKey = appPreferences.geminiApiKey
-                                        )
-                                        aiTekiyouSuggestions = result.suggestions
-                                        aiTekiyouUsageStats = result.usageStats
-                                        showAiTekiyouDialog = true
-                                    } catch (e: GeminiApiKeyMissingException) {
-                                        aiMatchingError = e.message
-                                    } catch (e: GeminiQuotaExhaustedException) {
-                                        aiMatchingError = e.message
-                                    } catch (e: GeminiRateLimitException) {
-                                        aiMatchingError = e.message
-                                    } catch (e: GeminiApiException) {
-                                        aiMatchingError = e.message
-                                    } catch (e: Exception) {
-                                        aiMatchingError = "エラー: ${e.message}"
-                                    } finally {
-                                        isAiMatching = false
-                                    }
-                                }
-                            },
-                            enabled = !isAiMatching
-                        ) {
-                            if (isAiMatching) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("提案中...", fontSize = 12.sp)
-                            } else {
-                                Text("AI科目提案", fontSize = 12.sp)
-                            }
-                        }
-                    }
                     IconButton(onClick = {
                         scope.launch {
                             database.depositMeisaiDao().deleteAll()
@@ -302,6 +291,16 @@ fun TekiyouMatchingScreen(
                         )
                     }
                 }
+            }
+
+            // AI科目提案ボタン（弥生モードのみ、常時表示で見落としを防ぐ）
+            if (accountingSoftware == AccountingSoftware.YAYOI) {
+                val unmatchedForAi = matchingRules.count { it.yayoiAccountId == null }
+                AiSuggestButton(
+                    label = if (unmatchedForAi > 0) "未マッチ${unmatchedForAi}件をAIで一括提案" else "AI科目提案",
+                    isLoading = isAiMatching,
+                    onClick = { startAiMatching() }
+                )
             }
 
             CollapsibleFilterPanel(
@@ -644,7 +643,7 @@ private fun MatchingRuleCard(
                         text = rule.normalizedTekiyou,
                         fontWeight = FontWeight.Bold,
                         fontSize = fontSize.sp,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     Row {
@@ -909,7 +908,7 @@ private fun MatchingRuleEditDialog(
     }
 
     val categoryAList = remember(yayoiAccountList) {
-        yayoiAccountList.map { it.categoryA }.distinct().filter { it.isNotBlank() }.sorted()
+        sortYayoiCategoryA(yayoiAccountList.map { it.categoryA }.filter { it.isNotBlank() })
     }
 
     val baseYayoiList = if (showAllYayoi) yayoiAccountList else flaggedYayoiList
@@ -1456,7 +1455,7 @@ private fun IndividualYayoiOverrideDialog(
     var selectedCategoryA by remember { mutableStateOf<String?>(null) }
 
     val categoryAList = remember(yayoiAccountList) {
-        yayoiAccountList.map { it.categoryA }.distinct().filter { it.isNotBlank() }.sorted()
+        sortYayoiCategoryA(yayoiAccountList.map { it.categoryA }.filter { it.isNotBlank() })
     }
 
     val baseList = if (showAll) yayoiAccountList else flaggedList

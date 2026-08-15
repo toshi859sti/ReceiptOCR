@@ -19,6 +19,7 @@ data class YayoiAccount(
     val defaultTaxCategory: String = "対象外",
     val usedForPurchase: Boolean = false,
     val usedForDeposit: Boolean = false,
+    val usedForReceipt: Boolean = false,
     val isEnabled: Boolean = true,
     val parentId: Long? = null
 )

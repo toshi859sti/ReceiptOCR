@@ -70,6 +70,11 @@ fun SettingsScreen(
     var selectedDarkMode by remember { mutableStateOf(appPreferences.darkMode) }
     var geminiApiKey by remember { mutableStateOf(appPreferences.geminiApiKey) }
     var geminiKeyVisible by remember { mutableStateOf(false) }
+    var cumulativePromptTokens by remember { mutableLongStateOf(appPreferences.cumulativePromptTokens) }
+    var cumulativeCandidatesTokens by remember { mutableLongStateOf(appPreferences.cumulativeCandidatesTokens) }
+    var cumulativeTotalTokens by remember { mutableLongStateOf(appPreferences.cumulativeTotalTokens) }
+    var tokenUsageResetAt by remember { mutableLongStateOf(appPreferences.tokenUsageResetAt) }
+    var showTokenResetConfirm by remember { mutableStateOf(false) }
 
     // メッセージ状態
     var allExportMessage by remember { mutableStateOf<String?>(null) }
@@ -539,6 +544,67 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 累計トークン使用量（他者への請求目的の集計。JA購買伝票OCR・レシートOCR・
+            // 3画面のAI科目提案すべての合算値。リセットボタンを押すまで加算し続ける）
+            Text(
+                text = "累計トークン使用量",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Text(
+                text = if (tokenUsageResetAt > 0) {
+                    SimpleDateFormat("yyyy/MM/dd", Locale.JAPAN).format(Date(tokenUsageResetAt)) + " 以降の累計"
+                } else {
+                    "リセットなし（記録開始以降の累計）"
+                },
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("入力: ${cumulativePromptTokens}トークン", fontSize = 14.sp)
+                    Text("出力: ${cumulativeCandidatesTokens}トークン", fontSize = 14.sp)
+                    Text(
+                        "合計: ${cumulativeTotalTokens}トークン",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            TextButton(
+                onClick = { showTokenResetConfirm = true },
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Text("リセット")
+            }
+
+            if (showTokenResetConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showTokenResetConfirm = false },
+                    title = { Text("累計トークン数をリセット") },
+                    text = { Text("現在の累計をリセットして、この時点から新たに集計を開始します。よろしいですか？") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            appPreferences.resetTokenUsage()
+                            cumulativePromptTokens = appPreferences.cumulativePromptTokens
+                            cumulativeCandidatesTokens = appPreferences.cumulativeCandidatesTokens
+                            cumulativeTotalTokens = appPreferences.cumulativeTotalTokens
+                            tokenUsageResetAt = appPreferences.tokenUsageResetAt
+                            showTokenResetConfirm = false
+                        }) {
+                            Text("リセットする", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showTokenResetConfirm = false }) { Text("キャンセル") }
+                    }
+                )
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 

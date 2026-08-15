@@ -38,6 +38,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import com.example.greenframeocr.util.applyConversionToNewInput
 import com.example.greenframeocr.util.convertAllToFullWidth
 import com.example.greenframeocr.util.countFullWidthEquivalent
+import com.example.greenframeocr.util.normalizeSpaces
+import com.example.greenframeocr.util.withComputedKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -496,6 +498,9 @@ fun ReceiptInputScreen(
             geminiApiKey = appPreferences.geminiApiKey,
             productMasterDao = database.productMasterDao(),
             partialReOcrTarget = partialReOcrTarget,
+            onTokenUsage = { stats ->
+                stats?.let { appPreferences.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
+            },
             onOcrComplete = { outcome ->
                 when (outcome) {
                     is OcrRunResult.Full -> {
@@ -1815,6 +1820,7 @@ private fun CameraView(
     geminiApiKey: String,
     productMasterDao: com.example.greenframeocr.data.ProductMasterDao,
     partialReOcrTarget: PartialReOcrTarget?,
+    onTokenUsage: (com.example.greenframeocr.util.GeminiReceiptClient.AiUsageStats?) -> Unit = {},
     onOcrComplete: (OcrRunResult) -> Unit,
     onCancel: () -> Unit
 ) {
@@ -1832,6 +1838,7 @@ private fun CameraView(
     suspend fun runFullOcr(dewarped: android.graphics.Bitmap): OcrRunResult.Full {
         val geminiResult = com.example.greenframeocr.util.GeminiReceiptClient
             .parseJaSheetFromImage(dewarped, geminiApiKey)
+        onTokenUsage(geminiResult.usageStats)
         if (!geminiResult.dateColumnAligned) {
             android.util.Log.w("ReceiptInputScreen", "取引日列のアラインメントが取れませんでした（要確認）")
         }
@@ -1859,6 +1866,7 @@ private fun CameraView(
                         needsMain = CellType.PRODUCT_NAME in partialReOcrTarget.cellTypes ||
                             CellType.AMOUNT in partialReOcrTarget.cellTypes
                     )
+                    onTokenUsage(partial.usageStats)
                     if (partial.aligned) {
                         val mapped = mapPartialResultToParsedRows(partial, partialReOcrTarget.rowRange)
                         val corrected = com.example.greenframeocr.util.JaSheetOcrMapper
@@ -2862,6 +2870,27 @@ private fun convertReceiptItemsToRows(items: List<com.example.greenframeocr.data
 }
 
 /**
+ * 伝票の商品名のうち購買品リスト（ProductMaster）に未登録のものを新規追加する。
+ * ProductListScreenの「再集計」ボタンと同じロジック（小計・合計行はSQL側で除外済み）。
+ */
+private suspend fun syncNewProductsToMaster(database: com.example.greenframeocr.data.ReceiptDatabase) {
+    val existingNormalized = database.productMasterDao().getAll()
+        .map { it.canonicalName.normalizeSpaces() }.toSet()
+    val receiptProductNames = database.receiptDao().getAllDistinctProductNames()
+    val newNames = receiptProductNames.filter { name ->
+        name.isNotBlank() && name.normalizeSpaces() !in existingNormalized
+    }
+    for (name in newNames) {
+        val product = com.example.greenframeocr.data.ProductMaster(
+            canonicalName = name,
+            category = "一般購買",
+            frequencyCount = 1
+        ).withComputedKey()
+        database.productMasterDao().insertIgnore(product)
+    }
+}
+
+/**
  * 月全体のデータを保存
  *
  * V3: コミット時に手動修正を学習登録
@@ -2926,6 +2955,10 @@ private suspend fun saveMonthData(
                 android.util.Log.d("ReceiptInputScreen", "No items to insert for sheet $sheetNumber")
             }
         }
+
+        // 購買品リスト（ProductMaster）へ新規商品名を自動同期。従来は「再集計」ボタンを
+        // 手動で押すまで反映されなかったため、伝票保存のたびに実行するようにした
+        syncNewProductsToMaster(database)
 
         // MonthlyDataの更新（totalSheetsを保存）
         val totalSheets = allSheetsData.keys.maxOrNull() ?: 0

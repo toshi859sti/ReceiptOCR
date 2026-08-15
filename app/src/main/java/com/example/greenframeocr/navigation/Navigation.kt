@@ -40,6 +40,7 @@ import com.example.greenframeocr.ui.GeneralReceiptConfirmScreen
 import com.example.greenframeocr.ui.GeneralReceiptListScreen
 import com.example.greenframeocr.ui.GeneralReceiptOutputScreen
 import com.example.greenframeocr.ui.InvoiceStoreListScreen
+import com.example.greenframeocr.ui.ReceiptPaymentMethodRuleScreen
 import com.example.greenframeocr.ui.YearSummaryScreen
 import com.example.greenframeocr.ui.YokinTekiyouScreen
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
@@ -76,6 +77,7 @@ sealed class Screen(val route: String) {
     object GeneralItemMatching : Screen("general_item_matching")
     object GeneralReceiptOutput : Screen("general_receipt_output")
     object InvoiceStoreList : Screen("invoice_store_list")
+    object ReceiptPaymentMethodRules : Screen("receipt_payment_method_rules")
     object MonthlySummary : Screen("monthly_summary/{year}/{month}") {
         fun createRoute(year: Int, month: Int): String {
             return "monthly_summary/$year/$month"
@@ -315,7 +317,8 @@ fun ReceiptNavGraph(
                 onNavigateToList = { navController.navigate(Screen.GeneralReceiptList.route) },
                 onNavigateToItemMatching = { navController.navigate(Screen.GeneralItemMatching.route) },
                 onNavigateToOutput = { navController.navigate(Screen.GeneralReceiptOutput.route) },
-                onNavigateToStoreList = { navController.navigate(Screen.InvoiceStoreList.route) }
+                onNavigateToStoreList = { navController.navigate(Screen.InvoiceStoreList.route) },
+                onNavigateToPaymentMethodRules = { navController.navigate(Screen.ReceiptPaymentMethodRules.route) }
             )
         }
 
@@ -324,6 +327,14 @@ fun ReceiptNavGraph(
             InvoiceStoreListScreen(
                 viewModel = generalReceiptViewModel,
                 appPreferences = appPreferences,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 支払方法→相手科目設定画面
+        composable(Screen.ReceiptPaymentMethodRules.route) {
+            ReceiptPaymentMethodRuleScreen(
+                viewModel = generalReceiptViewModel,
                 onBack = { navController.popBackStack() }
             )
         }

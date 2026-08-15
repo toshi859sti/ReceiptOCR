@@ -123,6 +123,10 @@ interface GeneralReceiptDao {
     @Query("UPDATE general_receipts SET storeName = :storeName WHERE registrationNumber = :registrationNumber")
     suspend fun updateStoreNameByRegistrationNumber(registrationNumber: String, storeName: String)
 
+    // 相手科目（貸方勘定科目）の個別上書き。accountId=nullでReceiptPaymentMethodRuleでの自動判定に戻す
+    @Query("UPDATE general_receipts SET paymentAccountOverride = :accountId WHERE id = :receiptId")
+    suspend fun updatePaymentAccountOverride(receiptId: Long, accountId: Long?)
+
     // 登録番号未登録の発行者名を一括リネーム（登録番号・店舗一覧の未登録発行者編集用）
     @Query("UPDATE general_receipts SET storeName = :newName WHERE storeName = :oldName")
     suspend fun updateStoreNameByOldName(oldName: String, newName: String)

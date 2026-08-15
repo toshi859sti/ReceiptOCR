@@ -24,6 +24,24 @@ internal val CATEGORY_A_ORDER = listOf(
     "【資産】", "【負債】", "【資本】", "【経常損益】", "【引当金等】"
 )
 
+// YayoiAccount.categoryA の表示順（勘定科目一覧と同じ「流動資産→…」の順）。
+// YayoiAccount.categoryA は上記CATEGORY_A_ORDERとは異なる粒度（Rakurakuの区分Bに相当する値）を
+// 直接持つため、別の定数として用意している
+internal val YAYOI_CATEGORY_A_ORDER = listOf(
+    "【流動資産】", "【固定資産】", "【繰延資産】",
+    "【流動負債】", "【固定負債】",
+    "【資本】", "【事業主貸】", "【事業主借】",
+    "【収入金額】", "【経費】", "【繰入額等】", "【繰戻額等】"
+)
+
+// カテゴリA文字列の集合を、上記の会計上の並び順に整列する（未知の値はアルファベット順で末尾に追加）
+internal fun sortYayoiCategoryA(categories: Collection<String>): List<String> {
+    val present = categories.toSet()
+    val ordered = YAYOI_CATEGORY_A_ORDER.filter { it in present }
+    val extras = present.filterNot { it in YAYOI_CATEGORY_A_ORDER }.sorted()
+    return ordered + extras
+}
+
 internal val CATEGORY_B_ORDER = mapOf(
     "【資産】" to listOf("【流動資産】", "【固定資産】", "【繰延資産】", "【事業主貸】"),
     "【負債】" to listOf("【流動負債】", "【事業主借】"),

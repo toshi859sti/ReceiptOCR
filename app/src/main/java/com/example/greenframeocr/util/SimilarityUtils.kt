@@ -10,6 +10,19 @@ data class SimilarGroupPair(
     val distance: Int
 )
 
+private val numberRegex = Regex("\\d+")
+
+/**
+ * 「500ml」「250ml」のように数字部分だけが違う場合は容量・数量違いの別商品である
+ * 可能性が高く、OCRノイズによる表記ゆれとは区別すべきなので、含まれる数字列が
+ * 1つでも異なれば統合候補から除外する（数字がどちらにも無ければ対象外＝素通り）。
+ */
+private fun hasDifferentNumbers(a: String, b: String): Boolean {
+    val numsA = numberRegex.findAll(a).map { it.value }.toList()
+    val numsB = numberRegex.findAll(b).map { it.value }.toList()
+    return numsA != numsB
+}
+
 private fun levenshteinDistance(a: String, b: String): Int {
     if (a == b) return 0
     if (a.isEmpty()) return b.length
@@ -41,6 +54,7 @@ fun findSimilarGroupPairs(groups: List<GeneralItemGroup>): List<SimilarGroupPair
         for (j in i + 1 until candidates.size) {
             val a = candidates[i]
             val b = candidates[j]
+            if (hasDifferentNumbers(a.canonicalKey, b.canonicalKey)) continue
             val maxLen = maxOf(a.canonicalKey.length, b.canonicalKey.length)
             // 文字数が長いほどノイズ許容も広げる（短い名前で許容を広げると別品目まで拾ってしまう）
             val threshold = when {

@@ -349,7 +349,9 @@ $accountsText
         val storeName: String,
         val date: String,
         val items: List<ParsedItem>,
-        val total: Int
+        val total: Int,
+        val paymentMethodText: String? = null,
+        val usageStats: AiUsageStats? = null
     )
 
     data class ParsedItem(
@@ -410,10 +412,11 @@ $accountsText
                     Log.e("GeminiReceiptClient", "body is null")
                     return null
                 }
-                parseUsageStats(JSONObject(body))?.let {
+                val usageStats = parseUsageStats(JSONObject(body))
+                usageStats?.let {
                     Log.d("GeminiReceiptClient", "parseReceiptFromImage: ${it.toDisplayString()}")
                 }
-                parseGeminiResponse(body)
+                parseGeminiResponse(body, usageStats)
             }
         } catch (e: Exception) {
             Log.e("GeminiReceiptClient", "API error: ${e.message}")
@@ -435,6 +438,9 @@ $accountsText
 （「元年」はN=1として計算）。
 例：令和7年10月20日 → 2025-10-20（"2007-10-20"のようにNをそのまま西暦の下2桁として扱わないこと）。
 例：平成31年4月1日 → 2019-04-01。
+合計金額の下付近に支払方法の印字（例：「現金」「クレジット」「PayPay」「Suica」等）があれば、
+その文字列をそのまま paymentMethod に入れてください。記載が無い・読み取れない場合は空文字列にしてください
+（分類はせず、印字されている文字列をそのまま返すこと）。
 
 {
   "storeName": "店舗名",
@@ -442,7 +448,8 @@ $accountsText
   "items": [
     { "name": "商品名", "price": 金額 }
   ],
-  "total": 合計金額
+  "total": 合計金額,
+  "paymentMethod": "支払方法の印字テキスト（無ければ空文字列）"
 }
 """.trimIndent()
 
@@ -454,7 +461,7 @@ $accountsText
         return Bitmap.createScaledBitmap(bitmap, (w * scale).toInt(), (h * scale).toInt(), true)
     }
 
-    private fun parseGeminiResponse(responseBody: String): ReceiptParseResult? {
+    private fun parseGeminiResponse(responseBody: String, usageStats: AiUsageStats?): ReceiptParseResult? {
         return try {
             val root = JSONObject(responseBody)
             val text = root
@@ -479,7 +486,9 @@ $accountsText
                 storeName = json.optString("storeName", ""),
                 date = json.optString("date", ""),
                 items = items,
-                total = json.optInt("total", 0)
+                total = json.optInt("total", 0),
+                paymentMethodText = json.optString("paymentMethod", "").trim().ifEmpty { null },
+                usageStats = usageStats
             )
         } catch (e: Exception) {
             Log.e("GeminiReceiptClient", "Parse error: ${e.message}")

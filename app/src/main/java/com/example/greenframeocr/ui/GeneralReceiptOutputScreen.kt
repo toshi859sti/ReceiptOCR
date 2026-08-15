@@ -451,7 +451,7 @@ private fun buildYayoiRow(item: GeneralReceiptOutputItem): String {
         item.defaultTaxCategory,      // 借方税区分
         item.price.toString(),        // 借方金額
         "0",                          // 借方税金額
-        "現金",                       // 貸方勘定科目
+        item.counterAccountName,      // 貸方勘定科目
         "",                           // 貸方補助科目
         "",                           // 貸方部門
         "対象外",                     // 貸方税区分

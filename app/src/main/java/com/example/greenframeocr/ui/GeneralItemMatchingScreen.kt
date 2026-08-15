@@ -11,7 +11,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CallMerge
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CleaningServices
@@ -81,6 +80,7 @@ fun GeneralItemMatchingScreen(
     var itemEditTarget by remember { mutableStateOf<GeneralReceiptItem?>(null) }
     var itemEditGroupDefaultName by remember { mutableStateOf<String?>(null) }
     var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
+    var yayoiFlaggedAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var searchText by remember { mutableStateOf("") }
     var sortOrder by remember { mutableStateOf(ItemSortOrder.COUNT) }
     var unmatchedOnly by remember { mutableStateOf(false) }
@@ -89,7 +89,9 @@ fun GeneralItemMatchingScreen(
     var hasSearchedNumericPrefixes by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        yayoiAccounts = viewModel.loadYayoiAccounts()
+        val accounts = viewModel.loadYayoiAccounts()
+        yayoiAccounts = accounts
+        yayoiFlaggedAccounts = accounts.filter { it.usedForReceipt }
     }
 
     val matchedCount = itemGroups.count { it.yayoiAccountId != null }
@@ -167,72 +169,19 @@ fun GeneralItemMatchingScreen(
                 }
             }
 
-            // AI一括割り当てボタン（常に表示。既マッチ済みグループも対象に含めて再提案できる）
-            OutlinedButton(
-                onClick = { viewModel.suggestAccountsForItems(itemGroups, yayoiAccounts) },
-                enabled = !isAiMatching && yayoiAccounts.isNotEmpty() && itemGroups.isNotEmpty(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                if (isAiMatching) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("AI提案中...")
-                } else {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        if (unmatchedCount > 0) "未マッチ ${unmatchedCount}件を含む全${totalCount}件をAIで一括提案"
-                        else "全${totalCount}件をAIで一括再提案"
-                    )
-                }
-            }
-
-            // 類似グループ統合候補の検出ボタン。OCR誤読でノイズ文字が混入し、
-            // canonicalKeyの完全一致だけでは吸収できなかった別グループを編集距離で拾う
-            OutlinedButton(
-                onClick = {
-                    hasSearchedSimilarGroups = true
-                    viewModel.findSimilarGroups(itemGroups)
-                },
-                enabled = !isFindingSimilarGroups && itemGroups.size >= 2,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                if (isFindingSimilarGroups) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("類似グループを検索中...")
-                } else {
-                    Icon(Icons.Default.CallMerge, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("類似グループ候補を検出")
-                }
-            }
-
-            // 数字接頭辞（伝票行番号らしきノイズ）検出ボタン。正規表現ベースで判定するため
-            // AIは使わない（パターンが規則的でコスト・レイテンシをかける必要がないため）
-            OutlinedButton(
-                onClick = {
-                    hasSearchedNumericPrefixes = true
-                    viewModel.findNumericPrefixes(itemGroups)
-                },
-                enabled = !isFindingNumericPrefixes && itemGroups.isNotEmpty(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                if (isFindingNumericPrefixes) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("数字接頭辞を検索中...")
-                } else {
-                    Icon(Icons.Default.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("数字接頭辞候補を検出")
-                }
+            // AI一括割り当てボタン（既マッチ済みグループも対象に含めて再提案できる）
+            // 常時表示にして見落としを防ぐ（折りたたみパネルの中は展開しないと見えないため）
+            if (itemGroups.isNotEmpty()) {
+                AiSuggestButton(
+                    label = if (unmatchedCount > 0) "未マッチ${unmatchedCount}件を含む全${totalCount}件をAIで一括提案"
+                        else "全${totalCount}件をAIで一括再提案",
+                    isLoading = isAiMatching,
+                    enabled = yayoiAccounts.isNotEmpty(),
+                    onClick = {
+                        val accounts = if (yayoiFlaggedAccounts.isNotEmpty()) yayoiFlaggedAccounts else yayoiAccounts
+                        viewModel.suggestAccountsForItems(itemGroups, accounts)
+                    }
+                )
             }
 
             if (itemGroups.isNotEmpty()) {
@@ -273,6 +222,54 @@ fun GeneralItemMatchingScreen(
                         horizontalArrangement = Arrangement.End
                     ) {
                         ListCountText(filteredGroups.size)
+                    }
+
+                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    // 類似グループ統合候補の検出ボタン。OCR誤読でノイズ文字が混入し、
+                    // canonicalKeyの完全一致だけでは吸収できなかった別グループを編集距離で拾う
+                    OutlinedButton(
+                        onClick = {
+                            hasSearchedSimilarGroups = true
+                            viewModel.findSimilarGroups(itemGroups)
+                        },
+                        enabled = !isFindingSimilarGroups && itemGroups.size >= 2,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        if (isFindingSimilarGroups) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("類似グループを検索中...")
+                        } else {
+                            Icon(Icons.Default.CallMerge, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("類似グループ候補を検出")
+                        }
+                    }
+
+                    // 数字接頭辞（伝票行番号らしきノイズ）検出ボタン。正規表現ベースで判定するため
+                    // AIは使わない（パターンが規則的でコスト・レイテンシをかける必要がないため）
+                    OutlinedButton(
+                        onClick = {
+                            hasSearchedNumericPrefixes = true
+                            viewModel.findNumericPrefixes(itemGroups)
+                        },
+                        enabled = !isFindingNumericPrefixes && itemGroups.isNotEmpty(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        if (isFindingNumericPrefixes) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("数字接頭辞を検索中...")
+                        } else {
+                            Icon(Icons.Default.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("数字接頭辞候補を検出")
+                        }
                     }
                 }
             }
@@ -386,12 +383,16 @@ fun GeneralItemMatchingScreen(
         GroupDefaultEditDialog(
             group = groupEditTarget!!,
             yayoiAccounts = yayoiAccounts,
+            yayoiFlaggedAccounts = yayoiFlaggedAccounts,
             onDismiss = { groupEditTarget = null },
             onSave = { canonicalKey, accountId ->
                 viewModel.updateGroupDefaultAccount(canonicalKey, accountId)
                 groupEditTarget = null
             },
-            onLoadAccounts = { accounts -> yayoiAccounts = accounts },
+            onLoadAccounts = { accounts ->
+                yayoiAccounts = accounts
+                yayoiFlaggedAccounts = accounts.filter { it.usedForReceipt }
+            },
             viewModel = viewModel
         )
     }
@@ -414,6 +415,7 @@ fun GeneralItemMatchingScreen(
             item = itemEditTarget!!,
             groupDefaultAccountName = itemEditGroupDefaultName,
             yayoiAccounts = yayoiAccounts,
+            yayoiFlaggedAccounts = yayoiFlaggedAccounts,
             onDismiss = { itemEditTarget = null },
             onSave = { itemId, accountId ->
                 viewModel.updateItemOverride(itemId, accountId)
@@ -776,7 +778,7 @@ private fun ItemGroupCard(
                         text = group.itemName,
                         fontWeight = FontWeight.Medium,
                         fontSize = fontSize.sp,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
@@ -964,6 +966,7 @@ private fun GroupRenameDialog(
 private fun GroupDefaultEditDialog(
     group: GeneralItemGroup,
     yayoiAccounts: List<YayoiAccount>,
+    yayoiFlaggedAccounts: List<YayoiAccount>,   // usedForReceipt=true の科目
     onDismiss: () -> Unit,
     onSave: (canonicalKey: String, accountId: Long?) -> Unit,
     onLoadAccounts: (List<YayoiAccount>) -> Unit,
@@ -971,22 +974,29 @@ private fun GroupDefaultEditDialog(
 ) {
     var selectedAccountId by remember(group) { mutableStateOf(group.yayoiAccountId) }
     var searchText by remember { mutableStateOf("") }
-    var selectedCategoryA by remember { mutableStateOf<String?>(null) }
     var localAccounts by remember { mutableStateOf(yayoiAccounts) }
+    var localFlaggedAccounts by remember { mutableStateOf(yayoiFlaggedAccounts) }
 
     LaunchedEffect(Unit) {
         val accounts = viewModel.loadYayoiAccounts()
         localAccounts = accounts
+        localFlaggedAccounts = accounts.filter { it.usedForReceipt }
         onLoadAccounts(accounts)
     }
 
+    val hasFlagged = localFlaggedAccounts.isNotEmpty()
+    var showAll by remember(hasFlagged) { mutableStateOf(!hasFlagged) }
+    var selectedCategoryA by remember { mutableStateOf<String?>(null) }
+
     val categoryAList = remember(localAccounts) {
-        localAccounts.map { it.categoryA }.distinct().filter { it.isNotBlank() }.sorted()
+        sortYayoiCategoryA(localAccounts.map { it.categoryA }.filter { it.isNotBlank() })
     }
 
-    val filtered = remember(localAccounts, searchText, selectedCategoryA) {
-        localAccounts.filter { acc ->
-            (selectedCategoryA == null || acc.categoryA == selectedCategoryA) &&
+    val baseList = if (showAll) localAccounts else localFlaggedAccounts
+
+    val filtered = remember(baseList, searchText, selectedCategoryA, showAll) {
+        baseList.filter { acc ->
+            (showAll.not() || selectedCategoryA == null || acc.categoryA == selectedCategoryA) &&
             (searchText.isEmpty() ||
              acc.accountName.contains(searchText, ignoreCase = true) ||
              (acc.accountCode?.contains(searchText) == true) ||
@@ -1009,24 +1019,44 @@ private fun GroupDefaultEditDialog(
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    contentPadding = PaddingValues(vertical = 2.dp)
-                ) {
-                    item {
+                // フラグ/全科目トグル（レシート取引フラグが設定された科目がある場合のみ）
+                if (hasFlagged) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         FilterChip(
-                            selected = selectedCategoryA == null,
-                            onClick = { selectedCategoryA = null },
-                            label = { Text("全て", fontSize = 12.sp) }
+                            selected = !showAll,
+                            onClick = { showAll = false; selectedCategoryA = null },
+                            label = { Text("レシートフラグのみ (${localFlaggedAccounts.size}件)", fontSize = 12.sp) }
+                        )
+                        FilterChip(
+                            selected = showAll,
+                            onClick = { showAll = true },
+                            label = { Text("全科目", fontSize = 12.sp) }
                         )
                     }
-                    items(categoryAList.size) { idx ->
-                        val cat = categoryAList[idx]
-                        FilterChip(
-                            selected = selectedCategoryA == cat,
-                            onClick = { selectedCategoryA = if (selectedCategoryA == cat) null else cat },
-                            label = { Text(cat, fontSize = 12.sp) }
-                        )
+                }
+                if (showAll) {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        contentPadding = PaddingValues(vertical = 2.dp)
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = selectedCategoryA == null,
+                                onClick = { selectedCategoryA = null },
+                                label = { Text("全て", fontSize = 12.sp) }
+                            )
+                        }
+                        items(categoryAList.size) { idx ->
+                            val cat = categoryAList[idx]
+                            FilterChip(
+                                selected = selectedCategoryA == cat,
+                                onClick = { selectedCategoryA = if (selectedCategoryA == cat) null else cat },
+                                label = { Text(cat, fontSize = 12.sp) }
+                            )
+                        }
                     }
                 }
                 OutlinedTextField(
@@ -1094,20 +1124,25 @@ private fun IndividualItemOverrideDialog(
     item: GeneralReceiptItem,
     groupDefaultAccountName: String?,
     yayoiAccounts: List<YayoiAccount>,
+    yayoiFlaggedAccounts: List<YayoiAccount>,   // usedForReceipt=true の科目
     onDismiss: () -> Unit,
     onSave: (itemId: Long, accountId: Long?) -> Unit
 ) {
     var selectedAccountId by remember(item) { mutableStateOf(item.yayoiAccountId) }
     var searchText by remember { mutableStateOf("") }
+    val hasFlagged = yayoiFlaggedAccounts.isNotEmpty()
+    var showAll by remember(hasFlagged) { mutableStateOf(!hasFlagged) }
     var selectedCategoryA by remember { mutableStateOf<String?>(null) }
 
     val categoryAList = remember(yayoiAccounts) {
-        yayoiAccounts.map { it.categoryA }.distinct().filter { it.isNotBlank() }.sorted()
+        sortYayoiCategoryA(yayoiAccounts.map { it.categoryA }.filter { it.isNotBlank() })
     }
 
-    val filtered = remember(yayoiAccounts, searchText, selectedCategoryA) {
-        yayoiAccounts.filter { acc ->
-            (selectedCategoryA == null || acc.categoryA == selectedCategoryA) &&
+    val baseList = if (showAll) yayoiAccounts else yayoiFlaggedAccounts
+
+    val filtered = remember(baseList, searchText, selectedCategoryA, showAll) {
+        baseList.filter { acc ->
+            (showAll.not() || selectedCategoryA == null || acc.categoryA == selectedCategoryA) &&
             (searchText.isEmpty() ||
              acc.accountName.contains(searchText, ignoreCase = true) ||
              (acc.accountCode?.contains(searchText) == true) ||
@@ -1131,24 +1166,44 @@ private fun IndividualItemOverrideDialog(
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    contentPadding = PaddingValues(vertical = 2.dp)
-                ) {
-                    item {
+                // フラグ/全科目トグル（レシート取引フラグが設定された科目がある場合のみ）
+                if (hasFlagged) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         FilterChip(
-                            selected = selectedCategoryA == null,
-                            onClick = { selectedCategoryA = null },
-                            label = { Text("全て", fontSize = 12.sp) }
+                            selected = !showAll,
+                            onClick = { showAll = false; selectedCategoryA = null },
+                            label = { Text("レシートフラグのみ (${yayoiFlaggedAccounts.size}件)", fontSize = 12.sp) }
+                        )
+                        FilterChip(
+                            selected = showAll,
+                            onClick = { showAll = true },
+                            label = { Text("全科目", fontSize = 12.sp) }
                         )
                     }
-                    items(categoryAList.size) { idx ->
-                        val cat = categoryAList[idx]
-                        FilterChip(
-                            selected = selectedCategoryA == cat,
-                            onClick = { selectedCategoryA = if (selectedCategoryA == cat) null else cat },
-                            label = { Text(cat, fontSize = 12.sp) }
-                        )
+                }
+                if (showAll) {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        contentPadding = PaddingValues(vertical = 2.dp)
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = selectedCategoryA == null,
+                                onClick = { selectedCategoryA = null },
+                                label = { Text("全て", fontSize = 12.sp) }
+                            )
+                        }
+                        items(categoryAList.size) { idx ->
+                            val cat = categoryAList[idx]
+                            FilterChip(
+                                selected = selectedCategoryA == cat,
+                                onClick = { selectedCategoryA = if (selectedCategoryA == cat) null else cat },
+                                label = { Text(cat, fontSize = 12.sp) }
+                            )
+                        }
                     }
                 }
                 OutlinedTextField(

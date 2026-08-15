@@ -32,6 +32,7 @@ import com.example.greenframeocr.util.GeminiApiKeyMissingException
 import com.example.greenframeocr.util.GeminiQuotaExhaustedException
 import com.example.greenframeocr.util.GeminiRateLimitException
 import com.example.greenframeocr.util.GeminiReceiptClient
+import com.example.greenframeocr.util.normalizeSpaces
 import com.example.greenframeocr.util.withComputedKey
 import kotlinx.coroutines.launch
 
@@ -88,6 +89,7 @@ fun ProductListScreen(
     var aiMatchingError by remember { mutableStateOf<String?>(null) }
     var isRecalculating by remember { mutableStateOf(false) }
     var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
+    var filterPanelExpanded by remember { mutableStateOf(false) }
 
     val categories = listOf("一般購買", "給油所", "農業機械")
 
@@ -207,6 +209,88 @@ fun ProductListScreen(
         }
     }
 
+    // 商品統合の実処理（手動統合・類似グループ一括統合の両方から呼ばれる）
+    suspend fun mergeProduct(src: ProductMaster, target: ProductMaster) {
+        // OcrVariantを統合先に付け替え
+        database.ocrVariantDao().updateProductId(src.id, target.id)
+        // 統合元のcanonicalNameをOcrVariantとして統合先に登録
+        // → 既存のReceiptItemからの摘要逆引きが引き続き機能するよう保全
+        val now = System.currentTimeMillis()
+        val existingVariant = database.ocrVariantDao().getByText(src.canonicalName)
+        when {
+            existingVariant == null -> {
+                // 存在しない → 新規作成（LOCKED/USERで確実に機能させる）
+                database.ocrVariantDao().insert(
+                    OcrVariant(
+                        productId = target.id,
+                        variantText = src.canonicalName,
+                        normalizedText = src.canonicalName,
+                        confidenceLevel = ConfidenceLevel.LOCKED.name,
+                        source = VariantSource.CAPTURE.name,
+                        firstSeenAt = now,
+                        lastSeenAt = now
+                    )
+                )
+            }
+            existingVariant.productId != target.id -> {
+                // 別の商品を指している → 統合先に付け替え
+                database.ocrVariantDao().update(
+                    existingVariant.copy(productId = target.id)
+                )
+            }
+            // else: 既に統合先を指している → そのまま
+        }
+        // 使用頻度を合算
+        database.productMasterDao().update(
+            target.copy(frequencyCount = target.frequencyCount + src.frequencyCount)
+        )
+        // ReceiptItemの商品名を統合先に書き換え
+        database.receiptDao().updateProductNameInReceiptItems(src.canonicalName, target.canonicalName)
+        // 統合元を削除
+        database.productMasterDao().deleteById(src.id)
+    }
+
+    // AI科目提案
+    fun startAiMatching() {
+        val unmatched = allProducts.filter { it.yayoiAccountId == null }
+        if (unmatched.isEmpty()) {
+            aiMatchingError = "未マッチングの品目がありません"
+            return
+        }
+        val accounts = if (yayoiFlaggedList.isNotEmpty()) yayoiFlaggedList else yayoiAccountList
+        if (accounts.isEmpty()) {
+            aiMatchingError = "弥生勘定科目が登録されていません"
+            return
+        }
+        isAiMatching = true
+        aiMatchingError = null
+        scope.launch {
+            try {
+                val result = GeminiReceiptClient.matchProductsToAccounts(
+                    productNames = unmatched.map { it.canonicalName to it.category },
+                    accounts = accounts,
+                    apiKey = appPreferences.geminiApiKey
+                )
+                aiSuggestions = result.suggestions
+                aiUsageStats = result.usageStats
+                result.usageStats?.let { appPreferences.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
+                showAiMatchingDialog = true
+            } catch (e: GeminiApiKeyMissingException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiQuotaExhaustedException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiRateLimitException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiApiException) {
+                aiMatchingError = e.message
+            } catch (e: Exception) {
+                aiMatchingError = "エラー: ${e.message}"
+            } finally {
+                isAiMatching = false
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -217,58 +301,6 @@ fun ProductListScreen(
                     }
                 },
                 actions = {
-                    // AI提案ボタン（弥生モードのみ）
-                    if (accountingSoftware == AccountingSoftware.YAYOI) {
-                        TextButton(
-                            onClick = {
-                                val unmatched = allProducts.filter { it.yayoiAccountId == null }
-                                if (unmatched.isEmpty()) {
-                                    aiMatchingError = "未マッチングの品目がありません"
-                                    return@TextButton
-                                }
-                                val accounts = if (yayoiFlaggedList.isNotEmpty()) yayoiFlaggedList else yayoiAccountList
-                                if (accounts.isEmpty()) {
-                                    aiMatchingError = "弥生勘定科目が登録されていません"
-                                    return@TextButton
-                                }
-                                isAiMatching = true
-                                aiMatchingError = null
-                                scope.launch {
-                                    try {
-                                        val result = GeminiReceiptClient.matchProductsToAccounts(
-                                            productNames = unmatched.map { it.canonicalName to it.category },
-                                            accounts = accounts,
-                                            apiKey = appPreferences.geminiApiKey
-                                        )
-                                        aiSuggestions = result.suggestions
-                                        aiUsageStats = result.usageStats
-                                        showAiMatchingDialog = true
-                                    } catch (e: GeminiApiKeyMissingException) {
-                                        aiMatchingError = e.message
-                                    } catch (e: GeminiQuotaExhaustedException) {
-                                        aiMatchingError = e.message
-                                    } catch (e: GeminiRateLimitException) {
-                                        aiMatchingError = e.message
-                                    } catch (e: GeminiApiException) {
-                                        aiMatchingError = e.message
-                                    } catch (e: Exception) {
-                                        aiMatchingError = "エラー: ${e.message}"
-                                    } finally {
-                                        isAiMatching = false
-                                    }
-                                }
-                            },
-                            enabled = !isAiMatching
-                        ) {
-                            if (isAiMatching) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("提案中...", fontSize = 12.sp)
-                            } else {
-                                Text("AI科目提案", fontSize = 12.sp)
-                            }
-                        }
-                    }
                     // 再集計ボタン
                     IconButton(
                         onClick = { recalculateProducts() },
@@ -283,15 +315,16 @@ fun ProductListScreen(
                             Icon(Icons.Default.Refresh, "再集計")
                         }
                     }
-                    // 追加ボタン
-                    IconButton(onClick = { showAddDialog = true }) {
-                        Icon(Icons.Default.Add, "追加")
-                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showAddDialog = true }) {
+                Icon(Icons.Default.Add, contentDescription = "追加")
+            }
         }
     ) { paddingValues ->
         Column(
@@ -315,90 +348,155 @@ fun ProductListScreen(
                     }
                 )
             }
-            // 検索バー
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
+
+            // 統計カード
+            val matchedProductCount = when (accountingSoftware) {
+                AccountingSoftware.YAYOI -> allProducts.count { it.yayoiAccountId != null }
+                AccountingSoftware.BLUE_RETURN_PREP -> allProducts.size  // BRPは全件Windows側で管理扱い
+                else -> allProducts.count { it.kaikakeTekiyouId != null }
+            }
+            val unmatchedProductCount = allProducts.size - matchedProductCount
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("商品名で検索") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, "クリア")
-                        }
+                    .padding(8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("品目数", fontSize = 12.sp)
+                        Text("${allProducts.size}", fontSize = 24.sp, fontWeight = FontWeight.Bold)
                     }
-                },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() })
-            )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("マッチ済", fontSize = 12.sp)
+                        Text(
+                            "$matchedProductCount",
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("未マッチ", fontSize = 12.sp)
+                        Text(
+                            "$unmatchedProductCount",
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (unmatchedProductCount > 0) MaterialTheme.colorScheme.error else Color.Gray
+                        )
+                    }
+                }
+            }
 
-            // カテゴリフィルタ
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = selectedCategory == null,
-                    onClick = { selectedCategory = null },
-                    label = { Text("全て") }
+            // AI科目提案ボタン（弥生モードのみ、常時表示で見落としを防ぐ）
+            if (accountingSoftware == AccountingSoftware.YAYOI) {
+                val unmatchedForAi = allProducts.count { it.yayoiAccountId == null }
+                AiSuggestButton(
+                    label = if (unmatchedForAi > 0) "未マッチ${unmatchedForAi}件をAIで一括提案" else "AI科目提案",
+                    isLoading = isAiMatching,
+                    onClick = { startAiMatching() }
                 )
-                categories.forEach { category ->
-                    FilterChip(
-                        selected = selectedCategory == category,
-                        onClick = { selectedCategory = if (selectedCategory == category) null else category },
-                        label = { Text(category) }
-                    )
-                }
             }
 
-            // 並び替え & 摘要フィルタ
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            CollapsibleFilterPanel(
+                expanded = filterPanelExpanded,
+                onExpandedChange = { filterPanelExpanded = it },
+                hasActiveFilter = searchQuery.isNotBlank() || selectedCategory != null ||
+                    sortOrder != SortOrder.FREQUENCY || tekiyouFilter != TekiyouFilter.ALL,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                // 並び替え
-                Text("並替:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SortOrder.values().forEach { order ->
+                // 検索バー
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    placeholder = { Text("商品名で検索") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, "クリア")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() })
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                // カテゴリフィルタ
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     FilterChip(
-                        selected = sortOrder == order,
-                        onClick = { sortOrder = order },
-                        label = { Text(order.label, fontSize = 12.sp) }
+                        selected = selectedCategory == null,
+                        onClick = { selectedCategory = null },
+                        label = { Text("全て") }
                     )
+                    categories.forEach { category ->
+                        FilterChip(
+                            selected = selectedCategory == category,
+                            onClick = { selectedCategory = if (selectedCategory == category) null else category },
+                            label = { Text(category) }
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                // 並び替え & 摘要フィルタ
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 並び替え
+                    Text("並替:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SortOrder.values().forEach { order ->
+                        FilterChip(
+                            selected = sortOrder == order,
+                            onClick = { sortOrder = order },
+                            label = { Text(order.label, fontSize = 12.sp) }
+                        )
+                    }
 
-                // 摘要フィルタ
-                Text("絞込:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TekiyouFilter.values().forEach { filter ->
-                    val chipLabel = if (filter == TekiyouFilter.MISSING && accountingSoftware == AccountingSoftware.YAYOI)
-                        "科目未設定" else filter.label
-                    FilterChip(
-                        selected = tekiyouFilter == filter,
-                        onClick = { tekiyouFilter = filter },
-                        label = { Text(chipLabel, fontSize = 12.sp) }
-                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // 摘要フィルタ
+                    Text("絞込:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TekiyouFilter.values().forEach { filter ->
+                        val chipLabel = if (filter == TekiyouFilter.MISSING && accountingSoftware == AccountingSoftware.YAYOI)
+                            "科目未設定" else filter.label
+                        FilterChip(
+                            selected = tekiyouFilter == filter,
+                            onClick = { tekiyouFilter = filter },
+                            label = { Text(chipLabel, fontSize = 12.sp) }
+                        )
+                    }
+                }
+
+                // 件数表示
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    ListCountText(displayProducts.size)
                 }
             }
-
-            // 件数表示
-            Text(
-                text = "${displayProducts.size}件",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
 
             Divider()
 
@@ -558,43 +656,7 @@ fun ProductListScreen(
             onConfirm = { target ->
                 val src = selectedProduct!!
                 scope.launch {
-                    // OcrVariantを統合先に付け替え
-                    database.ocrVariantDao().updateProductId(src.id, target.id)
-                    // 統合元のcanonicalNameをOcrVariantとして統合先に登録
-                    // → 既存のReceiptItemからの摘要逆引きが引き続き機能するよう保全
-                    val now = System.currentTimeMillis()
-                    val existingVariant = database.ocrVariantDao().getByText(src.canonicalName)
-                    when {
-                        existingVariant == null -> {
-                            // 存在しない → 新規作成（LOCKED/USERで確実に機能させる）
-                            database.ocrVariantDao().insert(
-                                OcrVariant(
-                                    productId = target.id,
-                                    variantText = src.canonicalName,
-                                    normalizedText = src.canonicalName,
-                                    confidenceLevel = ConfidenceLevel.LOCKED.name,
-                                    source = VariantSource.CAPTURE.name,
-                                    firstSeenAt = now,
-                                    lastSeenAt = now
-                                )
-                            )
-                        }
-                        existingVariant.productId != target.id -> {
-                            // 別の商品を指している → 統合先に付け替え
-                            database.ocrVariantDao().update(
-                                existingVariant.copy(productId = target.id)
-                            )
-                        }
-                        // else: 既に統合先を指している → そのまま
-                    }
-                    // 使用頻度を合算
-                    database.productMasterDao().update(
-                        target.copy(frequencyCount = target.frequencyCount + src.frequencyCount)
-                    )
-                    // ReceiptItemの商品名を統合先に書き換え
-                    database.receiptDao().updateProductNameInReceiptItems(src.canonicalName, target.canonicalName)
-                    // 統合元を削除
-                    database.productMasterDao().deleteById(src.id)
+                    mergeProduct(src, target)
                     loadProducts()
                 }
                 showMergeDialog = false
@@ -1320,7 +1382,7 @@ private fun YayoiAccountPickerDialog(
     var selectedCategoryA by remember { mutableStateOf(if (hasFlagged) null else "経費") }
 
     val categoryAList = remember(accountList) {
-        accountList.map { it.categoryA }.distinct().filter { it.isNotBlank() }.sorted()
+        sortYayoiCategoryA(accountList.map { it.categoryA }.filter { it.isNotBlank() })
     }
 
     // 表示リスト: フラグ優先 or 全件
@@ -1557,9 +1619,6 @@ private fun ProductMergeDialog(
         }
     )
 }
-
-/** スペース正規化（半角・全角スペースを1つの半角スペースに統一し前後をトリム） */
-private fun String.normalizeSpaces() = trim().replace(Regex("[\\s\u3000]+"), " ")
 
 /**
  * 全角換算文字数を計算する。

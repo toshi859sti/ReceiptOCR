@@ -25,6 +25,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.data.YayoiAccount
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +46,9 @@ private val SONEKI_CATS   = setOf("【収入金額】", "【経費】", "【繰�
 
 private val COL_DEBIT   = 36.dp
 private val COL_TAX     = 56.dp
+private val COL_USE     = 32.dp
 private val COL_ENABLED = 36.dp
+private val COL_USE_TOTAL = COL_USE * 3
 
 private fun taxShort(tax: String) = when (tax) {
     "対象外"     -> "対象外"
@@ -89,6 +93,7 @@ fun YayoiAccountSettingsScreen(
     var showEnabledOnly by remember { mutableStateOf(false) }
     var expansionLevel  by remember { mutableIntStateOf(0) }
     var importResultMessage by remember { mutableStateOf<String?>(null) }
+    var showBulkFlagsDialog by remember { mutableStateOf(false) }
 
     fun reload() { scope.launch { accounts = database.yayoiAccountDao().getAll() } }
     LaunchedEffect(Unit) { reload() }
@@ -205,7 +210,7 @@ fun YayoiAccountSettingsScreen(
         expandedA = emptySet(); expandedB = emptySet(); expandedAccts = emptySet()
     }
 
-    // CSVインポート（勘定科目,サーチキー英字,サーチキー数字,借貸,区分B,区分A,税区分,購買取引使用,預金取引使用）。
+    // CSVインポート（勘定科目,サーチキー英字,サーチキー数字,借貸,区分B,区分A,税区分,購買取引使用,預金取引使用,レシート取引使用）。
     // accountCodeが既存科目と一致すればその科目を更新、なければ新規追加するマージ方式
     // （初回インポート用のDatabaseInitializer.importYayoiAccounts()とはCSV書式を揃えている）
     fun importCsv(uri: Uri) {
@@ -227,7 +232,8 @@ fun YayoiAccountSettingsScreen(
                                     categoryA = parts.getOrNull(5)?.trim() ?: "",
                                     defaultTaxCategory = parts.getOrNull(6)?.trim() ?: "対象外",
                                     usedForPurchase = parts.getOrNull(7)?.trim()?.uppercase() == "TRUE",
-                                    usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() == "TRUE"
+                                    usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() == "TRUE",
+                                    usedForReceipt = parts.getOrNull(9)?.trim()?.uppercase() == "TRUE"
                                 )
                             }
                         }
@@ -355,6 +361,12 @@ fun YayoiAccountSettingsScreen(
                     onClick  = { showEnabledOnly = !showEnabledOnly },
                     label    = { Text("有効のみ", fontSize = 12.sp) }
                 )
+                Spacer(Modifier.width(4.dp))
+                FilledTonalButton(
+                    onClick = { showBulkFlagsDialog = true },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    modifier = Modifier.height(32.dp)
+                ) { Text("フラグ一括設定", fontSize = 12.sp) }
             }
             Divider(thickness = 0.5.dp)
 
@@ -430,6 +442,26 @@ fun YayoiAccountSettingsScreen(
             }
         )
     }
+
+    // フラグ一括設定ダイアログ（購買・預金・領収・有効をタップで一気に切り替え）
+    if (showBulkFlagsDialog) {
+        BulkFlagsDialog(
+            accounts = accounts,
+            onToggle = { account, field ->
+                scope.launch {
+                    val updated = when (field) {
+                        BulkFlagField.PURCHASE -> account.copy(usedForPurchase = !account.usedForPurchase)
+                        BulkFlagField.DEPOSIT  -> account.copy(usedForDeposit = !account.usedForDeposit)
+                        BulkFlagField.RECEIPT  -> account.copy(usedForReceipt = !account.usedForReceipt)
+                        BulkFlagField.ENABLED  -> account.copy(isEnabled = !account.isEnabled)
+                    }
+                    database.yayoiAccountDao().update(updated)
+                    accounts = database.yayoiAccountDao().getAll()
+                }
+            },
+            onDismiss = { showBulkFlagsDialog = false }
+        )
+    }
 }
 
 // ── ヘッダー行 ──────────────────────────────────────────
@@ -445,6 +477,9 @@ private fun TreeHeader() {
         Text("勘定科目", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
         ColHead("借貸", COL_DEBIT)
         ColHead("税区分", COL_TAX)
+        ColHead("購買", COL_USE)
+        ColHead("預金", COL_USE)
+        ColHead("領収", COL_USE)
         ColHead("有効", COL_ENABLED)
     }
 }
@@ -474,7 +509,7 @@ private fun CatARow(node: TreeNode.CatA, onClick: () -> Unit) {
         )
         Spacer(Modifier.width(4.dp))
         Text(node.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
-        Spacer(Modifier.width(COL_DEBIT + COL_TAX + COL_ENABLED))
+        Spacer(Modifier.width(COL_DEBIT + COL_TAX + COL_USE_TOTAL + COL_ENABLED))
     }
 }
 
@@ -498,7 +533,7 @@ private fun CatBRow(node: TreeNode.CatB, onClick: () -> Unit) {
         )
         Spacer(Modifier.width(4.dp))
         Text(node.name, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.weight(1f))
-        Spacer(Modifier.width(COL_DEBIT + COL_TAX + COL_ENABLED))
+        Spacer(Modifier.width(COL_DEBIT + COL_TAX + COL_USE_TOTAL + COL_ENABLED))
     }
 }
 
@@ -548,7 +583,11 @@ private fun AccountRow(
             modifier = Modifier.weight(1f),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
         )
-        AccountColumns(acct.debitCredit, acct.defaultTaxCategory, acct.isEnabled)
+        AccountColumns(
+            acct.debitCredit, acct.defaultTaxCategory,
+            acct.usedForPurchase, acct.usedForDeposit, acct.usedForReceipt,
+            acct.isEnabled
+        )
     }
     Divider(Modifier.padding(start = 64.dp), thickness = 0.5.dp)
 }
@@ -588,7 +627,11 @@ private fun SubAccountRow(
             modifier = Modifier.weight(1f),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)
         )
-        AccountColumns(acct.debitCredit, acct.defaultTaxCategory, acct.isEnabled, small = true)
+        AccountColumns(
+            acct.debitCredit, acct.defaultTaxCategory,
+            acct.usedForPurchase, acct.usedForDeposit, acct.usedForReceipt,
+            acct.isEnabled, small = true
+        )
     }
     Divider(Modifier.padding(start = 80.dp), thickness = 0.5.dp)
 }
@@ -598,6 +641,9 @@ private fun SubAccountRow(
 private fun AccountColumns(
     debitCredit: String,
     taxCategory: String,
+    usedForPurchase: Boolean,
+    usedForDeposit: Boolean,
+    usedForReceipt: Boolean,
     isEnabled: Boolean,
     small: Boolean = false
 ) {
@@ -616,12 +662,27 @@ private fun AccountColumns(
         textAlign = TextAlign.Center,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+    UseFlagDot(usedForPurchase, fs, MaterialTheme.colorScheme.primary)
+    UseFlagDot(usedForDeposit, fs, MaterialTheme.colorScheme.tertiary)
+    UseFlagDot(usedForReceipt, fs, MaterialTheme.colorScheme.secondary)
     Text(
         if (isEnabled) "●" else "○",
         fontSize = fs,
         modifier = Modifier.width(COL_ENABLED),
         textAlign = TextAlign.Center,
         color = if (isEnabled) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+    )
+}
+
+// 購買/預金/領収の使用フラグを○●で表示（有効列と同じ見た目に揃える）
+@Composable
+private fun UseFlagDot(used: Boolean, fontSize: androidx.compose.ui.unit.TextUnit, onColor: Color) {
+    Text(
+        if (used) "●" else "○",
+        fontSize = fontSize,
+        modifier = Modifier.width(COL_USE),
+        textAlign = TextAlign.Center,
+        color = if (used) onColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
     )
 }
 
@@ -651,5 +712,178 @@ private fun ActionBtn(
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
             modifier = Modifier.height(32.dp)
         ) { Text(label, fontSize = 12.sp) }
+    }
+}
+
+// ── フラグ一括設定ダイアログ ──────────────────────────────
+private enum class BulkFlagField { PURCHASE, DEPOSIT, RECEIPT, ENABLED }
+
+private val COL_BULK_FLAG = 44.dp
+
+/**
+ * 科目ごとに開いて設定していた購買・預金・領収・有効フラグを、
+ * 一覧表（エクセル風）でタップ一発に切り替えられるようにしたダイアログ。
+ * タップごとに即DB反映（onToggleが呼び出し元でupdate）し、呼び出し元のaccountsをその都度更新する。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BulkFlagsDialog(
+    accounts: List<YayoiAccount>,
+    onToggle: (account: YayoiAccount, field: BulkFlagField) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var searchText by remember { mutableStateOf("") }
+    var selectedCategoryA by remember { mutableStateOf<String?>(null) }
+
+    val categoryAList = remember(accounts) {
+        sortYayoiCategoryA(accounts.map { it.categoryA }.filter { it.isNotBlank() })
+    }
+
+    val filtered = remember(accounts, searchText, selectedCategoryA) {
+        accounts.filter { acc ->
+            (selectedCategoryA == null || acc.categoryA == selectedCategoryA) &&
+            (searchText.isEmpty() ||
+             acc.accountName.contains(searchText, ignoreCase = true) ||
+             (acc.accountCode?.contains(searchText, ignoreCase = true) == true))
+        }.sortedWith(compareBy(
+            { val idx = YAYOI_CATEGORY_A_ORDER.indexOf(it.categoryA); if (idx < 0) Int.MAX_VALUE else idx },
+            { it.categoryB },
+            { it.accountCode?.toIntOrNull() ?: Int.MAX_VALUE }
+        ))
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize()) {
+                TopAppBar(
+                    title = { Text("フラグ一括設定", fontSize = 18.sp) },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "閉じる") }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                )
+
+                Text(
+                    text = "セルをタップすると即座に切り替わります",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+
+                OutlinedTextField(
+                    value = searchText,
+                    onValueChange = { searchText = it },
+                    label = { Text("検索") },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, "検索") }
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                androidx.compose.foundation.lazy.LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                ) {
+                    item {
+                        FilterChip(
+                            selected = selectedCategoryA == null,
+                            onClick = { selectedCategoryA = null },
+                            label = { Text("全て", fontSize = 12.sp) }
+                        )
+                    }
+                    items(categoryAList.size) { idx ->
+                        val cat = categoryAList[idx]
+                        FilterChip(
+                            selected = selectedCategoryA == cat,
+                            onClick = { selectedCategoryA = if (selectedCategoryA == cat) null else cat },
+                            label = { Text(cat, fontSize = 12.sp) }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
+
+                // 表ヘッダー
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("勘定科目", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    ColHead("購買", COL_BULK_FLAG)
+                    ColHead("預金", COL_BULK_FLAG)
+                    ColHead("領収", COL_BULK_FLAG)
+                    ColHead("有効", COL_BULK_FLAG)
+                }
+                Divider()
+
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(filtered, key = { it.id }) { acct ->
+                        BulkFlagRow(account = acct, onToggle = { field -> onToggle(acct, field) })
+                        Divider(thickness = 0.5.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BulkFlagRow(
+    account: YayoiAccount,
+    onToggle: (BulkFlagField) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                account.accountName,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (account.isEnabled) 1f else 0.4f)
+            )
+            Text(
+                "${account.categoryA} / ${account.categoryB}",
+                fontSize = 10.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        BulkFlagCell(account.usedForPurchase, MaterialTheme.colorScheme.primary) { onToggle(BulkFlagField.PURCHASE) }
+        BulkFlagCell(account.usedForDeposit, MaterialTheme.colorScheme.tertiary) { onToggle(BulkFlagField.DEPOSIT) }
+        BulkFlagCell(account.usedForReceipt, MaterialTheme.colorScheme.secondary) { onToggle(BulkFlagField.RECEIPT) }
+        BulkFlagCell(account.isEnabled, Color(0xFF2E7D32)) { onToggle(BulkFlagField.ENABLED) }
+    }
+}
+
+@Composable
+private fun BulkFlagCell(checked: Boolean, onColor: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(COL_BULK_FLAG)
+            .height(40.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            if (checked) "●" else "○",
+            fontSize = 18.sp,
+            color = if (checked) onColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+        )
     }
 }

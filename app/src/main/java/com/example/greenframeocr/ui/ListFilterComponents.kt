@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FilterList
@@ -163,6 +164,47 @@ fun CollapsibleFilterPanel(
             Column(modifier = Modifier.animateContentSize()) {
                 content()
             }
+        }
+    }
+}
+
+/**
+ * AI科目提案の常時表示ボタン（購買品リスト・通帳摘要別リスト・商品名/但し書きリストで共用）。
+ * TopAppBarの小さいTextButtonや折りたたみパネルの中は見落とされやすいため、
+ * 統計カードのすぐ下など常に見える位置に塗りつぶしBoxで目立たせて置く想定。
+ */
+@Composable
+fun AiSuggestButton(
+    label: String,
+    isLoading: Boolean,
+    modifier: Modifier = Modifier,
+    loadingLabel: String = "AI提案中...",
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled && !isLoading,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        )
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(loadingLabel, fontWeight = FontWeight.Medium)
+        } else {
+            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(label, fontWeight = FontWeight.Medium)
         }
     }
 }

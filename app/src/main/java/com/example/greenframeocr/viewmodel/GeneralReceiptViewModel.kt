@@ -15,6 +15,7 @@ import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.InvoiceStore
 import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.data.ReceiptItemPreview
+import com.example.greenframeocr.data.ReceiptPaymentMethodRule
 import com.example.greenframeocr.data.YayoiAccount
 import com.example.greenframeocr.util.CsvUtils
 import com.example.greenframeocr.util.GeminiApiException
@@ -57,6 +58,7 @@ data class GeneralReceiptOutputItem(
     val accountCode: String,
     val debitSubAccountName: String = "",  // 補助科目名（なければ空）
     val defaultTaxCategory: String = "対象外",
+    val counterAccountName: String = "現金",  // 相手科目（貸方勘定科目）名。弥生CSV出力でのみ使用
     var isSelected: Boolean = true
 )
 
@@ -183,13 +185,15 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             _uiState.value = UiState.GeminiRunning
             try {
                 val result = GeminiReceiptClient.parseReceiptFromImage(bitmap, apiKey)
+                result?.usageStats?.let { prefs.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
                 if (result != null) {
                     _pendingReceipt.value = GeneralReceipt(
                         date = result.date,
                         storeName = result.storeName,
                         total = result.total,
                         rawOcrText = "",
-                        geminiUsed = true
+                        geminiUsed = true,
+                        paymentMethodText = result.paymentMethodText
                     )
                     _pendingItems.value = result.items.map { item ->
                         GeneralReceiptItem(receiptId = 0, itemName = item.name, price = item.price)
@@ -329,6 +333,7 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                     )
                 }
                 _aiUsageStats.value = result.usageStats
+                result.usageStats?.let { prefs.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
             } catch (e: GeminiApiKeyMissingException) {
                 _aiError.value = e.message
             } catch (e: GeminiQuotaExhaustedException) {
@@ -470,10 +475,35 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         return db.generalItemMasterDao().getByKey(item.canonicalKey)?.yayoiAccountId
     }
 
+    /** 支払方法テキスト・個別上書きから相手科目（貸方勘定科目）名を決定する。
+     *  優先順：個別上書き > ReceiptPaymentMethodRuleの部分一致（sortOrder順） > 「現金」科目 > 固定文字列"現金" */
+    private fun resolveCounterAccountName(
+        receipt: GeneralReceipt?,
+        rules: List<ReceiptPaymentMethodRule>,
+        accountsById: Map<Long, YayoiAccount>
+    ): String {
+        receipt?.paymentAccountOverride?.let { id -> accountsById[id]?.accountName?.let { return it } }
+        val text = receipt?.paymentMethodText
+        if (!text.isNullOrBlank()) {
+            val rule = rules.firstOrNull { text.contains(it.keyword, ignoreCase = true) }
+            rule?.let { accountsById[it.yayoiAccountId]?.accountName?.let { name -> return name } }
+        }
+        return accountsById.values.firstOrNull { it.accountName == "現金" }?.accountName ?: "現金"
+    }
+
+    /** レシート詳細画面用：このレシートの支払方法の科目名を解決する（ルール一覧・科目一覧を都度読み込む） */
+    suspend fun resolveCounterAccountNameForReceipt(receipt: GeneralReceipt): String =
+        withContext(Dispatchers.IO) {
+            val rules = db.receiptPaymentMethodRuleDao().getAll()
+            val accountsById = db.yayoiAccountDao().getAll().associateBy { it.id }
+            resolveCounterAccountName(receipt, rules, accountsById)
+        }
+
     suspend fun loadOutputItems(): List<GeneralReceiptOutputItem> =
         withContext(Dispatchers.IO) {
             val allItems = dao.getItemsForExport(null, null)
             val allAccounts = db.yayoiAccountDao().getAll().associateBy { it.id }
+            val rules = db.receiptPaymentMethodRuleDao().getAll()
             allItems.map { item ->
                 val receipt = dao.getReceiptById(item.receiptId)
                 val account = resolveEffectiveAccountId(item)?.let { allAccounts[it] }
@@ -490,10 +520,34 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                     accountName = debitAccountName,
                     accountCode = account?.accountCode ?: "",
                     debitSubAccountName = debitSubAccountName,
-                    defaultTaxCategory = account?.defaultTaxCategory ?: "対象外"
+                    defaultTaxCategory = account?.defaultTaxCategory ?: "対象外",
+                    counterAccountName = resolveCounterAccountName(receipt, rules, allAccounts)
                 )
             }
         }
+
+    // ─── 支払方法→相手科目ルール ────────────────────────────────────────
+
+    suspend fun loadPaymentMethodRules(): List<ReceiptPaymentMethodRule> =
+        withContext(Dispatchers.IO) { db.receiptPaymentMethodRuleDao().getAll() }
+
+    fun savePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (rule.id == 0L) db.receiptPaymentMethodRuleDao().insert(rule)
+            else db.receiptPaymentMethodRuleDao().update(rule)
+        }
+    }
+
+    fun deletePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
+        viewModelScope.launch(Dispatchers.IO) { db.receiptPaymentMethodRuleDao().delete(rule) }
+    }
+
+    /** レシート単位の相手科目個別上書き。accountId=nullでルール判定に戻す */
+    fun updateReceiptPaymentAccountOverride(receiptId: Long, accountId: Long?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.updatePaymentAccountOverride(receiptId, accountId)
+        }
+    }
 
     suspend fun buildCsvForExport(from: String?, to: String?, accounts: List<YayoiAccount>): String =
         withContext(Dispatchers.IO) {

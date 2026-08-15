@@ -62,6 +62,7 @@ fun YayoiAccountEditScreen(
     var defaultTaxCat   by remember { mutableStateOf("対象外") }
     var usedForPurchase by remember { mutableStateOf(false) }
     var usedForDeposit  by remember { mutableStateOf(false) }
+    var usedForReceipt  by remember { mutableStateOf(false) }
     var isEnabled       by remember { mutableStateOf(true) }
     var selectedParentId by remember { mutableStateOf<Long?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -81,7 +82,7 @@ fun YayoiAccountEditScreen(
     LaunchedEffect(accountId) {
         val all = database.yayoiAccountDao().getAll()
         parentAccounts = all.filter { it.parentId == null && it.id != accountId }
-        existingCatA = all.map { it.categoryA }.distinct().filter { it.isNotBlank() }.sorted()
+        existingCatA = sortYayoiCategoryA(all.map { it.categoryA }.filter { it.isNotBlank() })
         existingCatB = all.map { it.categoryB }.distinct().filter { it.isNotBlank() }.sorted()
 
         if (!isNew) {
@@ -94,6 +95,7 @@ fun YayoiAccountEditScreen(
                 defaultTaxCat    = a.defaultTaxCategory
                 usedForPurchase  = a.usedForPurchase
                 usedForDeposit   = a.usedForDeposit
+                usedForReceipt   = a.usedForReceipt
                 isEnabled        = a.isEnabled
                 selectedParentId = a.parentId
             }
@@ -136,6 +138,7 @@ fun YayoiAccountEditScreen(
                                     defaultTaxCategory = defaultTaxCat,
                                     usedForPurchase = usedForPurchase,
                                     usedForDeposit = usedForDeposit,
+                                    usedForReceipt = usedForReceipt,
                                     isEnabled = isEnabled,
                                     parentId = selectedParentId
                                 )
@@ -365,6 +368,10 @@ fun YayoiAccountEditScreen(
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = usedForDeposit, onCheckedChange = { usedForDeposit = it })
                 Text("預金取引で使用", modifier = Modifier.weight(1f))
+            }
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = usedForReceipt, onCheckedChange = { usedForReceipt = it })
+                Text("レシート領収書取引で使用", modifier = Modifier.weight(1f))
             }
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = isEnabled, onCheckedChange = { isEnabled = it })

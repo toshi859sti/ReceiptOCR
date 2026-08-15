@@ -24,9 +24,10 @@ import com.example.greenframeocr.util.toCanonicalKey
         GeneralReceipt::class,
         GeneralReceiptItem::class,
         InvoiceStore::class,
-        GeneralItemMaster::class
+        GeneralItemMaster::class,
+        ReceiptPaymentMethodRule::class
     ],
-    version = 30,
+    version = 32,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -42,6 +43,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun generalReceiptDao(): GeneralReceiptDao
     abstract fun invoiceStoreDao(): InvoiceStoreDao
     abstract fun generalItemMasterDao(): GeneralItemMasterDao
+    abstract fun receiptPaymentMethodRuleDao(): ReceiptPaymentMethodRuleDao
 
     companion object {
         @Volatile
@@ -753,6 +755,38 @@ abstract class ReceiptDatabase : RoomDatabase() {
         // マイグレーション: version 29 → 30（一般レシート品目別マッチングの正規化グルーピング対応。
         // general_receipt_items に canonicalKey 追加、general_item_master でグループのデフォルト
         // 科目を管理。個別明細の yayoiAccountId は「グループのデフォルトからの個別上書き」に意味変更）
+        // マイグレーション: version 31 → 32（レシート領収書の支払方法→相手科目ルール機能）
+        private val MIGRATION_31_32 = object : Migration(31, 32) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE general_receipts ADD COLUMN paymentMethodText TEXT"
+                )
+                database.execSQL(
+                    "ALTER TABLE general_receipts ADD COLUMN paymentAccountOverride INTEGER"
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS receipt_payment_method_rules (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        keyword TEXT NOT NULL,
+                        yayoiAccountId INTEGER NOT NULL,
+                        sortOrder INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        // マイグレーション: version 30 → 31（yayoi_accountsにusedForReceipt追加。
+        // レシート領収書の科目選択リストをJA購買・預金と同様にフラグ絞り込みできるようにする）
+        private val MIGRATION_30_31 = object : Migration(30, 31) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE yayoi_accounts ADD COLUMN usedForReceipt INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         private val MIGRATION_29_30 = object : Migration(29, 30) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL(
@@ -1139,7 +1173,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32)
                     .build()
                 INSTANCE = instance
                 instance

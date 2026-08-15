@@ -31,6 +31,7 @@ import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.ReceiptItemPreview
+import com.example.greenframeocr.data.YayoiAccount
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 import kotlinx.coroutines.launch
 
@@ -100,6 +101,17 @@ fun GeneralReceiptListScreen(
     }
 }
 
+// レシート一覧の並び替え順。DATE_DESCはDAOの既定順（日付降順→登録順降順）をそのまま使う
+private enum class ReceiptSortOrder(val label: String) {
+    DATE_DESC("日付順"),
+    CREATED_DESC("登録順（新しい順）")
+}
+
+private fun isToday(epochMillis: Long): Boolean {
+    val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+    return fmt.format(java.util.Date(epochMillis)) == fmt.format(java.util.Date())
+}
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun ReceiptListTab(
@@ -114,6 +126,9 @@ private fun ReceiptListTab(
 ) {
     var deleteTarget by remember { mutableStateOf<GeneralReceipt?>(null) }
     var detailTarget by remember { mutableStateOf<GeneralReceipt?>(null) }
+    var filterPanelExpanded by remember { mutableStateOf(false) }
+    var sortOrder by remember { mutableStateOf(ReceiptSortOrder.DATE_DESC) }
+    var todayOnly by remember { mutableStateOf(false) }
 
     val workingCalendarYear = remember { appPreferences.workingCalendarYear.toString() }
     var lockYearToWorking by remember { mutableStateOf(appPreferences.lockYearToWorking) }
@@ -170,170 +185,228 @@ private fun ReceiptListTab(
         if (store == null) monthFiltered else monthFiltered.filter { it.storeName == store }
     }
 
+    val todayFiltered = remember(filteredReceipts, todayOnly) {
+        if (!todayOnly) filteredReceipts else filteredReceipts.filter { isToday(it.createdAt) }
+    }
+
+    val sortedReceipts = remember(todayFiltered, sortOrder) {
+        when (sortOrder) {
+            ReceiptSortOrder.DATE_DESC -> todayFiltered
+            ReceiptSortOrder.CREATED_DESC -> todayFiltered.sortedByDescending { it.createdAt }
+        }
+    }
+
+    val hasActiveFilter = selectedMonth != null || selectedStore != null ||
+        todayOnly || sortOrder != ReceiptSortOrder.DATE_DESC
+
     val showFilters = availableYears.isNotEmpty() || availableStores.size >= 2 || availableMonths.size >= 2
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 1行目：年フィルター・作業年で固定・フォントサイズ（データがあれば常に表示）
-        if (availableYears.isNotEmpty()) {
-            var yearDropdownExpanded by remember { mutableStateOf(false) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+        // フォントサイズは絞り込みとは独立して常に表示
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            FontSizeControl(
+                fontSize = fontSize,
+                onDecrease = onDecreaseFontSize,
+                onIncrease = onIncreaseFontSize
+            )
+        }
+
+        if (showFilters) {
+            CollapsibleFilterPanel(
+                expanded = filterPanelExpanded,
+                onExpandedChange = { filterPanelExpanded = it },
+                hasActiveFilter = hasActiveFilter,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                ExposedDropdownMenuBox(
-                    expanded = yearDropdownExpanded && !lockYearToWorking,
-                    onExpandedChange = { if (!lockYearToWorking) yearDropdownExpanded = it },
-                    modifier = Modifier.width(148.dp)
-                ) {
-                    OutlinedTextField(
-                        value = selectedYear?.let { "${it}年" } ?: "-",
-                        onValueChange = {},
-                        readOnly = true,
-                        enabled = !lockYearToWorking,
-                        label = { Text("年", fontSize = 11.sp) },
-                        trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearDropdownExpanded && !lockYearToWorking)
-                        },
+                // 年フィルター・作業年で固定
+                if (availableYears.isNotEmpty()) {
+                    var yearDropdownExpanded by remember { mutableStateOf(false) }
+                    Row(
                         modifier = Modifier
-                            .menuAnchor()
-                            .fillMaxWidth(),
-                        singleLine = true,
-                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = yearDropdownExpanded && !lockYearToWorking,
-                        onDismissRequest = { yearDropdownExpanded = false }
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        availableYears.forEach { year ->
-                            DropdownMenuItem(
-                                text = { Text("${year}年") },
-                                onClick = { selectedYear = year; yearDropdownExpanded = false }
+                        ExposedDropdownMenuBox(
+                            expanded = yearDropdownExpanded && !lockYearToWorking,
+                            onExpandedChange = { if (!lockYearToWorking) yearDropdownExpanded = it },
+                            modifier = Modifier.width(148.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = selectedYear?.let { "${it}年" } ?: "-",
+                                onValueChange = {},
+                                readOnly = true,
+                                enabled = !lockYearToWorking,
+                                label = { Text("年", fontSize = 11.sp) },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearDropdownExpanded && !lockYearToWorking)
+                                },
+                                modifier = Modifier
+                                    .menuAnchor()
+                                    .fillMaxWidth(),
+                                singleLine = true,
+                                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
                             )
+                            ExposedDropdownMenu(
+                                expanded = yearDropdownExpanded && !lockYearToWorking,
+                                onDismissRequest = { yearDropdownExpanded = false }
+                            ) {
+                                availableYears.forEach { year ->
+                                    DropdownMenuItem(
+                                        text = { Text("${year}年") },
+                                        onClick = { selectedYear = year; yearDropdownExpanded = false }
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable {
+                                    lockYearToWorking = !lockYearToWorking
+                                    appPreferences.lockYearToWorking = lockYearToWorking
+                                }
+                        ) {
+                            Checkbox(
+                                checked = lockYearToWorking,
+                                onCheckedChange = {
+                                    lockYearToWorking = it
+                                    appPreferences.lockYearToWorking = it
+                                },
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text("作業年で固定", fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
-                Spacer(modifier = Modifier.width(4.dp))
+
+                // 月フィルター・店舗フィルター（それぞれ条件を満たす場合のみ表示）
+                if (availableMonths.size >= 2 || availableStores.size >= 2) {
+                    var monthDropdownExpanded by remember { mutableStateOf(false) }
+                    var storeDropdownExpanded by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 月フィルター（選択中の年内に2ヶ月以上データがある場合のみ表示）
+                        if (availableMonths.size >= 2) {
+                            ExposedDropdownMenuBox(
+                                expanded = monthDropdownExpanded,
+                                onExpandedChange = { monthDropdownExpanded = it },
+                                modifier = Modifier.width(100.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = selectedMonth?.let { "${it.toIntOrNull() ?: it}月" } ?: "全月",
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("月", fontSize = 11.sp) },
+                                    trailingIcon = {
+                                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = monthDropdownExpanded)
+                                    },
+                                    modifier = Modifier
+                                        .menuAnchor()
+                                        .fillMaxWidth(),
+                                    singleLine = true,
+                                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = monthDropdownExpanded,
+                                    onDismissRequest = { monthDropdownExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("全月") },
+                                        onClick = { selectedMonth = null; monthDropdownExpanded = false }
+                                    )
+                                    availableMonths.forEach { month ->
+                                        DropdownMenuItem(
+                                            text = { Text("${month.toIntOrNull() ?: month}月") },
+                                            onClick = { selectedMonth = month; monthDropdownExpanded = false }
+                                        )
+                                    }
+                                }
+                            }
+                            if (availableStores.size >= 2) Spacer(modifier = Modifier.width(4.dp))
+                        }
+
+                        // 店舗フィルター（現在の年・月フィルター内に2店舗以上ある場合のみ表示）
+                        if (availableStores.size >= 2) {
+                            ExposedDropdownMenuBox(
+                                expanded = storeDropdownExpanded,
+                                onExpandedChange = { storeDropdownExpanded = !storeDropdownExpanded },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                OutlinedTextField(
+                                    value = selectedStore ?: "全店舗",
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("店舗・発行者") },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = storeDropdownExpanded) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .menuAnchor()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = storeDropdownExpanded,
+                                    onDismissRequest = { storeDropdownExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("全店舗") },
+                                        onClick = { selectedStore = null; storeDropdownExpanded = false }
+                                    )
+                                    availableStores.forEach { store ->
+                                        DropdownMenuItem(
+                                            text = { Text(store) },
+                                            onClick = { selectedStore = store; storeDropdownExpanded = false }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // 並び替え・今日の新着のみ
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable {
-                            lockYearToWorking = !lockYearToWorking
-                            appPreferences.lockYearToWorking = lockYearToWorking
-                        }
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Checkbox(
-                        checked = lockYearToWorking,
-                        onCheckedChange = {
-                            lockYearToWorking = it
-                            appPreferences.lockYearToWorking = it
-                        },
-                        modifier = Modifier.size(20.dp)
+                    ToggleFilterChip(
+                        label = "今日の新着のみ",
+                        checked = todayOnly,
+                        onCheckedChange = { todayOnly = it }
                     )
-                    Spacer(modifier = Modifier.width(2.dp))
-                    Text("作業年で固定", fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                FontSizeControl(
-                    fontSize = fontSize,
-                    onDecrease = onDecreaseFontSize,
-                    onIncrease = onIncreaseFontSize
-                )
-            }
-        }
-
-        // 2行目：月フィルター・店舗フィルター（それぞれ条件を満たす場合のみ表示）
-        if (availableMonths.size >= 2 || availableStores.size >= 2) {
-            var monthDropdownExpanded by remember { mutableStateOf(false) }
-            var storeDropdownExpanded by remember { mutableStateOf(false) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // 月フィルター（選択中の年内に2ヶ月以上データがある場合のみ表示）
-                if (availableMonths.size >= 2) {
-                    ExposedDropdownMenuBox(
-                        expanded = monthDropdownExpanded,
-                        onExpandedChange = { monthDropdownExpanded = it },
-                        modifier = Modifier.width(100.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = selectedMonth?.let { "${it.toIntOrNull() ?: it}月" } ?: "全月",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("月", fontSize = 11.sp) },
-                            trailingIcon = {
-                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = monthDropdownExpanded)
-                            },
-                            modifier = Modifier
-                                .menuAnchor()
-                                .fillMaxWidth(),
-                            singleLine = true,
-                            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
-                        )
-                        ExposedDropdownMenu(
-                            expanded = monthDropdownExpanded,
-                            onDismissRequest = { monthDropdownExpanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("全月") },
-                                onClick = { selectedMonth = null; monthDropdownExpanded = false }
-                            )
-                            availableMonths.forEach { month ->
-                                DropdownMenuItem(
-                                    text = { Text("${month.toIntOrNull() ?: month}月") },
-                                    onClick = { selectedMonth = month; monthDropdownExpanded = false }
-                                )
-                            }
-                        }
-                    }
-                    if (availableStores.size >= 2) Spacer(modifier = Modifier.width(4.dp))
-                }
-
-                // 店舗フィルター（現在の年・月フィルター内に2店舗以上ある場合のみ表示）
-                if (availableStores.size >= 2) {
-                    ExposedDropdownMenuBox(
-                        expanded = storeDropdownExpanded,
-                        onExpandedChange = { storeDropdownExpanded = !storeDropdownExpanded },
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FilterChipGroup(
+                        label = "並び替え:",
+                        options = ReceiptSortOrder.values().toList(),
+                        selected = sortOrder,
+                        onSelect = { sortOrder = it },
+                        optionLabel = { it.label },
                         modifier = Modifier.weight(1f)
-                    ) {
-                        OutlinedTextField(
-                            value = selectedStore ?: "全店舗",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("店舗・発行者") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = storeDropdownExpanded) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor()
-                        )
-                        ExposedDropdownMenu(
-                            expanded = storeDropdownExpanded,
-                            onDismissRequest = { storeDropdownExpanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("全店舗") },
-                                onClick = { selectedStore = null; storeDropdownExpanded = false }
-                            )
-                            availableStores.forEach { store ->
-                                DropdownMenuItem(
-                                    text = { Text(store) },
-                                    onClick = { selectedStore = store; storeDropdownExpanded = false }
-                                )
-                            }
-                        }
-                    }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    ListCountText(sortedReceipts.size)
                 }
             }
+            Divider()
         }
 
-        if (showFilters) Divider()
-
-        if (filteredReceipts.isEmpty()) {
+        if (sortedReceipts.isEmpty()) {
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -348,7 +421,7 @@ private fun ReceiptListTab(
                 contentPadding = PaddingValues(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(filteredReceipts, key = { it.id }) { receipt ->
+                items(sortedReceipts, key = { it.id }) { receipt ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -389,13 +462,11 @@ private fun ReceiptListTab(
                             }
                             Spacer(Modifier.width(8.dp))
                             Column(horizontalAlignment = Alignment.End) {
-                                if (receipt.geminiUsed) {
-                                    Text(
-                                        text = "AI解析済み",
-                                        fontSize = (fontSize - 4f).coerceAtLeast(9f).sp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
+                                Text(
+                                    text = receipt.paymentMethodText?.takeIf { it.isNotBlank() } ?: "支払方法未記載",
+                                    fontSize = (fontSize - 4f).coerceAtLeast(9f).sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                                 Text(
                                     text = "¥${"%,d".format(receipt.total)}",
                                     fontWeight = FontWeight.Bold,
@@ -671,6 +742,15 @@ private fun ReceiptDetailDialog(
     var editDate by remember { mutableStateOf(receipt.date) }
     val editItems = remember { mutableStateListOf<EditableItem>() }
     val coroutineScope = rememberCoroutineScope()
+    var counterAccountName by remember { mutableStateOf<String?>(null) }
+    var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
+    var showPaymentAccountPicker by remember { mutableStateOf(false) }
+
+    fun reloadCounterAccountName() {
+        coroutineScope.launch {
+            counterAccountName = viewModel.resolveCounterAccountNameForReceipt(receipt)
+        }
+    }
 
     fun resetEdit() {
         editStoreName = receipt.storeName
@@ -686,6 +766,8 @@ private fun ReceiptDetailDialog(
         editItems.clear()
         editItems.addAll(loaded.toEditableItems())
         isLoading = false
+        yayoiAccounts = viewModel.loadYayoiAccounts()
+        reloadCounterAccountName()
     }
 
     val calculatedTotal = editItems.sumOf { it.priceStr.toIntOrNull() ?: 0 }
@@ -776,6 +858,30 @@ private fun ReceiptDetailDialog(
                             fontSize = subFontSize.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    if (!isEditMode) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showPaymentAccountPicker = true },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "支払方法の科目（弥生CSV出力用）: ${counterAccountName ?: "…"}",
+                                fontSize = subFontSize.sp,
+                                color = if (receipt.paymentAccountOverride != null)
+                                    MaterialTheme.colorScheme.tertiary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "支払方法の科目を変更",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                         Spacer(Modifier.height(4.dp))
                     }
                     Divider()
@@ -960,4 +1066,100 @@ private fun ReceiptDetailDialog(
     }
     }
     }
+
+    if (showPaymentAccountPicker) {
+        PaymentAccountPickerDialog(
+            currentOverrideId = receipt.paymentAccountOverride,
+            accounts = yayoiAccounts,
+            onDismiss = { showPaymentAccountPicker = false },
+            onSelect = { accountId ->
+                viewModel.updateReceiptPaymentAccountOverride(receipt.id, accountId)
+                showPaymentAccountPicker = false
+                coroutineScope.launch {
+                    counterAccountName = viewModel.resolveCounterAccountNameForReceipt(
+                        receipt.copy(paymentAccountOverride = accountId)
+                    )
+                }
+            }
+        )
+    }
+}
+
+/**
+ * レシート単位の相手科目（貸方勘定科目）個別上書きピッカー。
+ * 「ルール判定に戻す」を選ぶとpaymentAccountOverrideをnullに戻し、
+ * ReceiptPaymentMethodRuleでの自動判定（またはデフォルト現金）に従う。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PaymentAccountPickerDialog(
+    currentOverrideId: Long?,
+    accounts: List<YayoiAccount>,
+    onDismiss: () -> Unit,
+    onSelect: (Long?) -> Unit
+) {
+    var searchText by remember { mutableStateOf("") }
+    val filtered = remember(accounts, searchText) {
+        accounts.filter { acc ->
+            searchText.isEmpty() ||
+            acc.accountName.contains(searchText, ignoreCase = true) ||
+            (acc.accountCode?.contains(searchText, ignoreCase = true) == true)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("支払方法の科目を変更", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
+                OutlinedTextField(
+                    value = searchText,
+                    onValueChange = { searchText = it },
+                    label = { Text("検索") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Divider(modifier = Modifier.padding(vertical = 4.dp))
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(null) }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = currentOverrideId == null, onClick = { onSelect(null) })
+                            Spacer(Modifier.width(8.dp))
+                            Text("ルール判定に戻す（未一致時は現金）", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    items(filtered, key = { it.id }) { account ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(account.id) }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = currentOverrideId == account.id, onClick = { onSelect(account.id) })
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text(account.accountName, fontWeight = FontWeight.Medium)
+                                Text(
+                                    "${account.categoryA} / ${account.categoryB}",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("閉じる") } }
+    )
 }
