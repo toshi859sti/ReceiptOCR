@@ -27,7 +27,7 @@ import com.example.greenframeocr.util.toCanonicalKey
         GeneralItemMaster::class,
         ReceiptPaymentMethodRule::class
     ],
-    version = 32,
+    version = 33,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -777,6 +777,16 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 32 → 33（CSV出力履歴。購買・預金・レシート領収書の各明細に
+        // exportedAt（出力日時）を追加し、出力確認画面で「出力済み」を判別できるようにする）
+        private val MIGRATION_32_33 = object : Migration(32, 33) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE receipt_items ADD COLUMN exportedAt TEXT")
+                database.execSQL("ALTER TABLE deposit_meisai ADD COLUMN exportedAt TEXT")
+                database.execSQL("ALTER TABLE general_receipt_items ADD COLUMN exportedAt TEXT")
+            }
+        }
+
         // マイグレーション: version 30 → 31（yayoi_accountsにusedForReceipt追加。
         // レシート領収書の科目選択リストをJA購買・預金と同様にフラグ絞り込みできるようにする）
         private val MIGRATION_30_31 = object : Migration(30, 31) {
@@ -1173,7 +1183,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33)
                     .build()
                 INSTANCE = instance
                 instance

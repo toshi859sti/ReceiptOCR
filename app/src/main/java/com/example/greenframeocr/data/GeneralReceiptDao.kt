@@ -138,4 +138,8 @@ interface GeneralReceiptDao {
         ORDER BY (SELECT date FROM general_receipts WHERE id = receiptId) ASC, id ASC
     """)
     suspend fun getItemsForExport(from: String?, to: String?): List<GeneralReceiptItem>
+
+    // CSV出力履歴：出力済みの明細に出力日時を記録
+    @Query("UPDATE general_receipt_items SET exportedAt = :exportedAt WHERE id IN (:ids)")
+    suspend fun markExported(ids: List<Long>, exportedAt: String)
 }

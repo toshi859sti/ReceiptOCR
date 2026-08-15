@@ -59,6 +59,7 @@ data class GeneralReceiptOutputItem(
     val debitSubAccountName: String = "",  // 補助科目名（なければ空）
     val defaultTaxCategory: String = "対象外",
     val counterAccountName: String = "現金",  // 相手科目（貸方勘定科目）名。弥生CSV出力でのみ使用
+    val exportedAt: String? = null,  // 直近のCSV出力日時。未出力ならnull
     var isSelected: Boolean = true
 )
 
@@ -521,10 +522,16 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                     accountCode = account?.accountCode ?: "",
                     debitSubAccountName = debitSubAccountName,
                     defaultTaxCategory = account?.defaultTaxCategory ?: "対象外",
-                    counterAccountName = resolveCounterAccountName(receipt, rules, allAccounts)
+                    counterAccountName = resolveCounterAccountName(receipt, rules, allAccounts),
+                    exportedAt = item.exportedAt
                 )
             }
         }
+
+    /** CSV出力後、実際に出力された明細に出力日時を記録する */
+    suspend fun markItemsExported(itemIds: List<Long>, exportedAt: String) {
+        withContext(Dispatchers.IO) { dao.markExported(itemIds, exportedAt) }
+    }
 
     // ─── 支払方法→相手科目ルール ────────────────────────────────────────
 

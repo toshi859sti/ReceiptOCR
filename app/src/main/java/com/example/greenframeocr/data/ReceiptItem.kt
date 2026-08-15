@@ -19,5 +19,6 @@ data class ReceiptItem(
     val category: String,            // 分類（未分類/一般購買/給油所/農業機械）
     val isOcrOverwriteTarget: Boolean = false,  // 再OCR上書き対象フラグ
     val ocrConfidence: String? = null,  // Gemini自己申告の確信度（"high"/"medium"/"low"）。ML Kit由来はnull
-    val productMasterId: Long? = null  // product_master.id への紐づけ（未マッチ・小計/合計行はnull）
+    val productMasterId: Long? = null,  // product_master.id への紐づけ（未マッチ・小計/合計行はnull）
+    val exportedAt: String? = null  // CSV出力日時（yyyy/MM/dd HH:mm）。未出力ならnull
 )

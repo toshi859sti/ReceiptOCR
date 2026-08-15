@@ -39,6 +39,10 @@ interface DepositMeisaiDao {
     @Query("UPDATE deposit_meisai SET matchingRuleId = :ruleId WHERE tekiyou LIKE :pattern")
     suspend fun updateMatchingRuleByPattern(pattern: String, ruleId: Int?)
 
+    // CSV出力履歴：出力済みの明細に出力日時を記録
+    @Query("UPDATE deposit_meisai SET exportedAt = :exportedAt WHERE id IN (:ids)")
+    suspend fun markExported(ids: List<Int>, exportedAt: String)
+
     @Delete
     suspend fun delete(meisai: DepositMeisai)
 

@@ -51,6 +51,8 @@ fun GeneralReceiptOutputScreen(
     var selectedYear by remember { mutableStateOf<Int?>(null) }
     var startDate by remember { mutableStateOf<Calendar?>(null) }
     var endDate by remember { mutableStateOf<Calendar?>(null) }
+    var showUnmatchedBlockDialog by remember { mutableStateOf(false) }
+    var unexportedOnly by remember { mutableStateOf(false) }
 
     val csvLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/csv")
@@ -58,10 +60,24 @@ fun GeneralReceiptOutputScreen(
         uri?.let {
             scope.launch {
                 val selected = outputItems.filter { item -> item.isSelected }
-                if (accountingSoftware == AccountingSoftware.YAYOI) {
+                val success = if (accountingSoftware == AccountingSoftware.YAYOI) {
                     exportYayoiCsvToUri(context, it, selected)
                 } else {
                     exportRakurakuCsvToUri(context, it, selected)
+                }
+                if (success) {
+                    val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date())
+                    val exportedIds = selected.map { item -> item.itemId }.toSet()
+                    viewModel.markItemsExported(selected.map { item -> item.itemId }, timestamp)
+                    // allItemsの更新で年/期間フィルタが再計算されるため、現在の画面上のチェック状態
+                    // （outputItems）を先に反映してから、出力済み分だけexportedAt・チェックOFFを上書きする
+                    val currentSelection = outputItems.associateBy { item -> item.itemId }
+                    allItems = allItems.map { item ->
+                        when {
+                            item.itemId in exportedIds -> item.copy(exportedAt = timestamp, isSelected = false)
+                            else -> currentSelection[item.itemId]?.let { item.copy(isSelected = it.isSelected) } ?: item
+                        }
+                    }
                 }
             }
         }
@@ -69,7 +85,14 @@ fun GeneralReceiptOutputScreen(
 
     LaunchedEffect(Unit) {
         isLoading = true
-        allItems = viewModel.loadOutputItems()
+        val loaded = viewModel.loadOutputItems()
+        // 弥生は厳密なCSVが必要なため、科目未設定の品目は誤出力防止でデフォルトチェックOFFにする。
+        // 出力済み品目も二重出力防止でデフォルトチェックOFFにする（ソフト共通）
+        allItems = loaded.map { item ->
+            val shouldDefaultOff = item.exportedAt != null ||
+                (accountingSoftware == AccountingSoftware.YAYOI && item.accountName.isBlank())
+            if (shouldDefaultOff) item.copy(isSelected = false) else item
+        }
         outputItems = allItems
         // 作業年（設定画面のeraYear）のデータがあれば作業年をデフォルト選択、なければ全年のまま
         val years = allItems.mapNotNull { it.date.take(4).toIntOrNull() }.distinct()
@@ -80,10 +103,13 @@ fun GeneralReceiptOutputScreen(
         isLoading = false
     }
 
-    LaunchedEffect(startDate, endDate, allItems, selectedYear) {
+    LaunchedEffect(startDate, endDate, allItems, selectedYear, unexportedOnly) {
         var filtered = filterGeneralReceiptByDateRange(allItems, startDate, endDate)
         if (selectedYear != null) {
             filtered = filtered.filter { it.date.take(4).toIntOrNull() == selectedYear }
+        }
+        if (unexportedOnly) {
+            filtered = filtered.filter { it.exportedAt == null }
         }
         outputItems = filtered
     }
@@ -190,6 +216,19 @@ fun GeneralReceiptOutputScreen(
                     ) { Text("全解除") }
                 }
 
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = unexportedOnly,
+                        onClick = { unexportedOnly = !unexportedOnly },
+                        label = { Text("未出力のみ表示") }
+                    )
+                }
+
                 GeneralReceiptGridHeader()
                 Divider()
 
@@ -197,6 +236,7 @@ fun GeneralReceiptOutputScreen(
                     items(outputItems, key = { it.itemId }) { item ->
                         GeneralReceiptGridRow(
                             item = item,
+                            accountingSoftware = accountingSoftware,
                             onToggleSelect = {
                                 outputItems = outputItems.map {
                                     if (it.itemId == item.itemId) it.copy(isSelected = !it.isSelected)
@@ -227,15 +267,50 @@ fun GeneralReceiptOutputScreen(
                         )
                         Button(
                             onClick = {
-                                val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-                                    .format(Date())
-                                csvLauncher.launch("レシート_$timestamp.csv")
+                                val hasUnmatched = accountingSoftware == AccountingSoftware.YAYOI &&
+                                    outputItems.any { it.isSelected && it.accountName.isBlank() }
+                                if (hasUnmatched) {
+                                    showUnmatchedBlockDialog = true
+                                } else {
+                                    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                                        .format(Date())
+                                    csvLauncher.launch("レシート_$timestamp.csv")
+                                }
                             },
                             enabled = selectedCount > 0
                         ) { Text("CSV出力") }
                     }
                 }
             }
+        }
+
+        if (showUnmatchedBlockDialog) {
+            val unmatchedNames = outputItems
+                .filter { it.isSelected && it.accountName.isBlank() }
+                .map { it.itemName }
+            AlertDialog(
+                onDismissRequest = { showUnmatchedBlockDialog = false },
+                title = { Text("科目未設定の品目があります") },
+                text = {
+                    Column {
+                        Text("以下の品目に勘定科目が設定されていないため、弥生CSVを出力できません。")
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = unmatchedNames.take(10).joinToString("\n") { "・$it" } +
+                                if (unmatchedNames.size > 10) "\n他${unmatchedNames.size - 10}件" else "",
+                            fontSize = 12.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "「商品名・但し書きリスト」で科目を設定するか、チェックを外してください。",
+                            fontSize = 12.sp
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showUnmatchedBlockDialog = false }) { Text("OK") }
+                }
+            )
         }
     }
 }
@@ -282,9 +357,16 @@ private fun GeneralReceiptGridHeader() {
 @Composable
 private fun GeneralReceiptGridRow(
     item: GeneralReceiptOutputItem,
+    accountingSoftware: AccountingSoftware,
     onToggleSelect: () -> Unit
 ) {
-    val backgroundColor = if (item.accountName.isBlank()) Color(0xFFFFEBEE) else Color.Transparent
+    // 弥生は科目未設定のまま出力できないため警告表示。らくらくは未設定でも問題ないため通常表示
+    val isUnmatchedWarning = accountingSoftware == AccountingSoftware.YAYOI && item.accountName.isBlank()
+    val backgroundColor = when {
+        isUnmatchedWarning -> Color(0xFFFFEBEE)
+        item.exportedAt != null -> Color(0xFFF5F5F5)
+        else -> Color.Transparent
+    }
 
     Row(
         modifier = Modifier
@@ -301,11 +383,23 @@ private fun GeneralReceiptGridRow(
                 modifier = Modifier.size(24.dp)
             )
         }
-        Text(
-            text = item.date,
-            fontSize = 11.sp, textAlign = TextAlign.Center,
-            modifier = Modifier.weight(1.2f)
-        )
+        Column(modifier = Modifier.weight(1.2f)) {
+            Text(
+                text = item.date,
+                fontSize = 11.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (item.exportedAt != null) {
+                Text(
+                    text = "出力済 ${item.exportedAt.take(10)}",
+                    fontSize = 8.sp,
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
         Text(
             text = item.itemName,
             fontSize = 11.sp,
@@ -322,14 +416,27 @@ private fun GeneralReceiptGridRow(
             "${item.accountName}/${item.debitSubAccountName}"
         else
             item.accountName
-        Text(
-            text = accountDisplay.ifEmpty { "（未設定）" },
-            fontSize = 10.sp,
-            color = if (item.accountName.isEmpty()) Color.Gray else Color.Unspecified,
-            textAlign = TextAlign.Center,
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1.5f)
-        )
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
+            if (item.accountName.isEmpty() && isUnmatchedWarning) {
+                Surface(color = Color(0xFFC62828), shape = MaterialTheme.shapes.extraSmall) {
+                    Text(
+                        text = "⚠未設定",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            } else {
+                Text(
+                    text = accountDisplay.ifEmpty { "（未設定）" },
+                    fontSize = 10.sp,
+                    color = if (item.accountName.isEmpty()) Color.Gray else Color.Unspecified,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 
@@ -474,25 +581,25 @@ private suspend fun exportYayoiCsvToUri(
     context: android.content.Context,
     uri: Uri,
     items: List<GeneralReceiptOutputItem>
-) {
-    withContext(Dispatchers.IO) {
-        try {
-            context.contentResolver.openOutputStream(uri)?.use { stream ->
-                val writer = stream.bufferedWriter(CsvUtils.yayoiCharset())
-                for (item in items) {
-                    writer.write(buildYayoiRow(item))
-                    writer.write("\r\n")
-                }
-                writer.flush()
+): Boolean = withContext(Dispatchers.IO) {
+    try {
+        context.contentResolver.openOutputStream(uri)?.use { stream ->
+            val writer = stream.bufferedWriter(CsvUtils.yayoiCharset())
+            for (item in items) {
+                writer.write(buildYayoiRow(item))
+                writer.write("\r\n")
             }
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "弥生インポート用CSVを出力しました", Toast.LENGTH_LONG).show()
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
-            }
+            writer.flush()
         }
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "弥生インポート用CSVを出力しました", Toast.LENGTH_LONG).show()
+        }
+        true
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+        false
     }
 }
 
@@ -502,33 +609,33 @@ private suspend fun exportRakurakuCsvToUri(
     context: android.content.Context,
     uri: Uri,
     items: List<GeneralReceiptOutputItem>
-) {
-    withContext(Dispatchers.IO) {
-        try {
-            context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
-                writer.write("日付,商品名,金額,勘定科目,科目コード")
+): Boolean = withContext(Dispatchers.IO) {
+    try {
+        context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+            writer.write("日付,商品名,金額,勘定科目,科目コード")
+            writer.newLine()
+            for (item in items) {
+                val date = item.date.replace("-", "/")
+                val line = listOf(
+                    date,
+                    escapeCsvField(item.itemName),
+                    item.price.toString(),
+                    escapeCsvField(item.accountName),
+                    escapeCsvField(item.accountCode)
+                ).joinToString(",")
+                writer.write(line)
                 writer.newLine()
-                for (item in items) {
-                    val date = item.date.replace("-", "/")
-                    val line = listOf(
-                        date,
-                        escapeCsvField(item.itemName),
-                        item.price.toString(),
-                        escapeCsvField(item.accountName),
-                        escapeCsvField(item.accountCode)
-                    ).joinToString(",")
-                    writer.write(line)
-                    writer.newLine()
-                }
-            }
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSVを出力しました", Toast.LENGTH_LONG).show()
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "CSVを出力しました", Toast.LENGTH_LONG).show()
+        }
+        true
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+        false
     }
 }
 

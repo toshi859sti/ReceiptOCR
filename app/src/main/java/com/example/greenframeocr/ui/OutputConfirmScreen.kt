@@ -79,6 +79,7 @@ data class PurchaseOutputItem(
     val amount: Int,            // 購入金額
     val yayoiSubAccountName: String = "",
     val defaultTaxCategory: String = "対象外",
+    val exportedAt: String? = null,  // 直近のCSV出力日時。未出力ならnull
     var isSelected: Boolean = true
 )
 
@@ -94,6 +95,7 @@ data class DepositOutputItem(
     val withdrawal: Int?,       // 出金（負の金額の絶対値）
     val yayoiSubAccountName: String = "",
     val defaultTaxCategory: String = "対象外",
+    val exportedAt: String? = null,  // 直近のCSV出力日時。未出力ならnull
     var isSelected: Boolean = true
 )
 
@@ -115,6 +117,8 @@ private fun PurchaseOutputConfirmContent(
     var outputItems by remember { mutableStateOf<List<PurchaseOutputItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var selectedYear by remember { mutableStateOf<Int?>(null) }
+    var unexportedOnly by remember { mutableStateOf(false) }
+    var showUnmatchedBlockDialog by remember { mutableStateOf(false) }
 
     // 期間選択用のState
     var startDate by remember { mutableStateOf<Calendar?>(null) }
@@ -127,10 +131,22 @@ private fun PurchaseOutputConfirmContent(
         uri?.let {
             scope.launch {
                 val selected = outputItems.filter { item -> item.isSelected }
-                if (accountingSoftware == AccountingSoftware.YAYOI) {
+                val success = if (accountingSoftware == AccountingSoftware.YAYOI) {
                     exportPurchaseYayoiCsvToUri(context, it, selected)
                 } else {
                     exportPurchaseCsvToUri(context, it, selected)
+                }
+                if (success) {
+                    val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date())
+                    val exportedIds = selected.map { item -> item.id }.toSet()
+                    database.receiptDao().markExported(selected.map { item -> item.id }, timestamp)
+                    val currentSelection = outputItems.associateBy { item -> item.id }
+                    allItems = allItems.map { item ->
+                        when {
+                            item.id in exportedIds -> item.copy(exportedAt = timestamp, isSelected = false)
+                            else -> currentSelection[item.id]?.let { item.copy(isSelected = it.isSelected) } ?: item
+                        }
+                    }
                 }
             }
         }
@@ -139,16 +155,26 @@ private fun PurchaseOutputConfirmContent(
     // データ読み込み
     LaunchedEffect(Unit) {
         isLoading = true
-        allItems = loadPurchaseOutputItems(database, accountingSoftware)
+        val loaded = loadPurchaseOutputItems(database, accountingSoftware)
+        // 弥生は厳密なCSVが必要なため科目（摘要）未設定は誤出力防止でデフォルトチェックOFF。
+        // 出力済みの明細も二重出力防止でデフォルトチェックOFFにする
+        allItems = loaded.map { item ->
+            val shouldDefaultOff = item.exportedAt != null ||
+                (accountingSoftware == AccountingSoftware.YAYOI && item.tekiyou.isBlank())
+            if (shouldDefaultOff) item.copy(isSelected = false) else item
+        }
         outputItems = allItems
         isLoading = false
     }
 
     // フィルタリング（年・期間）
-    LaunchedEffect(startDate, endDate, allItems, selectedYear) {
+    LaunchedEffect(startDate, endDate, allItems, selectedYear, unexportedOnly) {
         var filtered = filterPurchaseItemsByDateRange(allItems, startDate, endDate)
         if (selectedYear != null) {
             filtered = filtered.filter { it.date.take(4).toIntOrNull() == selectedYear }
+        }
+        if (unexportedOnly) {
+            filtered = filtered.filter { it.exportedAt == null }
         }
         outputItems = filtered
     }
@@ -250,6 +276,19 @@ private fun PurchaseOutputConfirmContent(
                     }
                 }
 
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = unexportedOnly,
+                        onClick = { unexportedOnly = !unexportedOnly },
+                        label = { Text("未出力のみ表示") }
+                    )
+                }
+
                 // ヘッダー行
                 PurchaseGridHeader(accountingSoftware)
 
@@ -263,6 +302,7 @@ private fun PurchaseOutputConfirmContent(
                         PurchaseGridRow(
                             item = item,
                             fontSize = listFontSize,
+                            accountingSoftware = accountingSoftware,
                             onToggleSelect = {
                                 outputItems = outputItems.map {
                                     if (it.id == item.id) it.copy(isSelected = !it.isSelected)
@@ -294,10 +334,16 @@ private fun PurchaseOutputConfirmContent(
                         )
                         Button(
                             onClick = {
-                                val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-                                val timestamp = dateFormat.format(Date())
-                                val fileName = "購買_$timestamp.csv"
-                                csvLauncher.launch(fileName)
+                                val hasUnmatched = accountingSoftware == AccountingSoftware.YAYOI &&
+                                    outputItems.any { it.isSelected && it.tekiyou.isBlank() }
+                                if (hasUnmatched) {
+                                    showUnmatchedBlockDialog = true
+                                } else {
+                                    val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                                    val timestamp = dateFormat.format(Date())
+                                    val fileName = "購買_$timestamp.csv"
+                                    csvLauncher.launch(fileName)
+                                }
                             },
                             enabled = selectedCount > 0
                         ) {
@@ -306,6 +352,16 @@ private fun PurchaseOutputConfirmContent(
                     }
                 }
             }
+        }
+
+        if (showUnmatchedBlockDialog) {
+            val unmatchedNames = outputItems
+                .filter { it.isSelected && it.tekiyou.isBlank() }
+                .map { it.memo }
+            UnmatchedAccountBlockDialog(
+                itemNames = unmatchedNames,
+                onDismiss = { showUnmatchedBlockDialog = false }
+            )
         }
     }
 }
@@ -364,13 +420,16 @@ private fun PurchaseGridHeader(accountingSoftware: AccountingSoftware = Accounti
 private fun PurchaseGridRow(
     item: PurchaseOutputItem,
     fontSize: Float = 14f,
+    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU,
     onToggleSelect: () -> Unit
 ) {
-    // 摘要未設定の場合は薄い赤の背景色
-    val backgroundColor = if (item.tekiyou.isBlank()) {
-        Color(0xFFFFEBEE) // 薄い赤
-    } else {
-        Color.Transparent
+    // 弥生は科目未設定のまま出力できないため警告扱い
+    val isUnmatchedWarning = accountingSoftware == AccountingSoftware.YAYOI && item.tekiyou.isBlank()
+    // 摘要未設定の場合は薄い赤の背景色、出力済みの場合は薄いグレー
+    val backgroundColor = when {
+        item.tekiyou.isBlank() -> Color(0xFFFFEBEE) // 薄い赤
+        item.exportedAt != null -> Color(0xFFF5F5F5)
+        else -> Color.Transparent
     }
 
     Row(
@@ -393,24 +452,48 @@ private fun PurchaseGridRow(
             )
         }
         // 日付列
-        Text(
-            text = item.date,
-            fontSize = fontSize.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.weight(1.2f)
-        )
+        Column(modifier = Modifier.weight(1.2f)) {
+            Text(
+                text = item.date,
+                fontSize = fontSize.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (item.exportedAt != null) {
+                Text(
+                    text = "出力済 ${item.exportedAt.take(10)}",
+                    fontSize = 8.sp,
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
         // 摘要/メモ列（2行表示）
         Column(
             modifier = Modifier.weight(2f)
         ) {
-            Text(
-                text = item.tekiyou.ifEmpty { "（未設定）" },
-                fontSize = fontSize.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (item.tekiyou.isEmpty()) Color.Gray else Color.Unspecified,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (item.tekiyou.isEmpty() && isUnmatchedWarning) {
+                Surface(color = Color(0xFFC62828), shape = MaterialTheme.shapes.extraSmall) {
+                    Text(
+                        text = "⚠未設定",
+                        fontSize = (fontSize - 2f).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            } else {
+                Text(
+                    text = item.tekiyou.ifEmpty { "（未設定）" },
+                    fontSize = fontSize.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (item.tekiyou.isEmpty()) Color.Gray else Color.Unspecified,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Text(
                 text = item.memo,
                 fontSize = (fontSize - 1f).sp,
@@ -448,6 +531,8 @@ private fun DepositOutputConfirmContent(
     var outputItems by remember { mutableStateOf<List<DepositOutputItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var selectedYear by remember { mutableStateOf<Int?>(null) }
+    var unexportedOnly by remember { mutableStateOf(false) }
+    var showUnmatchedBlockDialog by remember { mutableStateOf(false) }
 
     // 期間選択用のState
     var startDate by remember { mutableStateOf<Calendar?>(null) }
@@ -460,10 +545,22 @@ private fun DepositOutputConfirmContent(
         uri?.let {
             scope.launch {
                 val selected = outputItems.filter { item -> item.isSelected }
-                if (accountingSoftware == AccountingSoftware.YAYOI) {
+                val success = if (accountingSoftware == AccountingSoftware.YAYOI) {
                     exportDepositYayoiCsvToUri(context, it, selected)
                 } else {
                     exportDepositCsvToUri(context, it, selected)
+                }
+                if (success) {
+                    val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date())
+                    val exportedIds = selected.map { item -> item.id }.toSet()
+                    database.depositMeisaiDao().markExported(selected.map { item -> item.id }, timestamp)
+                    val currentSelection = outputItems.associateBy { item -> item.id }
+                    allItems = allItems.map { item ->
+                        when {
+                            item.id in exportedIds -> item.copy(exportedAt = timestamp, isSelected = false)
+                            else -> currentSelection[item.id]?.let { item.copy(isSelected = it.isSelected) } ?: item
+                        }
+                    }
                 }
             }
         }
@@ -472,16 +569,26 @@ private fun DepositOutputConfirmContent(
     // データ読み込み
     LaunchedEffect(Unit) {
         isLoading = true
-        allItems = loadDepositOutputItems(database, accountingSoftware)
+        val loaded = loadDepositOutputItems(database, accountingSoftware)
+        // 弥生は厳密なCSVが必要なため科目（摘要）未設定は誤出力防止でデフォルトチェックOFF。
+        // 出力済みの明細も二重出力防止でデフォルトチェックOFFにする
+        allItems = loaded.map { item ->
+            val shouldDefaultOff = item.exportedAt != null ||
+                (accountingSoftware == AccountingSoftware.YAYOI && item.tekiyou.isBlank())
+            if (shouldDefaultOff) item.copy(isSelected = false) else item
+        }
         outputItems = allItems
         isLoading = false
     }
 
     // フィルタリング（年・期間）
-    LaunchedEffect(startDate, endDate, allItems, selectedYear) {
+    LaunchedEffect(startDate, endDate, allItems, selectedYear, unexportedOnly) {
         var filtered = filterDepositItemsByDateRange(allItems, startDate, endDate)
         if (selectedYear != null) {
             filtered = filtered.filter { it.date.take(4).toIntOrNull() == selectedYear }
+        }
+        if (unexportedOnly) {
+            filtered = filtered.filter { it.exportedAt == null }
         }
         outputItems = filtered
     }
@@ -583,6 +690,19 @@ private fun DepositOutputConfirmContent(
                     }
                 }
 
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = unexportedOnly,
+                        onClick = { unexportedOnly = !unexportedOnly },
+                        label = { Text("未出力のみ表示") }
+                    )
+                }
+
                 // ヘッダー行
                 DepositGridHeader(accountingSoftware)
 
@@ -597,6 +717,7 @@ private fun DepositOutputConfirmContent(
                             item = item,
                             hideAmount = hideAmount,
                             fontSize = listFontSize,
+                            accountingSoftware = accountingSoftware,
                             onToggleSelect = {
                                 outputItems = outputItems.map {
                                     if (it.id == item.id) it.copy(isSelected = !it.isSelected)
@@ -628,10 +749,16 @@ private fun DepositOutputConfirmContent(
                         )
                         Button(
                             onClick = {
-                                val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-                                val timestamp = dateFormat.format(Date())
-                                val fileName = "預金_$timestamp.csv"
-                                csvLauncher.launch(fileName)
+                                val hasUnmatched = accountingSoftware == AccountingSoftware.YAYOI &&
+                                    outputItems.any { it.isSelected && it.tekiyou.isBlank() }
+                                if (hasUnmatched) {
+                                    showUnmatchedBlockDialog = true
+                                } else {
+                                    val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                                    val timestamp = dateFormat.format(Date())
+                                    val fileName = "預金_$timestamp.csv"
+                                    csvLauncher.launch(fileName)
+                                }
                             },
                             enabled = selectedCount > 0
                         ) {
@@ -640,6 +767,16 @@ private fun DepositOutputConfirmContent(
                     }
                 }
             }
+        }
+
+        if (showUnmatchedBlockDialog) {
+            val unmatchedNames = outputItems
+                .filter { it.isSelected && it.tekiyou.isBlank() }
+                .map { it.memo }
+            UnmatchedAccountBlockDialog(
+                itemNames = unmatchedNames,
+                onDismiss = { showUnmatchedBlockDialog = false }
+            )
         }
     }
 }
@@ -699,13 +836,16 @@ private fun DepositGridRow(
     item: DepositOutputItem,
     hideAmount: Boolean = false,
     fontSize: Float = 14f,
+    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU,
     onToggleSelect: () -> Unit
 ) {
-    // 摘要未設定の場合は薄い赤の背景色
-    val backgroundColor = if (item.tekiyou.isBlank()) {
-        Color(0xFFFFEBEE) // 薄い赤
-    } else {
-        Color.Transparent
+    // 弥生は科目未設定のまま出力できないため警告扱い
+    val isUnmatchedWarning = accountingSoftware == AccountingSoftware.YAYOI && item.tekiyou.isBlank()
+    // 摘要未設定の場合は薄い赤の背景色、出力済みの場合は薄いグレー
+    val backgroundColor = when {
+        item.tekiyou.isBlank() -> Color(0xFFFFEBEE) // 薄い赤
+        item.exportedAt != null -> Color(0xFFF5F5F5)
+        else -> Color.Transparent
     }
 
     Row(
@@ -728,24 +868,48 @@ private fun DepositGridRow(
             )
         }
         // 日付列
-        Text(
-            text = item.date,
-            fontSize = fontSize.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.weight(1.2f)
-        )
+        Column(modifier = Modifier.weight(1.2f)) {
+            Text(
+                text = item.date,
+                fontSize = fontSize.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (item.exportedAt != null) {
+                Text(
+                    text = "出力済 ${item.exportedAt.take(10)}",
+                    fontSize = 8.sp,
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
         // 摘要/メモ列（2行表示）
         Column(
             modifier = Modifier.weight(2f)
         ) {
-            Text(
-                text = item.tekiyou.ifEmpty { "（未設定）" },
-                fontSize = fontSize.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (item.tekiyou.isEmpty()) Color.Gray else Color.Unspecified,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (item.tekiyou.isEmpty() && isUnmatchedWarning) {
+                Surface(color = Color(0xFFC62828), shape = MaterialTheme.shapes.extraSmall) {
+                    Text(
+                        text = "⚠未設定",
+                        fontSize = (fontSize - 2f).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            } else {
+                Text(
+                    text = item.tekiyou.ifEmpty { "（未設定）" },
+                    fontSize = fontSize.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (item.tekiyou.isEmpty()) Color.Gray else Color.Unspecified,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Text(
                 text = item.memo,
                 fontSize = (fontSize - 1f).sp,
@@ -823,7 +987,8 @@ private suspend fun loadPurchaseOutputItems(
                         memo = item.productName,
                         amount = item.amount,
                         yayoiSubAccountName = subName,
-                        defaultTaxCategory = account?.defaultTaxCategory ?: "対象外"
+                        defaultTaxCategory = account?.defaultTaxCategory ?: "対象外",
+                        exportedAt = item.exportedAt
                     )
                 } else {
                     val tekiyouName = productMaster?.kaikakeTekiyouId?.let { tekiyouId ->
@@ -834,7 +999,8 @@ private suspend fun loadPurchaseOutputItems(
                         date = date,
                         tekiyou = tekiyouName,
                         memo = item.productName,
-                        amount = item.amount
+                        amount = item.amount,
+                        exportedAt = item.exportedAt
                     )
                 }
             }
@@ -883,7 +1049,8 @@ private suspend fun loadDepositOutputItems(
                     deposit = if (meisai.amount >= 0) meisai.amount else null,
                     withdrawal = if (meisai.amount < 0) -meisai.amount else null,
                     yayoiSubAccountName = subName,
-                    defaultTaxCategory = account?.defaultTaxCategory ?: "対象外"
+                    defaultTaxCategory = account?.defaultTaxCategory ?: "対象外",
+                    exportedAt = meisai.exportedAt
                 )
             } else {
                 DepositOutputItem(
@@ -892,7 +1059,8 @@ private suspend fun loadDepositOutputItems(
                     tekiyou = rule?.rakurakuTekiyouName ?: "",
                     memo = meisai.tekiyou,
                     deposit = if (meisai.amount >= 0) meisai.amount else null,
-                    withdrawal = if (meisai.amount < 0) -meisai.amount else null
+                    withdrawal = if (meisai.amount < 0) -meisai.amount else null,
+                    exportedAt = meisai.exportedAt
                 )
             }
         }
@@ -913,7 +1081,7 @@ private fun normalizeTekiyou(tekiyou: String): String {
 /**
  * 購買CSVを出力（URI経由）
  */
-private suspend fun exportPurchaseCsvToUri(context: Context, uri: Uri, items: List<PurchaseOutputItem>) {
+private suspend fun exportPurchaseCsvToUri(context: Context, uri: Uri, items: List<PurchaseOutputItem>): Boolean =
     withContext(Dispatchers.IO) {
         try {
             context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
@@ -938,18 +1106,19 @@ private suspend fun exportPurchaseCsvToUri(context: Context, uri: Uri, items: Li
             withContext(Dispatchers.Main) {
                 Toast.makeText(context, "CSVを出力しました", Toast.LENGTH_LONG).show()
             }
+            true
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
             }
+            false
         }
     }
-}
 
 /**
  * 預金CSVを出力（URI経由）
  */
-private suspend fun exportDepositCsvToUri(context: Context, uri: Uri, items: List<DepositOutputItem>) {
+private suspend fun exportDepositCsvToUri(context: Context, uri: Uri, items: List<DepositOutputItem>): Boolean =
     withContext(Dispatchers.IO) {
         try {
             context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
@@ -979,13 +1148,14 @@ private suspend fun exportDepositCsvToUri(context: Context, uri: Uri, items: Lis
             withContext(Dispatchers.Main) {
                 Toast.makeText(context, "CSVを出力しました", Toast.LENGTH_LONG).show()
             }
+            true
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
             }
+            false
         }
     }
-}
 
 private fun escapeCsvField(field: String): String = CsvUtils.escapeCsvField(field)
 
@@ -1057,25 +1227,25 @@ private suspend fun exportPurchaseYayoiCsvToUri(
     context: Context,
     uri: Uri,
     items: List<PurchaseOutputItem>
-) {
-    withContext(Dispatchers.IO) {
-        try {
-            context.contentResolver.openOutputStream(uri)?.use { os ->
-                val writer = os.bufferedWriter(CsvUtils.yayoiCharset())
-                for (item in items) {
-                    writer.write(buildPurchaseYayoiRow(item))
-                    writer.write("\r\n")
-                }
-                writer.flush()
+): Boolean = withContext(Dispatchers.IO) {
+    try {
+        context.contentResolver.openOutputStream(uri)?.use { os ->
+            val writer = os.bufferedWriter(CsvUtils.yayoiCharset())
+            for (item in items) {
+                writer.write(buildPurchaseYayoiRow(item))
+                writer.write("\r\n")
             }
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "仕訳CSVを出力しました（弥生形式）", Toast.LENGTH_LONG).show()
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
-            }
+            writer.flush()
         }
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "仕訳CSVを出力しました（弥生形式）", Toast.LENGTH_LONG).show()
+        }
+        true
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+        false
     }
 }
 
@@ -1083,26 +1253,57 @@ private suspend fun exportDepositYayoiCsvToUri(
     context: Context,
     uri: Uri,
     items: List<DepositOutputItem>
-) {
-    withContext(Dispatchers.IO) {
-        try {
-            context.contentResolver.openOutputStream(uri)?.use { os ->
-                val writer = os.bufferedWriter(CsvUtils.yayoiCharset())
-                for (item in items) {
-                    writer.write(buildDepositYayoiRow(item))
-                    writer.write("\r\n")
-                }
-                writer.flush()
+): Boolean = withContext(Dispatchers.IO) {
+    try {
+        context.contentResolver.openOutputStream(uri)?.use { os ->
+            val writer = os.bufferedWriter(CsvUtils.yayoiCharset())
+            for (item in items) {
+                writer.write(buildDepositYayoiRow(item))
+                writer.write("\r\n")
             }
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "仕訳CSVを出力しました（弥生形式）", Toast.LENGTH_LONG).show()
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
-            }
+            writer.flush()
         }
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "仕訳CSVを出力しました（弥生形式）", Toast.LENGTH_LONG).show()
+        }
+        true
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+        false
     }
+}
+
+/**
+ * 弥生モードで科目（摘要）未設定の明細がチェックされたまま出力しようとしたときのブロックダイアログ。
+ * 購買・預金で共用（レシート領収書側は別途GeneralReceiptOutputScreen.ktに同等の実装あり）
+ */
+@Composable
+private fun UnmatchedAccountBlockDialog(
+    itemNames: List<String>,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("科目未設定の明細があります") },
+        text = {
+            Column {
+                Text("以下の明細に勘定科目（摘要）が設定されていないため、弥生CSVを出力できません。")
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = itemNames.take(10).joinToString("\n") { "・$it" } +
+                        if (itemNames.size > 10) "\n他${itemNames.size - 10}件" else "",
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("科目を設定するか、チェックを外してください。", fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("OK") }
+        }
+    )
 }
 
 /**

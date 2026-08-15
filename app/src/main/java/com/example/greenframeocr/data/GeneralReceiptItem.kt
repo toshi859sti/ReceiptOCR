@@ -28,5 +28,7 @@ data class GeneralReceiptItem(
     val isExcluded: Boolean = false,
     // itemNameの正規化キー（スペース除去・文字種統一）。品目別マッチングのグルーピングに使用。
     // INSERT/UPDATE前に必ず withComputedKey() で設定すること
-    val canonicalKey: String = ""
+    val canonicalKey: String = "",
+    // CSV出力日時（yyyy/MM/dd HH:mm）。未出力ならnull
+    val exportedAt: String? = null
 )
