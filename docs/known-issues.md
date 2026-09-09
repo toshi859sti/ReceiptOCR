@@ -16,6 +16,39 @@
     印字テキスト抽出（`GeneralReceipt.paymentMethodText`）を追加し、個別上書き→ルール一致→
     現金の優先順で自動判定するよう修正。詳細は`.steering/`（該当セッションのアーカイブ）参照
 
+- [ ] 預金CSV出力が個別オーバーライドを無視する（発覚 2026-09-09）
+  - `TekiyouMatchingScreen` の個別変更ダイアログ（`IndividualOverrideDialog` / らくらく =
+    `deposit_meisai.overrideTekiyouId`、`IndividualYayoiOverrideDialog` / 弥生 =
+    `overrideYayoiAccountId`）でユーザーが行単位に科目/摘要を上書きできるが、
+    `OutputConfirmScreen.loadDepositOutputItems` は `tekiyou_matching_rules` のパターン一致
+    （`rule.yayoiAccountId` / `rule.rakurakuTekiyouName`）しか見ておらず、個別上書きが
+    CSV出力に反映されない。レシート領収書側（`GeneralReceiptViewModel.resolveEffectiveAccountId`）
+    は「個別上書き→グループデフォルト」の優先順で正しく解決しているので、預金側もそれに合わせる
+  - 修正方針：`loadDepositOutputItems` で `meisai.overrideYayoiAccountId` /
+    `meisai.overrideTekiyouId` を最優先で解決してから、なければルール一致にフォールバック
+
+- [ ] 弥生CSVの列構成が購買/預金とレシートで不一致（発覚 2026-09-09）
+  - `GeneralReceiptOutputScreen.buildYayoiRow` は先頭に識別フラグ `"2000"` を持つ正式な25列。
+    一方 `OutputConfirmScreen.buildPurchaseYayoiRow` / `buildDepositYayoiRow` は先頭が
+    取引日付で `"2000"` がなく、列の並びも独自（借方部門・貸方部門の位置等が異なる）
+  - 既定の会計ソフトが「らくらく」のため弥生の購買/預金CSVは実運用での検証が薄いとみられる
+  - 修正方針：`buildYayoiRow`（レシート）と同じ25列レイアウトに購買/預金も揃える。
+    共通化して `CsvUtils` か専用 Exporter に寄せる
+
+- [ ] 弥生の税区分文字列がやよいの青色申告の実インポート仕様と一致しない可能性（発覚 2026-09-09）
+  - `YayoiAccount.defaultTaxCategory` のDB値（`課対仕入10` / `課対仕入8` / `課税売上` /
+    `非課税` / `対象外`）がそのまま弥生CSVの税区分列に出力される。やよいの青色申告が
+    実際に受け付ける表記（`課対仕入込10%` 等）とは異なる可能性が高い
+  - `docs/yayoi-csv-export-spec.md` は別プロジェクト "AoiroChobo"(C#) 由来の参考資料で、
+    そこでは `課対仕入込10%` 等の表記。実機での弥生インポート検証が必要
+  - 修正方針：検証後、出力時に `defaultTaxCategory` → 弥生税区分文字列へのマッピング表を挟む
+
+- [ ] レシート出力確認画面が `isExcluded` の品目を除外していない（発覚 2026-09-09）
+  - `GeneralReceiptViewModel.buildCsvForExport` は `.filter { !it.isExcluded }` するが、
+    出力確認画面が使う `loadOutputItems()` はフィルタしていないため、経費対象外に
+    マークした品目も出力候補に並ぶ（ユーザーが手動でチェックを外す必要がある）
+  - 修正方針：`loadOutputItems()` でも `isExcluded == true` を除外する
+
 ---
 
 ## 制約・注意事項
