@@ -1019,6 +1019,10 @@ private suspend fun loadDepositOutputItems(
         val matchingRules = database.tekiyouMatchingRuleDao().getAllWithTekiyou()
         val allYayoiAccounts = if (accountingSoftware == AccountingSoftware.YAYOI)
             database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
+        // 行単位の個別オーバーライド（TekiyouMatchingScreen の個別変更ダイアログで設定）を
+        // 解決するためのマスタ。らくらくは overrideTekiyouId、弥生は overrideYayoiAccountId。
+        val allRakurakuTekiyou = if (accountingSoftware != AccountingSoftware.YAYOI)
+            database.rakurakuTekiyouDao().getAll().associateBy { it.id } else emptyMap()
 
         val ruleMap = mutableMapOf<String, MatchingRuleWithTekiyou>()
         for (rule in matchingRules) {
@@ -1037,7 +1041,9 @@ private suspend fun loadDepositOutputItems(
             val rule = ruleMap[patternKey]
 
             if (accountingSoftware == AccountingSoftware.YAYOI) {
-                val account = rule?.yayoiAccountId?.let { allYayoiAccounts[it] }
+                // 個別オーバーライドを最優先、なければルール一致の科目
+                val effectiveAccountId = meisai.overrideYayoiAccountId ?: rule?.yayoiAccountId
+                val account = effectiveAccountId?.let { allYayoiAccounts[it] }
                 val parentAccount = account?.parentId?.let { allYayoiAccounts[it] }
                 val mainName = parentAccount?.accountName ?: account?.accountName ?: ""
                 val subName = if (parentAccount != null) account?.accountName ?: "" else ""
@@ -1053,10 +1059,13 @@ private suspend fun loadDepositOutputItems(
                     exportedAt = meisai.exportedAt
                 )
             } else {
+                // 個別オーバーライドを最優先、なければルール一致の摘要名
+                val tekiyouName = meisai.overrideTekiyouId?.let { allRakurakuTekiyou[it]?.tekiyouName }
+                    ?: rule?.rakurakuTekiyouName ?: ""
                 DepositOutputItem(
                     id = meisai.id,
                     date = meisai.transactionDate,
-                    tekiyou = rule?.rakurakuTekiyouName ?: "",
+                    tekiyou = tekiyouName,
                     memo = meisai.tekiyou,
                     deposit = if (meisai.amount >= 0) meisai.amount else null,
                     withdrawal = if (meisai.amount < 0) -meisai.amount else null,

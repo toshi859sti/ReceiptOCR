@@ -15,6 +15,8 @@ PC会計アプリを同時進行で開発中。PC側のClaude Code / 開発者�
 - [x] CSV出力（らくらく/弥生・購買/預金/レシート）の仕訳ロジック調査
 - [x] マッチングロジック調査（canonicalKey / normalizeTekiyou / 支払方法ルール）
 - [x] `docs/PC_ACCOUNTING_INTEGRATION_SPEC.md` として文書化
+- [x] 不整合 #1（預金CSVの個別オーバーライド反映）・#2（`isExcluded` 除外）を修正・ビルド確認
+- [ ] 不整合 #3（弥生CSV列構成）・#4（弥生税区分文字列）は弥生が使える時に対応
 - [ ] （必要なら）PC側と取引JSONスキーマ §10 のすり合わせ
 
 ## 完了条件

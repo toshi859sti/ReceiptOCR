@@ -16,16 +16,16 @@
     印字テキスト抽出（`GeneralReceipt.paymentMethodText`）を追加し、個別上書き→ルール一致→
     現金の優先順で自動判定するよう修正。詳細は`.steering/`（該当セッションのアーカイブ）参照
 
-- [ ] 預金CSV出力が個別オーバーライドを無視する（発覚 2026-09-09）
+- [x] 預金CSV出力が個別オーバーライドを無視する（発覚 2026-09-09 / 修正済み 2026-09-09）
   - `TekiyouMatchingScreen` の個別変更ダイアログ（`IndividualOverrideDialog` / らくらく =
     `deposit_meisai.overrideTekiyouId`、`IndividualYayoiOverrideDialog` / 弥生 =
     `overrideYayoiAccountId`）でユーザーが行単位に科目/摘要を上書きできるが、
     `OutputConfirmScreen.loadDepositOutputItems` は `tekiyou_matching_rules` のパターン一致
     （`rule.yayoiAccountId` / `rule.rakurakuTekiyouName`）しか見ておらず、個別上書きが
-    CSV出力に反映されない。レシート領収書側（`GeneralReceiptViewModel.resolveEffectiveAccountId`）
-    は「個別上書き→グループデフォルト」の優先順で正しく解決しているので、預金側もそれに合わせる
-  - 修正方針：`loadDepositOutputItems` で `meisai.overrideYayoiAccountId` /
-    `meisai.overrideTekiyouId` を最優先で解決してから、なければルール一致にフォールバック
+    CSV出力に反映されなかった
+  - 修正：`loadDepositOutputItems` で `meisai.overrideYayoiAccountId`（弥生）/
+    `meisai.overrideTekiyouId`（らくらく・`rakuraku_tekiyou` から摘要名を引く）を最優先で解決し、
+    なければ従来どおりルール一致にフォールバックするようにした
 
 - [ ] 弥生CSVの列構成が購買/預金とレシートで不一致（発覚 2026-09-09）
   - `GeneralReceiptOutputScreen.buildYayoiRow` は先頭に識別フラグ `"2000"` を持つ正式な25列。
@@ -43,11 +43,12 @@
     そこでは `課対仕入込10%` 等の表記。実機での弥生インポート検証が必要
   - 修正方針：検証後、出力時に `defaultTaxCategory` → 弥生税区分文字列へのマッピング表を挟む
 
-- [ ] レシート出力確認画面が `isExcluded` の品目を除外していない（発覚 2026-09-09）
+- [x] レシート出力確認画面が `isExcluded` の品目を除外していない
+      （発覚 2026-09-09 / 修正済み 2026-09-09）
   - `GeneralReceiptViewModel.buildCsvForExport` は `.filter { !it.isExcluded }` するが、
     出力確認画面が使う `loadOutputItems()` はフィルタしていないため、経費対象外に
-    マークした品目も出力候補に並ぶ（ユーザーが手動でチェックを外す必要がある）
-  - 修正方針：`loadOutputItems()` でも `isExcluded == true` を除外する
+    マークした品目も出力候補に並んでいた
+  - 修正：`loadOutputItems()` でも `dao.getItemsForExport(...).filter { !it.isExcluded }` するようにした
 
 ---
 

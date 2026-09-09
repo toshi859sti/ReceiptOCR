@@ -502,7 +502,9 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
 
     suspend fun loadOutputItems(): List<GeneralReceiptOutputItem> =
         withContext(Dispatchers.IO) {
-            val allItems = dao.getItemsForExport(null, null)
+            // 経費対象外にマークした品目（isExcluded）は出力候補から除外する
+            // （buildCsvForExport と挙動を揃える）
+            val allItems = dao.getItemsForExport(null, null).filter { !it.isExcluded }
             val allAccounts = db.yayoiAccountDao().getAll().associateBy { it.id }
             val rules = db.receiptPaymentMethodRuleDao().getAll()
             allItems.map { item ->
