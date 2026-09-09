@@ -38,13 +38,21 @@ PC側のClaude Codeがこの1ファイルを読めば、Android出力の全デ�
 ## 作業終了時の記録（セッション終了前に必ず埋めること）
 
 ### 今回完了したこと
-- `docs/PC_ACCOUNTING_INTEGRATION_SPEC.md` を新規作成（PC会計アプリ向け連携仕様）
+- `docs/PC_ACCOUNTING_INTEGRATION_SPEC.md` を新規作成（PC会計アプリ向け連携仕様・全12章）
+- 調査で判明した既存実装の不整合4点を `docs/known-issues.md` に転記（修正方針つき）
+- 不整合 #1（預金CSVが個別オーバーライドを無視）を修正（`OutputConfirmScreen.loadDepositOutputItems`）
+- 不整合 #2（レシート出力確認が `isExcluded` を除外しない）を修正（`GeneralReceiptViewModel.loadOutputItems`）
+- クリーンビルド BUILD SUCCESSFUL 確認
+- コミット: `a44a8e9`（仕様書・known-issues転記）、`486e75f`（#1・#2修正）
 
 ### 未完了・中断した理由
+- 不整合 #3（弥生CSVの列構成が購買/預金とレシートで不一致）・#4（弥生税区分文字列が
+  やよい実仕様と不一致の疑い）は、弥生が現在使えず実インポート検証ができないため保留
 - PC側との取引JSONスキーマ（仕様書 §10）のすり合わせは未実施（PC側の要件待ち）
 
 ### 次回セッションで最初にやること
-PC側の要望を聞き、仕様書 §10 の取引データJSONスキーマを確定させる
+弥生が使えるようになったら #3・#4 を実インポート検証しながら対応する。
+先にPC側の要望が来たら仕様書 §10 の取引データJSONスキーマを確定させる。
 
 ### 新たに発覚した問題・制約
-上記「進捗メモ」の既存実装の不整合4点。docs/known-issues.md への転記を検討（未転記）。
+`docs/known-issues.md` の「既知のバグ」に4点追加済み（#1・#2は修正済み `[x]`、#3・#4は `[ ]`）。
