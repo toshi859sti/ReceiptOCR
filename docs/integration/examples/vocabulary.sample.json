@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "kind": "aoirochobo.vocabulary",
+  "generatedAt": "2026-09-10T14:30:00+09:00",
+  "generatedBy": {
+    "app": "AoiroChobo",
+    "appVersion": "0.9.0"
+  },
+  "fiscalYear": {
+    "year": 2026,
+    "startDate": "2026-01-01",
+    "endDate": "2026-12-31"
+  },
+  "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "_note": "実際のファイルは IsActive=1 の全科目・全摘要を含む。これは構造を示す抜粋サンプル。",
+  "enums": {
+    "accountType": ["Asset", "Liability", "Income", "Expense", "Capital"],
+    "ledgerType": ["Cash", "Bank", "AR", "AP", "Unpaid", "Transfer"],
+    "direction": ["In", "Out"],
+    "taxRate": ["10", "8", "8_old", "non", "na", "men"],
+    "defaultTaxCategory": ["Taxable", "NonTaxable", "NotApplicable", "TaxExempt", "NA"]
+  },
+  "accounts": [
+    { "code": "genkin", "name": "現金", "accountType": "Asset", "groupName": null, "parentCode": null, "ledgerAffinity": "Cash", "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 1 },
+    { "code": "hutuu", "name": "普通預金", "accountType": "Asset", "groupName": null, "parentCode": null, "ledgerAffinity": "Bank", "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 2 },
+    { "code": "einou", "name": "営農口座", "accountType": "Asset", "groupName": "普通預金", "parentCode": "hutuu", "ledgerAffinity": "Bank", "bankSlotNo": 1, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 3 },
+    { "code": "tyokubai", "name": "直売口座", "accountType": "Asset", "groupName": "普通預金", "parentCode": "hutuu", "ledgerAffinity": "Bank", "bankSlotNo": 2, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 4 },
+    { "code": "urikake", "name": "売掛金", "accountType": "Asset", "groupName": null, "parentCode": null, "ledgerAffinity": "AR", "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 7 },
+    { "code": "noukigu", "name": "農機具等（資産）", "accountType": "Asset", "groupName": "償却資産", "parentCode": null, "ledgerAffinity": "Any", "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 17 },
+    { "code": "kaikake", "name": "買掛金", "accountType": "Liability", "groupName": null, "parentCode": null, "ledgerAffinity": "AP", "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 21 },
+    { "code": "kariire", "name": "借入金", "accountType": "Liability", "groupName": null, "parentCode": null, "ledgerAffinity": "Any", "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 22 },
+    { "code": "mibarai", "name": "未払金", "accountType": "Liability", "groupName": null, "parentCode": null, "ledgerAffinity": "Unpaid", "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 23 },
+    { "code": "suitou", "name": "水稲", "accountType": "Income", "groupName": "田畑", "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": true, "defaultTaxCategory": "Taxable", "displayOrder": 27 },
+    { "code": "zatu", "name": "雑収入", "accountType": "Income", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": true, "defaultTaxCategory": "Taxable", "displayOrder": 32 },
+    { "code": "nougai", "name": "農外収入", "accountType": "Income", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": "NA", "displayOrder": 34 },
+    { "code": "sozei", "name": "租税公課", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": true, "defaultTaxCategory": "NotApplicable", "displayOrder": 35 },
+    { "code": "hiryou", "name": "肥料費", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": true, "defaultTaxCategory": "Taxable", "displayOrder": 38 },
+    { "code": "nouyaku", "name": "農薬衛生費", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": false, "defaultTaxCategory": "Taxable", "displayOrder": 41 },
+    { "code": "syozairyou", "name": "諸材料費", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": false, "defaultTaxCategory": "Taxable", "displayOrder": 42 },
+    { "code": "syuuzen", "name": "修繕費", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": false, "defaultTaxCategory": "Taxable", "displayOrder": 43 },
+    { "code": "douryoku", "name": "動力光熱費", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": true, "defaultTaxCategory": "Taxable", "displayOrder": 44 },
+    { "code": "genka", "name": "減価償却費", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": true, "defaultTaxCategory": "NotApplicable", "displayOrder": 47 },
+    { "code": "tidai", "name": "地代・賃借料", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": true, "defaultTaxCategory": "Taxable", "displayOrder": 51 },
+    { "code": "zigyousyouhi", "name": "事業消費", "accountType": "Income", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": true, "defaultTaxCategory": "Taxable", "displayOrder": 31 },
+    { "code": "yatoinin", "name": "雇人費", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": true, "defaultTaxCategory": "NotApplicable", "displayOrder": 49 },
+    { "code": "zappi", "name": "雑費", "accountType": "Expense", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": true, "allowsNonTaxable": true, "defaultTaxCategory": "Taxable", "displayOrder": 56 },
+    { "code": "kazyu", "name": "果樹・牛馬等（資産）", "accountType": "Asset", "groupName": "償却資産", "parentCode": null, "ledgerAffinity": "Any", "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 18 },
+    { "code": "zigyounusikari", "name": "事業主借", "accountType": "Capital", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 60 },
+    { "code": "zigyounusikas", "name": "事業主貸", "accountType": "Capital", "groupName": null, "parentCode": null, "ledgerAffinity": null, "bankSlotNo": null, "allowsTaxable": false, "allowsNonTaxable": false, "defaultTaxCategory": null, "displayOrder": 59 }
+  ],
+  "memoTemplates": [
+    { "ledgerType": "Cash", "direction": "In", "name": "米販売代金", "searchKey": "kome", "counterAccountCode": "suitou", "debitAccountCode": null, "creditAccountCode": null, "taxRate": "8", "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": true, "showInBank": true, "bankSlotNo": null },
+    { "ledgerType": "Cash", "direction": "In", "name": "雑収入", "searchKey": "zatu", "counterAccountCode": "zatu", "debitAccountCode": null, "creditAccountCode": null, "taxRate": "10", "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": true, "showInBank": true, "bankSlotNo": null },
+    { "ledgerType": "Cash", "direction": "In", "name": "農外収入", "searchKey": "nougai", "counterAccountCode": "nougai", "debitAccountCode": null, "creditAccountCode": null, "taxRate": null, "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": true, "showInBank": true, "bankSlotNo": null },
+    { "ledgerType": "AR", "direction": "In", "name": "米販売代金", "searchKey": "kome", "counterAccountCode": "suitou", "debitAccountCode": null, "creditAccountCode": null, "taxRate": "8", "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": false, "showInBank": false, "bankSlotNo": null },
+    { "ledgerType": "AR", "direction": "Out", "name": "売掛入金（現金）", "searchKey": "urikake", "counterAccountCode": "genkin", "debitAccountCode": null, "creditAccountCode": null, "taxRate": null, "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": false, "showInBank": false, "bankSlotNo": null },
+    { "ledgerType": "AP", "direction": "In", "name": "肥料購入", "searchKey": "hiryou", "counterAccountCode": "hiryou", "debitAccountCode": null, "creditAccountCode": null, "taxRate": "10", "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": false, "showInBank": false, "bankSlotNo": null },
+    { "ledgerType": "AP", "direction": "In", "name": "農薬購入", "searchKey": "nouyaku", "counterAccountCode": "nouyaku", "debitAccountCode": null, "creditAccountCode": null, "taxRate": "10", "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": false, "showInBank": false, "bankSlotNo": null },
+    { "ledgerType": "AP", "direction": "Out", "name": "買掛支払（普通預金）", "searchKey": "kaikakeb", "counterAccountCode": "einou", "debitAccountCode": null, "creditAccountCode": null, "taxRate": null, "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": false, "showInBank": false, "bankSlotNo": null },
+    { "ledgerType": "Unpaid", "direction": "In", "name": "修理代", "searchKey": "syuuri", "counterAccountCode": "syuuzen", "debitAccountCode": null, "creditAccountCode": null, "taxRate": "10", "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": false, "showInBank": false, "bankSlotNo": null },
+    { "ledgerType": "Unpaid", "direction": "In", "name": "租税公課", "searchKey": "sozei", "counterAccountCode": "sozei", "debitAccountCode": null, "creditAccountCode": null, "taxRate": "na", "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": false, "showInBank": false, "bankSlotNo": null },
+    { "ledgerType": "Transfer", "direction": "", "name": "肥料購入（家計より支払）", "searchKey": "hiryou", "counterAccountCode": null, "debitAccountCode": "hiryou", "creditAccountCode": "zigyounusikari", "taxRate": "10", "creditTaxRate": null, "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": false, "showInBank": false, "bankSlotNo": null },
+    { "ledgerType": "Transfer", "direction": "", "name": "地代（現物払い）", "searchKey": "tidai", "counterAccountCode": null, "debitAccountCode": "tidai", "creditAccountCode": "zigyousyouhi", "taxRate": "non", "creditTaxRate": "8", "businessRatio": 100, "hasInvoiceDefault": true, "showInCash": false, "showInBank": false, "bankSlotNo": null }
+  ]
+}

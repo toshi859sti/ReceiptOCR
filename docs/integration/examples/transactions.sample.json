@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "kind": "aoirochobo.transactions",
+  "generatedAt": "2026-09-10T15:00:00+09:00",
+  "generatedBy": {
+    "app": "JA仕訳変換",
+    "appVersion": "1.4.0",
+    "sourceCommit": "5889f13"
+  },
+  "vocabulary": {
+    "schemaVersion": 1,
+    "fiscalYear": 2026,
+    "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "accountingSoftwareOnPhone": "RAKURAKU",
+  "entries": [
+    {
+      "externalId": "ocr:purchase:202601-3-5",
+      "source": "Purchase",
+      "ledgerType": "AP",
+      "bankSlotNo": null,
+      "entryDate": "2026-01-20",
+      "amount": 11000,
+      "debit": { "accountCode": "hiryou", "taxRate": "10", "businessRatio": 100 },
+      "credit": { "accountCode": "kaikake", "taxRate": null, "businessRatio": 100 },
+      "memoName": "肥料購入",
+      "memoSearchKey": "hiryou",
+      "note": "ダイアジノン粒剤3",
+      "hasInvoice": true,
+      "matchStatus": "Matched",
+      "confidence": "high",
+      "meta": {
+        "sourceTable": "receipt_items",
+        "sourceRowId": 123,
+        "productName": "ダイアジノン粒剤3",
+        "category": "一般購買",
+        "storeName": null,
+        "registrationNumber": null,
+        "paymentMethodText": null,
+        "isReturn": false,
+        "phoneExportedAt": null
+      }
+    },
+    {
+      "externalId": "ocr:purchase:202601-3-8",
+      "source": "Purchase",
+      "ledgerType": "AP",
+      "bankSlotNo": null,
+      "entryDate": "2026-01-20",
+      "amount": 3300,
+      "debit": { "accountCode": "kaikake", "taxRate": null, "businessRatio": 100 },
+      "credit": { "accountCode": "syozairyou", "taxRate": "10", "businessRatio": 100 },
+      "memoName": "諸材料返品",
+      "note": "マルチシート 返品",
+      "matchStatus": "Matched",
+      "confidence": "medium",
+      "meta": {
+        "sourceTable": "receipt_items",
+        "sourceRowId": 126,
+        "productName": "マルチシート",
+        "category": "一般購買",
+        "isReturn": true
+      }
+    },
+    {
+      "externalId": "ocr:deposit:2026-02-05-0012",
+      "source": "Deposit",
+      "ledgerType": "Bank",
+      "bankSlotNo": 1,
+      "entryDate": "2026-02-05",
+      "amount": 250000,
+      "debit": { "accountCode": "einou", "taxRate": null, "businessRatio": 100 },
+      "credit": { "accountCode": "suitou", "taxRate": "8", "businessRatio": 100 },
+      "memoName": "農協売上入金",
+      "memoSearchKey": "noukyou",
+      "note": "フリコミ ミナミシマバラノウキヨウ",
+      "matchStatus": "Matched",
+      "confidence": "high",
+      "meta": {
+        "sourceTable": "deposit_meisai",
+        "sourceRowId": 88,
+        "paymentMethodText": null,
+        "isReturn": false
+      }
+    },
+    {
+      "externalId": "ocr:deposit:2026-02-10-0013",
+      "source": "Deposit",
+      "ledgerType": "Bank",
+      "bankSlotNo": 1,
+      "entryDate": "2026-02-10",
+      "amount": 8800,
+      "debit": { "accountCode": "douryoku", "taxRate": "10", "businessRatio": 100 },
+      "credit": { "accountCode": "einou", "taxRate": null, "businessRatio": 100 },
+      "memoName": "電気料金",
+      "note": "デンキ 09シマバラ",
+      "matchStatus": "Matched",
+      "confidence": "high",
+      "meta": {
+        "sourceTable": "deposit_meisai",
+        "sourceRowId": 89,
+        "isReturn": false
+      }
+    },
+    {
+      "externalId": "ocr:deposit:2026-02-15-0014",
+      "source": "Deposit",
+      "ledgerType": "Bank",
+      "bankSlotNo": 1,
+      "entryDate": "2026-02-15",
+      "amount": 30000,
+      "debit": { "accountCode": null, "taxRate": null, "businessRatio": 100 },
+      "credit": { "accountCode": "einou", "taxRate": null, "businessRatio": 100 },
+      "memoName": "ATM 引き出し",
+      "note": "カ－ドシハライ",
+      "matchStatus": "UnmatchedAccount",
+      "confidence": "low",
+      "meta": {
+        "sourceTable": "deposit_meisai",
+        "sourceRowId": 90,
+        "isReturn": false
+      }
+    },
+    {
+      "externalId": "ocr:receipt:9f1c8b0e-4a2d-4f1a-9b3e-7c6d5e4f3a21:0",
+      "source": "Receipt",
+      "ledgerType": "Cash",
+      "bankSlotNo": null,
+      "entryDate": "2026-03-02",
+      "amount": 1580,
+      "debit": { "accountCode": "zappi", "taxRate": "10", "businessRatio": 100 },
+      "credit": { "accountCode": "genkin", "taxRate": null, "businessRatio": 100 },
+      "memoName": "作業用手袋ほか",
+      "note": "コメリ 島原店",
+      "hasInvoice": true,
+      "matchStatus": "UnmatchedMemo",
+      "confidence": "medium",
+      "meta": {
+        "sourceTable": "general_receipt_items",
+        "sourceRowId": 401,
+        "productName": "ゴム手袋 M",
+        "storeName": "コメリ 島原店",
+        "registrationNumber": "T1234567890123",
+        "paymentMethodText": "現金",
+        "isReturn": false
+      }
+    },
+    {
+      "externalId": "ocr:receipt:2b7e4d10-1f33-49aa-8c21-9d0e6b5a4c88:0",
+      "source": "Receipt",
+      "ledgerType": "Unpaid",
+      "bankSlotNo": null,
+      "entryDate": "2026-03-05",
+      "amount": 6600,
+      "debit": { "accountCode": "syozairyou", "taxRate": "10", "businessRatio": 100 },
+      "credit": { "accountCode": "mibarai", "taxRate": null, "businessRatio": 100 },
+      "memoName": "農業資材",
+      "note": "ホームセンター クレジット払い",
+      "matchStatus": "Matched",
+      "confidence": "high",
+      "meta": {
+        "sourceTable": "general_receipt_items",
+        "sourceRowId": 402,
+        "productName": "支柱 20本",
+        "storeName": "ナフコ",
+        "paymentMethodText": "クレジット",
+        "isReturn": false
+      }
+    }
+  ]
+}
