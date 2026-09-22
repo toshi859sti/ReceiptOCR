@@ -3,7 +3,7 @@
 > スマホ（JA仕訳変換）が出力し、AoiroChobo が取り込む取引データ。**JSON**（③の確定・[README.md](README.md) §3）。
 > スマホ側一次仕様書 §10 の JSON 案をベースに、AoiroChobo の `JournalEntry` スキーマへ寄せてある。
 >
-> 対象：`schemaVersion: 1`
+> 対象：`schemaVersion: 2`
 
 ---
 
@@ -21,7 +21,7 @@
 
 ```jsonc
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "aoirochobo.transactions",
   "generatedAt": "2026-09-10T15:00:00+09:00",
   "generatedBy": {
@@ -30,7 +30,7 @@
     "sourceCommit": "5889f13"        // 任意
   },
   "vocabulary": {                    // どの vocabulary.json に対して解決したか
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "fiscalYear": 2026,
     "contentHash": "sha256:2f6c…"    // 任意だが強く推奨（PC 側がマスタずれを検知できる）
   },
@@ -45,6 +45,9 @@
 
 AoiroChobo の `JournalEntry` は **1 行 = 借方 1 科目・貸方 1 科目・金額 1 つ（税込）**。
 スマホ側でこの形（単一仕訳）まで組み立ててから出す。
+科目の参照は必ず **`accountKey`**、摘要の参照は必ず **`memoKey`**
+（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.4 / §4.8）で行う。
+PC 取込は、そのキーを当年度のマスタへ解決するだけ。解決できなければ「要確認」にまわす。
 
 ```jsonc
 {
@@ -55,12 +58,13 @@ AoiroChobo の `JournalEntry` は **1 行 = 借方 1 科目・貸方 1 科目・
   "entryDate": "2026-01-20",                  // 西暦 ISO yyyy-MM-dd（和暦変換はスマホ側）
   "amount": 11000,                            // 税込・正の整数（円）。§「金額と返品」
 
-  "debit":  { "accountCode": "hiryou",  "taxRate": "10",  "businessRatio": 100 },
-  "credit": { "accountCode": "kaikake", "taxRate": null,  "businessRatio": 100 },
+  "debit":  { "accountKey": "hiryou",  "taxRate": "10",  "businessRatio": 100 },
+  "credit": { "accountKey": "kaikake", "taxRate": null,  "businessRatio": 100 },
 
-  "memoName": "肥料購入",                     // 摘要（vocabulary の memoTemplates[].name か、フリーテキスト）
-  "memoSearchKey": "hiryou",                  // 任意。摘要辞書に一致したときその searchKey
-  "note": "ダイアジノン粒剤3",                // メモ欄（商品名など）。任意
+  "memoKey": "memo-0042",                     // 摘要。★ vocabulary の memoTemplates[].memoKey のみ（閉じた語彙）。
+                                             //   逆引き0件なら null。§「摘要は閉じた語彙」
+  "memoName": "肥料購入",                     // 任意・人間可読のエコー。PC は照合に使わない（検証・ログ用）
+  "note": "ダイアジノン粒剤3",                // メモ欄。★ 生テキスト（商品名・但し書き・通帳メモ）はここ。自由文字
   "hasInvoice": true,                         // 任意（省略時 PC 側既定）。§「hasInvoice」
 
   "matchStatus": "Matched",                   // Matched | UnmatchedAccount | UnmatchedMemo | Ambiguous
@@ -89,20 +93,19 @@ AoiroChobo の `JournalEntry` は **1 行 = 借方 1 科目・貸方 1 科目・
 | `ledgerType` | — | この仕訳を所有する帳簿。省略時は PC が `debit`/`credit` の科目の `ledgerAffinity` から推定 |
 | `bankSlotNo` | △ | `source=Deposit` のとき必須。§「bankSlotNo」 |
 | `entryDate` | ✔ | 西暦 ISO `yyyy-MM-dd`。空文字・和暦・分割整数は不可 |
-| `amount` | ✔ | 税込・正の整数（円）。0 以下は不可。§「金額と返品」 |
-| `debit.accountCode` | ✔※ | `vocabulary.accounts[].code`。解決不能でも推定値を入れ、`matchStatus` を立てる。本当に不明なら `null` |
+| `debit.accountKey` | ✔※ | `vocabulary.accounts[].accountKey`。source ごとの候補フィルタは [vocabulary-snapshot.md](vocabulary-snapshot.md) §4.5。解決不能でも推定値を入れ、`matchStatus` を立てる。本当に不明なら `null` |
 | `debit.taxRate` | — | [README.md](README.md) §4 のコード。相手科目側にだけ付く。省略/`null` 可 |
 | `debit.businessRatio` | — | 事業割合(%)。省略時 100。PC 側で家事按分を別途扱うので通常は 100 のままでよい |
 | `credit.*` | ✔※ | 借方と同様 |
-| `memoName` | ✔ | 帳簿の「摘要」列に入る文字列 |
-| `memoSearchKey` | — | 摘要辞書に一致したときの `searchKey`。PC 側で摘要辞書に紐付ける手がかり |
-| `note` | — | 帳簿の「メモ」列 |
+| `memoKey` | ✔※ | 帳簿の「摘要」列。**`vocabulary.memoTemplates[].memoKey` のいずれかのみ**（閉じた語彙）。キー自体は必須だが、逆引き 0 件のときは `null`（`UnmatchedMemo`）。§「摘要は閉じた語彙」 |
+| `memoName` | — | `memoKey` に対応する `name` のエコー。PC は照合に使わない（取込サマリーの表示・契約テストの突き合わせ用）。`memoKey` が `null` なら `null` |
+| `note` | — | 帳簿の「メモ」列。**生テキスト（商品名・但し書き・通帳メモ）はここに入れる**。自由文字・長さ制限ゆるめ |
 | `hasInvoice` | — | 省略時 PC 側既定（現状 true 相当）。§「hasInvoice」 |
 | `matchStatus` | ✔ | §「matchStatus」 |
 | `confidence` | — | OCR / マッチングの自己申告確度 |
 | `meta` | — | 参考情報一式。オブジェクトごと省略可 |
 
-※ `debit`/`credit` オブジェクト自体は必須。中の `accountCode` は「不明なら `null`」を許容。
+※ `debit`/`credit` オブジェクト自体は必須。中の `accountKey` は「不明なら `null`」を許容。
 
 ---
 
@@ -136,18 +139,18 @@ AoiroChobo の `JournalEntry` は **1 行 = 借方 1 科目・貸方 1 科目・
 
 ## 5. `ledgerType` と借方／貸方の組み立て
 
-[README.md](README.md) §3 の表に従う。要点だけ再掲：
+[README.md](README.md) §3 の表に従う。要点だけ再掲（科目は `accountKey` で指す）：
 
-| `source` / 区分 | `ledgerType` | `debit.accountCode` | `credit.accountCode` |
+| `source` / 区分 | `ledgerType` | `debit.accountKey` | `credit.accountKey` |
 |---|---|---|---|
-| Purchase | `AP` | 商品の経費科目 | `kaikake`（買掛金） |
+| Purchase | `AP` | 商品の経費科目 | 買掛金 |
 | Deposit 入金（元 amount ≥ 0） | `Bank` | 預金口座科目（スロット） | ルールの相手科目 |
 | Deposit 出金（元 amount < 0） | `Bank` | ルールの相手科目 | 預金口座科目（スロット） |
-| Receipt 現金払い | `Cash` | 品目の経費科目 | `genkin`（現金） |
-| Receipt クレカ・電子マネー | `Unpaid` | 品目の経費科目 | `mibarai` / `zigyounusikari` 等 |
+| Receipt 現金払い | `Cash` | 品目の経費科目 | 現金 |
+| Receipt クレカ・電子マネー | `Unpaid` | 品目の経費科目 | 未払金 / 事業主借 等 |
 
 - **預金口座科目**は `bankSlotNo` に対応する `vocabulary.accounts[]` の科目。
-  スマホは `credit`/`debit` の該当側に、その科目の `code`（`einou` 等）を入れる。
+  スマホは `credit`/`debit` の該当側に、その科目の `accountKey` を入れる。
 - `ledgerType` を省略した場合、PC は「借方・貸方のうち `ledgerAffinity` が
   `Cash`/`Bank`/`AR`/`AP`/`Unpaid` の科目」からその帳簿を決める。両方該当・両方非該当なら
   `Transfer` 扱い＋「要確認」。
@@ -157,7 +160,9 @@ AoiroChobo の `JournalEntry` は **1 行 = 借方 1 科目・貸方 1 科目・
 ## 6. `bankSlotNo`
 
 - `source = Deposit` のとき**必須**（どの預金口座に取り込むか）。
-- 値：`0`（親「普通預金」）または `1,2,3,…`（補助口座）。`vocabulary.accounts[].bankSlotNo` と対応。
+- 値：**`1` 〜 `5`**（「普通預金」の補助口座）。`vocabulary.accounts[].bankSlotNo` と対応。
+  **`0` は使わない**：親「普通預金」は見出し科目で、それ自体の預金出納帳が存在しないため
+  取込先に指定できない（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.3）。
 - Android は単一通帳前提なので、スマホの設定で「この通帳 → スロット 1」のように固定してよい。
   ユーザーが AoiroChobo でしか口座を増やしていない場合は取込 UI 側で選ばせる。
 - `source = Purchase` / `Receipt` では `null`。
@@ -169,7 +174,7 @@ AoiroChobo の `JournalEntry` は **1 行 = 借方 1 科目・貸方 1 科目・
 - `amount` は**常に正の整数**（税込・円）。
 - 元データが負（返品・値引き）の場合：**借方／貸方を入れ替えて**正数で出す。
   - 例：肥料の返品 1,100 円 → 通常仕訳 `Dr hiryou / Cr kaikake` の逆で
-    `debit.accountCode = "kaikake"`, `credit.accountCode = "hiryou"`, `amount = 1100`。
+    `debit.accountKey = "kaikake"`, `credit.accountKey = "hiryou"`, `amount = 1100`。
   - `meta.isReturn = true` を必ず立てる。
 - 端数処理はしない（OCR で読んだ税込額をそのまま）。
 
@@ -185,19 +190,50 @@ AoiroChobo の `JournalEntry` は **1 行 = 借方 1 科目・貸方 1 科目・
 
 ## 9. `matchStatus`
 
-| 値 | 意味 | `accountCode` |
+| 値 | 意味 | `accountKey` |
 |---|---|---|
-| `Matched` | 借方・貸方の科目が確定。摘要も辞書 or 妥当 | 両側とも有効な `code` |
-| `UnmatchedAccount` | 科目を確定できなかった（推定値はあるかも） | 推定 `code` または `null` |
-| `UnmatchedMemo` | 科目は確定、摘要が未確定（フリーテキストのまま） | 有効な `code` |
-| `Ambiguous` | 候補が複数あって選べなかった | 第一候補 `code` |
+| `Matched` | 借方・貸方の科目が確定。摘要も辞書 or 妥当 | 両側とも有効な `accountKey` |
+| `UnmatchedAccount` | 科目を確定できなかった（推定値はあるかも） | 推定 `accountKey` または `null` |
+| `UnmatchedMemo` | 科目は確定、摘要辞書に一致なし。`memoKey` は `null`、生テキストは `note` に | 有効な `accountKey` |
+| `Ambiguous` | 摘要候補が複数あって選べなかった（`memoKey` は第一候補のキー） | 有効な `accountKey` |
 
 - `Matched` 以外の行は、PC 側で「要確認 → 未確認取込」タブに入れてユーザーに確定させる。
 - **どの状態でも行は必ず出す**（落とさない）。
 
+### 摘要は閉じた語彙
+
+- `memoKey` に入れてよいのは **`vocabulary.json` の `memoTemplates[].memoKey` のいずれか**だけ。
+  スマホが生成した文字列・OCR の生テキストを摘要にしてはいけない。
+- 逆引き（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.2）の結果：
+  - 1 件 → その `memoKey`。`matchStatus = "Matched"`、`memoName` にその `name` をエコー。
+  - 複数 → 元資料テキストに最も近い候補。決められなければ第一候補。`matchStatus = "Ambiguous"`。
+  - **0 件 → `memoKey = null`・`memoName = null`、`matchStatus = "UnmatchedMemo"`**。
+- 生テキスト（JA伝票の商品名、レシートの品名、通帳のメモ、領収書の但し書き）は必ず **`note`** に入れる。
+  摘要と `note` は別列（摘要＝閉じた語彙、メモ＝自由文字）。
+- **PC 側の扱い（実装済 2026-09-14）**：`memoKey = null`（`UnmatchedMemo`）の行は「要確認」で、ユーザーが
+  (a) 当年度の摘要辞書から選ぶ、または (b) その場で摘要辞書に新規登録する（科目・税率もセットされ以後の
+  手入力でも使える）。**フリーテキストのまま確定させない**。スマホは辞書を作れない（`vocabulary.json` は
+  一方向）ので新規登録は PC 側のみ。
+- 辞書のカバレッジ前提：主要な経費科目に最低 1 つ汎用プリセットがあること（らくらくのシード摘要辞書は
+  この作り）。0 件になるのは AI が珍しい科目を選んだときで、元々ユーザー確認したいケース。
+
 ---
 
 ## 10. 取込後の扱い（PC 側・スマホは意識しなくてよいが参考）
+
+**2 段階で取り込む（実装済 2026-09-14）**。ファイルの行はまず **`ImportedTransaction`（取込ステージングテーブル）** に
+そのまま保存され、ユーザーが確定した行だけが `JournalEntry` になる。
+
+- 理由：`JournalEntry.DebitAccountId` / `CreditAccountId` は**非 NULL の外部キー**なので、
+  `accountKey` が解決できない行（`UnmatchedAccount`・`accountKey = null`）は仕訳として保存できない。
+  また `matchStatus` / `confidence` / 解決できなかったキー文字列を持つ列も `JournalEntry` には無く、
+  そのまま入れるとアプリを再起動した時点で「要確認」の状態が失われる。
+- `ImportedTransaction` は受け取った JSON の各フィールドを（解決前の生の `accountKey` / `memoKey`
+  文字列のまま）保持し、`ImportBatchId`・`matchStatus`・`confidence`・解決結果・確定済みフラグ・
+  生成された `JournalEntryId` を持つ。「要確認」タブはこのテーブルを見る。
+- 確定して `JournalEntry` になった行だけが帳簿に現れる。以降の編集・取り消しは AoiroChobo の所有。
+
+**確定後の仕訳**
 
 - 取込仕訳は `SourceType = "OcrImport"`、`ExternalId` に上記の値、`ImportBatchId` に取込バッチ ID。
 - 取込後は AoiroChobo が所有し**編集可能**（ロックしない）。ユーザーが金額等を直すと
@@ -207,21 +243,29 @@ AoiroChobo の `JournalEntry` は **1 行 = 借方 1 科目・貸方 1 科目・
   - 同じ `externalId` が未編集で存在 → 内容差分があれば更新、なければスキップ。
   - 同じ `externalId` が**編集済み**で内容差分あり → ダイアログで
     「取込値で上書き／このまま維持／別行として追加」をユーザーに選ばせる。
+    **「別行として追加」を選んだ行の `JournalEntry.ExternalId` には `#2` `#3` … の連番サフィックスを付ける**
+    （`JournalEntry.ExternalId` は UNIQUE 制約付きのため。元の値は `ImportedTransaction` 側に残る）。
   - 同じ `externalId` が void 済み → 「削除済み N 件」として取込サマリーに表示し、黙って復活させない。
 
 ---
 
 ## 11. スキーマ検証（契約テスト用の要点）
 
-- `schemaVersion` は整数 `1`。
+- `schemaVersion` は整数 `2`。
 - `entries[].externalId` は非空・ファイル内で一意・`[a-z0-9:_-]{1,128}`。
 - `entryDate` は `^\d{4}-\d{2}-\d{2}$` かつ実在日。
 - `amount` は 1 以上の整数。
 - `source` は `Purchase` / `Deposit` / `Receipt`。
-- `source = Deposit` なら `bankSlotNo` が整数（0 以上）。
-- `debit` / `credit` は必須オブジェクト。`accountCode` は `null` か非空文字列。
-- `taxRate` / `credit.taxRate` は `null` か `["10","8","8_old","non","na","men"]` のいずれか。
+- `source = Deposit` なら `bankSlotNo` が `1`〜`5` の整数（`0`・`null` は不正）。
+- `debit` / `credit` は必須オブジェクト。`accountKey` は `null` か非空文字列。
+- `taxRate` / `credit.taxRate` は `null` か `["10","8","1","8_old","non","na","men"]` のいずれか。
+  `"1"` は食料品の軽減税率 1%（2027年から予定。2026-09-14 に追加）。
 - `matchStatus` は 4 値のいずれか。
+- `memoKey` は `null` か、`vocabulary.memoTemplates[].memoKey` に実在するキー（フリーテキスト不可）。
+  `matchStatus = "UnmatchedMemo"` のとき `memoKey` は必ず `null`。`UnmatchedAccount`（科目が `null`）も
+  `memoKey` は `null`。`Matched` / `Ambiguous` のときは実在するキー。
+- `memoName` は省略可。入っている場合は `memoKey` が指す行の `name` と一致すること
+  （不一致はエラーにせず、取込サマリーに「マスタが古い可能性」と警告）。`memoKey` が `null` なら `null`。
 - `vocabulary.contentHash`（あれば）が PC 側の当年度スナップショットと一致しないときは
   取込を止めず、サマリーに「マスタが一致しません」と警告表示（PC 側の挙動）。
 

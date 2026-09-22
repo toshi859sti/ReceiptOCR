@@ -5,6 +5,12 @@
 対象コミット `feature/gemini-ocr` @ `5889f13` / Room DB v33）
 
 レビュー日：2026-09-09
+
+> ⚠️ **2026-09-10 更新あり**：本文中で「スマホは解決済みの `Account.Code` を吐く」「科目参照は
+> `Account.Code`」としている箇所は、**`accountKey` に変更済み**（`Account.Code` は DB の UNIQUE 制約が
+> 無く一意性を保証できないため）。③（取引データ形式）も **JSON で確定**。詳細は末尾「追記（2026-09-10）」と
+> [README.md](README.md) を参照。本文は当時のレビュー記録としてそのまま残す。
+
 突き合わせ対象：`docs/functional-design.md`「仕訳の由来表示と取込データの扱い」、
 `docs/known-issues.md` の連携アーキテクチャ確定（2026-09-09 / コミット `65555b2`）、
 `CURRENT_TASK.md`「GreenFrameOCR 連携の設計相談」
@@ -182,3 +188,18 @@ Android は負の金額を 1 行で持つ（§3.2、§10 末尾）。こちら�
 2. **§10 の JSON 案を叩き台にするか CSV を貫くか**を決める（Claude の見解：JSON 寄りが自然）。
 3. スマホ仕様書が揃ったら `docs/integration/` に ①`vocabulary.json` スキーマ ②取込データ形式列定義
    ③`ExternalId` 生成規則 をドラフト。
+
+---
+
+## 追記（2026-09-10・決定と契約ドラフト作成）
+
+- **①②③ すべてこちらの方針で確定**。契約ドラフトを `docs/integration/` に作成：
+  `README.md` / `vocabulary-snapshot.md` / `transaction-import.md` / `examples/*.sample.json` / `CHANGELOG.md`。
+- **③ ＝ JSON で確定**（CSV 案は取り下げ。`transactions.json`）。
+- **科目参照キーは `accountKey` に変更**（本ノート §「整合が取れている点」および §A・§E で
+  `Account.Code` を安定参照としていたのを撤回）。理由：`Account.Code` は DB の UNIQUE 制約が無く、
+  科目登録画面で検索用文字列として露出しているだけで、一意性を保証できない。
+  → `Account.AccountKey`（不透明・不変・年度非依存・`(FiscalYearId, AccountKey)` に UNIQUE）を
+  **Phase 4 で追加**し、それを契約キーにする。詳細は `docs/functional-design.md`
+  「仕訳の由来表示と取込データの扱い」の追加スキーマ表と `vocabulary-snapshot.md` §4.4。
+- スマホ側一次仕様書 §4 の `toCanonicalKey` / `normalizeTekiyou` 等の PC 移植は不要（①の帰結）。
