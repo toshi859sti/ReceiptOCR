@@ -148,6 +148,9 @@ null のまま残すため、`uuid` を持たない旧 JSON を復元すると N
 - 2026-09-22 第3ラウンド：**DB v33 → v34** を実装（`accountKey` / `memoKey` と確定時の名前・
   AoiroChobo ミラー3テーブル・`general_receipts.uuid`）。取込でマッピングが消える経路と
   旧バックアップ復元時の uuid null も塞いだ。クリーンビルド BUILD SUCCESSFUL
+- 2026-09-22：`CLAUDE.md` の古い記述を実装に合わせて修正（DB v28→v34・ML Kit 前提の記述を
+  Gemini に・`process()` のシグネチャ・存在しない `AccountSettingsScreen.kt` の要対応項目削除・
+  docs 構成に `integration/` を追加）
 
 ### 未完了・中断した理由
 - 不整合 #3（弥生CSVの列構成が購買/預金とレシートで不一致）・#4（弥生税区分文字列が

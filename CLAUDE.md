@@ -10,7 +10,7 @@
 - **アプリ名**: JA仕訳変換
 - **パッケージ**: `com.example.greenframeocr`
 - **minSdk**: 24 / **targetSdk**: 34 / **Kotlin JVM**: 17
-- **ビルド状態**: BUILD SUCCESSFUL（2026-04-29）
+- **ビルド状態**: BUILD SUCCESSFUL（2026-09-22）
 
 ---
 
@@ -36,7 +36,10 @@ GreenFrameOCR/
 │   ├── repository-structure.md  リポジトリ構造
 │   ├── development-guidelines.md 開発ガイドライン
 │   ├── glossary.md              用語定義
-│   └── known-issues.md          既知バグ・制約・技術的負債
+│   ├── known-issues.md          既知バグ・制約・技術的負債
+│   ├── PC_ACCOUNTING_INTEGRATION_SPEC.md  PC会計アプリ向けの連携仕様（Android側の出力仕様）
+│   ├── integration/             PC会計アプリ(AoiroChobo)との契約一式と往復の返信
+│   └── （上記以外にも仕様書・作業メモが多数ある。`ls docs/` で確認すること）
 └── .steering/                   ← 完了済み作業のアーカイブ
     └── YYYYMMDD-タイトル/
 ```
@@ -105,40 +108,48 @@ GreenFrameOCR/
 Imgproc.cvtColor(rgbaMat, bgrMat, Imgproc.COLOR_RGBA2BGR)
 ```
 
-ML Kit へ渡す場合は `InputImage.fromBitmap` または `InputImage.fromMediaImage` を使う。
-OpenCV で加工した Mat を Bitmap に戻して ML Kit に渡すときは、**必ず BGR→RGBA に戻してから** `Utils.matToBitmap` を呼ぶこと。逆順のまま渡すと色チャンネルが反転し OCR 精度に悪影響が出る。
+OpenCV で加工した Mat を Bitmap に戻して Gemini に渡すときは、**必ず BGR→RGBA に戻してから**
+`Utils.matToBitmap` を呼ぶこと。逆順のまま渡すと色チャンネルが反転し OCR 精度に悪影響が出る。
 
 ```kotlin
 // BGR → RGBA（matToBitmap の前）
 Imgproc.cvtColor(bgrMat, rgbaMat, Imgproc.COLOR_BGR2RGBA)
 Utils.matToBitmap(rgbaMat, bitmap)
-// → InputImage.fromBitmap(bitmap, 0) で ML Kit へ渡す
+// → GeminiReceiptClient.parseJaSheetFromImage(bitmap, apiKey) へ渡す
 ```
 
 `toBitmap()` 拡張関数は BGR→RGBA 変換を内包しているため、src は常に BGR 3ch のまま扱う。
 
 ### GreenFrameDetector の debugMode
 ```kotlin
-fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult
+fun process(inputBitmap: Bitmap, debugMode: Boolean = false, sharpness: Double = 0.0): DetectionResult
 ```
 - 本番（`debugMode=false`）: Step7（行切り抜き）スキップ → 約1,225ms
-- デバッグ（`debugMode=true`）: Step7 実行。`DebugCaptureScreen` はPhase6（2026-08-11）で
-  削除済みのため、現在アプリ内に呼び出し元はない（将来デバッグツールを再実装する際の既存パラメータ）
+- デバッグ（`debugMode=true`）: Step7 実行。`debugMode` は `CameraScreen` → `CameraViewModel` →
+  `GreenFrameDetector` と引き回されているが、**true を渡す箇所はどこにもない**
+  （`DebugCaptureScreen` はPhase6（2026-08-11）で削除済み。将来デバッグツールを再実装する際の
+  既存パラメータとして残している）
 
 ### 透視変換解像度（変更禁止）
 `WARP_PX_PER_MM = 15.0` → 出力 3045×2220px（203mm×148mm）
 20px/mm は Step7 が 2.6 倍遅くなるため不採用済み。
 
-### ML Kit 文字高さ（最小 100px）
-40px 以下で精度が急落する。透視変換解像度を下げてはいけない。
+**解像度を下げてもいけない。** 元は ML Kit の制約（文字高さ 100px 必要・40px 以下で精度が急落）
+として決めた値。ML Kit は2026-08-11に全廃してOCRはGeminiに移ったが、透視変換の出力は
+そのまま Gemini に渡す画像なので、下げれば読み取り精度に直接効く。変えるなら実機で
+精度を測り直すこと。
 
-### Room DB バージョン（現在 v28）
+### Room DB バージョン（現在 v34）
 バージョンアップ時は `ReceiptDatabase.kt` にマイグレーションを追加すること。
+`ReceiptDatabase.kt` の `version` / `entities` が一次情報源。docs 側の記載は古くなることがある。
 `fallbackToDestructiveMigration()` は削除済み（2026-07-12）。
 スキーマ変更時にマイグレーションを書き忘れるとデータ消失ではなく**起動時クラッシュ**になる。
 
-### Navigation に未接続の画面（要対応）
-`AccountSettingsScreen.kt` は実装済みだが `Navigation.kt` の NavHost に未登録。
+### Navigation に未登録の画面（正常）
+`CameraScreen` と `TransformPreviewScreen` は `navigation/Navigation.kt` の NavHost にルートが無いが、
+これは不具合ではない。どちらも他の画面（`ReceiptInputScreen` / `GeneralReceiptCaptureScreen` /
+`CameraScreenForOcr`）の中に埋め込んで使うコンポーザブルなので、ルート登録は不要。
+（かつてここに書かれていた未登録画面 `AccountSettingsScreen.kt` はファイルごと存在しない）
 
 ---
 
