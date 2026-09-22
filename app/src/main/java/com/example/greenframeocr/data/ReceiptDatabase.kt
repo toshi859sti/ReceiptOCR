@@ -25,9 +25,12 @@ import com.example.greenframeocr.util.toCanonicalKey
         GeneralReceiptItem::class,
         InvoiceStore::class,
         GeneralItemMaster::class,
-        ReceiptPaymentMethodRule::class
+        ReceiptPaymentMethodRule::class,
+        AoiroChoboAccount::class,
+        AoiroChoboMemoTemplate::class,
+        AoiroChoboVocabMeta::class
     ],
-    version = 33,
+    version = 34,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -44,6 +47,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun invoiceStoreDao(): InvoiceStoreDao
     abstract fun generalItemMasterDao(): GeneralItemMasterDao
     abstract fun receiptPaymentMethodRuleDao(): ReceiptPaymentMethodRuleDao
+    abstract fun aoiroChoboVocabDao(): AoiroChoboVocabDao
 
     companion object {
         @Volatile
@@ -787,6 +791,118 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        // マイグレーション: version 33 → 34（AoiroChobo（PC会計アプリ）連携の土台。
+        // 返信 docs/integration/REPLY-phone-2026-09-22.md §6 のタスク1・2・3・6をまとめて実施）
+        //  ① 自前の勘定科目マスタに accountKey（AoiroChobo側の科目参照キー）を追加
+        //  ② 摘要辞書に memoKey を追加。どちらも「確定したときに見えていた名前」を併せて持つ
+        //  ③ 取り込んだ vocabulary.json のミラー3テーブルを新設
+        //  ④ general_receipts に UUID を追加（externalId の復元耐性。既存行はここで採番）
+        private val MIGRATION_33_34 = object : Migration(33, 34) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // ① 自前科目 → AoiroChobo 科目の接続キー。
+                // マッチングテーブル（product_master / tekiyou_matching_rules / general_item_master /
+                // receipt_payment_method_rules）は従来どおり自前の yayoiAccountId を指したままにし、
+                // 解決時にここを1ホップして accountKey を得る（既存のマッチング資産を作り直さずに済む）。
+                // accountKeyName は「その紐付けを確定したときに見えていた AoiroChobo 側の科目名」。
+                // 取込時に現在名と食い違ったら科目の作り替えとみなし、accountKey を外す
+                // （docs/integration/CHANGELOG.md 2026-09-13 改訂・変更2）。
+                database.execSQL("ALTER TABLE yayoi_accounts ADD COLUMN accountKey TEXT")
+                database.execSQL("ALTER TABLE yayoi_accounts ADD COLUMN accountKeyName TEXT")
+                database.execSQL("ALTER TABLE rakuraku_accounts ADD COLUMN accountKey TEXT")
+                database.execSQL("ALTER TABLE rakuraku_accounts ADD COLUMN accountKeyName TEXT")
+
+                // ② 摘要辞書 → AoiroChobo 摘要の接続キー（科目と同じ扱い）
+                database.execSQL("ALTER TABLE rakuraku_tekiyou ADD COLUMN memoKey TEXT")
+                database.execSQL("ALTER TABLE rakuraku_tekiyou ADD COLUMN memoKeyName TEXT")
+
+                // ③ vocabulary.json のミラー。スマホ側では編集せず、取込のたびに全入れ替えする
+                // （差分更新にすると「ファイルから消えた＝無効化」が表現できなくなるため）
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS aoirochobo_accounts (
+                        accountKey TEXT NOT NULL PRIMARY KEY,
+                        searchKey TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        accountType TEXT NOT NULL,
+                        groupName TEXT,
+                        parentAccountKey TEXT,
+                        ledgerAffinity TEXT NOT NULL,
+                        bankSlotNo INTEGER,
+                        allowsTaxable INTEGER NOT NULL,
+                        allowsNonTaxable INTEGER NOT NULL,
+                        defaultTaxCategory TEXT,
+                        displayOrder INTEGER NOT NULL,
+                        isSystem INTEGER NOT NULL,
+                        ocrRoleExpenseDebit INTEGER NOT NULL,
+                        ocrRoleDepositCounter INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS aoirochobo_memo_templates (
+                        memoKey TEXT NOT NULL PRIMARY KEY,
+                        ledgerType TEXT NOT NULL,
+                        direction TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        searchKey TEXT NOT NULL,
+                        counterAccountKey TEXT,
+                        debitAccountKey TEXT,
+                        creditAccountKey TEXT,
+                        taxRate TEXT,
+                        creditTaxRate TEXT,
+                        businessRatio INTEGER,
+                        creditBusinessRatio INTEGER,
+                        hasInvoiceDefault INTEGER NOT NULL,
+                        showInCash INTEGER NOT NULL,
+                        showInBank INTEGER NOT NULL,
+                        bankSlotNo INTEGER,
+                        displayOrder INTEGER NOT NULL,
+                        isPreset INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                // 取り込んだファイルのヘッダ。常に1行だけ（id = 1 固定）
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS aoirochobo_vocab_meta (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        schemaVersion INTEGER NOT NULL,
+                        generatedAt TEXT NOT NULL,
+                        generatedByApp TEXT NOT NULL,
+                        generatedByAppVersion TEXT NOT NULL,
+                        fiscalYear INTEGER NOT NULL,
+                        fiscalStartDate TEXT NOT NULL,
+                        fiscalEndDate TEXT NOT NULL,
+                        contentHash TEXT NOT NULL,
+                        enumsJson TEXT NOT NULL,
+                        importedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+
+                // ④ レシート領収書の行 ID。autoincrement の id はバックアップ復元や再インポートで
+                // 意味が変わり得るため、AoiroChobo に渡す externalId は UUID から組み立てる。
+                // 既存行はここで採番する（SQLite だけで UUID v4 を作る定石の式）
+                database.execSQL("ALTER TABLE general_receipts ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
+                database.execSQL(
+                    """
+                    UPDATE general_receipts SET uuid = lower(
+                        hex(randomblob(4)) || '-' ||
+                        hex(randomblob(2)) || '-4' ||
+                        substr(hex(randomblob(2)), 2) || '-' ||
+                        substr('89ab', abs(random()) % 4 + 1, 1) ||
+                        substr(hex(randomblob(2)), 2) || '-' ||
+                        hex(randomblob(6))
+                    ) WHERE uuid = ''
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_general_receipts_uuid ON general_receipts (uuid)"
+                )
+            }
+        }
+
         // マイグレーション: version 30 → 31（yayoi_accountsにusedForReceipt追加。
         // レシート領収書の科目選択リストをJA購買・預金と同様にフラグ絞り込みできるようにする）
         private val MIGRATION_30_31 = object : Migration(30, 31) {
@@ -1183,7 +1299,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34)
                     .build()
                 INSTANCE = instance
                 instance

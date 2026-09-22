@@ -145,9 +145,9 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 ## データベース設計
 
 - **DB 名**: `receipt_database`
-- **バージョン**: 33（`ReceiptDatabase.kt`の`entities`/`version`が一次情報源。このドキュメントの
+- **バージョン**: 34（`ReceiptDatabase.kt`の`entities`/`version`が一次情報源。このドキュメントの
   値は更新が追いつかず古くなることがあるため、正確なバージョンは実装を確認すること）
-- **マイグレーション**: 1→2→...→33（全ステップ定義済み、`fallbackToDestructiveMigration()`は
+- **マイグレーション**: 1→2→...→34（全ステップ定義済み、`fallbackToDestructiveMigration()`は
   2026-07-12に削除済み。以後マイグレーション必須）
 
 | テーブル | 用途 |
@@ -169,6 +169,9 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 | `invoice_stores` | 登録番号・店舗マスタ |
 | `general_item_master` | 商品名・但し書きリストの正規化グルーピング（canonicalKey、DB v30〜） |
 | `receipt_payment_method_rules` | レシート支払方法キーワード→科目ルール（DB v32〜） |
+| `aoirochobo_accounts` | AoiroChobo（PC会計アプリ）の勘定科目スナップショット。`vocabulary.json` のミラー（DB v34〜） |
+| `aoirochobo_memo_templates` | 同・摘要辞書スナップショット（DB v34〜） |
+| `aoirochobo_vocab_meta` | 同・取り込んだファイルのヘッダ1行（年度・contentHash・取込日時。DB v34〜） |
 
 （`correction_logs`・`ocr_score_logs`・`ocr_explicit_joins`はPhase6（v27→v28、
 `MIGRATION_27_28`）でDROP済み）

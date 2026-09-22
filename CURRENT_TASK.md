@@ -25,7 +25,9 @@ PC会計アプリを同時進行で開発中。PC側のClaude Code / 開発者�
 - [x] 継続協議3件に回答（返信 §8）：Purchase の externalId を **UUID方式に変更提案**／Deposit 空欄は
       **ハッシュ不要**（合成番号でバグごと解消）／収入科目の税率は摘要から引くで了解
 - [ ] PC側の回答待ち：Purchase の UUID 方式への同意（`transaction-import.md` §4 の書き換えが必要）
-- [ ] スマホ側実装の着手（DB v34 マイグレーション一式から）
+- [x] スマホ側実装に着手：**DB v34 マイグレーション一式**（返信 §6 のタスク1・2・3・6）
+- [ ] vocabulary.json 取込 UI ＋ 取込処理1〜5（返信 §6 タスク4）
+- [ ] 科目マッピング UI（サーチキー英字で自動提案 → ユーザー確定）（同 タスク5）
 
 ## 完了条件
 PC側のClaude Codeがこの1ファイルを読めば、Android出力の全データ構造・
@@ -79,6 +81,49 @@ PC側のClaude Codeがこの1ファイルを読めば、Android出力の全デ�
   2. `examples/vocabulary.sample.json` の `_note` が 2026-09-12 の旧規約のまま
   3. `transaction-import.md` §7 の isReturn 文言が Deposit 出金に誤適用され得る（9/10 指摘・未反映）
 
+### 2026-09-22 第3ラウンド：DB v34 マイグレーション実装（返信 §6 タスク1・2・3・6）
+
+`ReceiptDatabase.kt` に `MIGRATION_33_34` を追加し、version を 34 に上げた。内訳：
+
+| # | 内容 |
+|---|---|
+| ① | `yayoi_accounts` / `rakuraku_accounts` に `accountKey: String?` ＋ `accountKeyName: String?` |
+| ② | `rakuraku_tekiyou` に `memoKey: String?` ＋ `memoKeyName: String?` |
+| ③ | `aoirochobo_accounts` / `aoirochobo_memo_templates` / `aoirochobo_vocab_meta` を新設 |
+| ④ | `general_receipts.uuid`（NOT NULL）追加＋既存行バックフィル＋UNIQUE インデックス |
+
+**「そのとき見た name」を置く層を、学習テーブルの葉ではなく接続キーの行にした**（§6 タスク3 の
+文言からの意図的なずれ。契約への影響はなくスマホ内部の置き場所の話）。
+
+- 理由：スマホの学習エントリ（`product_master.yayoiAccountId` 等）が指しているのは**自前の科目**で、
+  ユーザーはその紐付けを**自前の科目名**を見て決めている。PC 側がスロットを作り替えても
+  「肥料 → 肥料費」という判断自体は無効にならないし、この学習は弥生 CSV・らくらく CSV でも
+  使い回しているので、PC 都合で消すと連携と無関係な機能が壊れる。
+- 代わりに `yayoi_accounts.accountKey` / `rakuraku_tekiyou.memoKey` の行に「確定時に見えていた
+  PC 側の名前」を持たせ、取込時に食い違ったら**その接続キーだけを外す**。結果として、その科目を
+  経由する仕訳は全部 `matchStatus = "UnmatchedAccount"` になり、契約が求める「安全側に失敗する」を
+  満たしつつ、再確認が科目1件で済む（学習 N 件を選び直させない）。
+
+**取込でマッピングが消える経路を先に塞いだ**：`SettingsScreen.mergeYayoiAccounts` /
+`mergeRakurakuAccounts` は `accountCode` 一致で既存行を `update` するため、`accountKey` を持たない
+科目マスタ（旧バックアップ・CSV 由来）を取り込むとユーザーが確定したマッピングを上書きで失う。
+`accountKey = account.accountKey ?: existing.accountKey` で既存値を残すようにした。
+`TekiyouDictImporter` は未存在行しか insert しないので `memoKey` は無事（確認済み）。
+
+**旧バックアップ復元時の `uuid` null 対策**：Gson はコンストラクタのデフォルト値を使わずフィールドを
+null のまま残すため、`uuid` を持たない旧 JSON を復元すると NOT NULL 列に null が入って落ちる。
+`withRestoredUuid()` を `importAllData` / `importReceiptData` の両方に噛ませて採番し直す。
+
+**検証**（実機が接続できないため実行時検証は未了）：
+
+- クリーンビルド BUILD SUCCESSFUL
+- KSP 生成の `ReceiptDatabase_Impl.java` が持つ期待スキーマと、マイグレーションの CREATE 文を
+  sqlite3 で突き合わせ、3テーブルとも `PRAGMA table_info` が完全一致することを確認
+- `uuid` のバックフィル式（SQLite だけで UUID v4 を作る式）を sqlite3 で実行し、36桁・
+  バージョン/バリアントのニブル・重複なしを確認
+- `uuid` 列は `DEFAULT ''` 付きで ALTER するが、エンティティ側に `@ColumnInfo(defaultValue)` が
+  無いので Room のスキーマ検証は既定値を比較しない（`MIGRATION_29_30` の `canonicalKey` と同じ形）
+
 ---
 
 ## 作業終了時の記録（セッション終了前に必ず埋めること）
@@ -100,20 +145,25 @@ PC側のClaude Codeがこの1ファイルを読めば、Android出力の全デ�
   - Deposit の通番空欄フォールバックは**ハッシュ不要**と回答（合成番号で取込バグごと解消）
   - 収入科目の税率は摘要の `taxRate` から引くで合意
   - `docs/known-issues.md` に2件追加（通帳CSV取込の無言スキップ／行挿入・削除の行番号シフト）
+- 2026-09-22 第3ラウンド：**DB v33 → v34** を実装（`accountKey` / `memoKey` と確定時の名前・
+  AoiroChobo ミラー3テーブル・`general_receipts.uuid`）。取込でマッピングが消える経路と
+  旧バックアップ復元時の uuid null も塞いだ。クリーンビルド BUILD SUCCESSFUL
 
 ### 未完了・中断した理由
 - 不整合 #3（弥生CSVの列構成が購買/預金とレシートで不一致）・#4（弥生税区分文字列が
   やよい実仕様と不一致の疑い）は、弥生が現在使えず実インポート検証ができないため保留
 - 2026-09-10 の未完了項目1〜4（`accountKey` 数値キーの詰め）は **2026-09-22 に解消**。
   v2 契約で `accountKey` は PC 所有の不透明文字列に確定したため、論点自体が消えた
-- 2026-09-22：**スマホ側の実装は未着手**（契約の詰めだけで終了）。契約側のブロッカーは全部解消したので、
-  実装に入れる状態になっている
+- 2026-09-22 第3ラウンド：DB v34 のマイグレーションは実装・クリーンビルド完了。ただし
+  **実機での起動確認（Room のスキーマ検証と実データのバックフィル）は未了**（PC に実機が
+  接続されていないため）。次に実機を繋いだとき最初にこれを確認する
 - PC側の回答待ちは **1件だけ**：Purchase の `externalId` を UUID 方式にすることへの同意
   （同意が来れば `transaction-import.md` §4 の書き換えと `receipt_items.uuid` の追加が確定する）。
-  これは DB v34 に相乗りさせるだけなので、他のマイグレーション作業は待たずに進められる
+  v34 は先に確定させたので、同意が来たら `receipt_items.uuid` は **DB v35** で単独に入れる
+  （行の保存が月単位の全DELETE→全INSERTなので、uuid を保存時に引き継ぐ実装もセットで必要）
 
 ### 次回セッションで最初にやること
-DB v34 のマイグレーションをまとめて実装する（返信 §6 のタスク1〜3・6）：`yayoi_accounts`/`rakuraku_accounts` への `accountKey: String?` 追加／`aoirochobo_accounts`・`aoirochobo_memo_templates`・`aoirochobo_vocab_meta` の3テーブル新設／学習系テーブルへの「そのとき見た name」列追加／`general_receipts.uuid` 追加＋バックフィル。PC から UUID 方式の同意が来ていれば `receipt_items.uuid` も同じ回に入れる。
+実機を繋いで v33→v34 マイグレーションの起動確認（Room のスキーマ検証を通ること・既存レシートに uuid が入ること）をしてから、設定 > データ管理に `vocabulary.json` 取込 UI と取込処理1〜5 を実装する（返信 §6 タスク4）。
 
 ### 2026-09-22 第2ラウンドで判明した実装上の事実
 - `ReceiptInputScreen` の行「挿入」「削除」は**以降の行を全部シフト**（`rows[i] = rows[i-1]`）。
@@ -126,7 +176,7 @@ DB v34 のマイグレーションをまとめて実装する（返信 §6 の�
 
 ### 新たに発覚した問題・制約
 - `docs/known-issues.md` の「既知のバグ」に4点追加済み（#1・#2修正済み、#3・#4保留）
-- externalId 用に `general_receipts` へ UUID カラム追加＋既存行バックフィルが必要（DB v34 想定・未着手）
+- externalId 用の `general_receipts.uuid` は DB v34 で追加・バックフィル済み（実機確認待ち）
 - `searchKeyAlpha` は `rakuraku_accounts` 内で重複があり結合キーに使えない（既知化）
 - **2026-09-22 追加（`docs/known-issues.md` に転記済み）**
   - 通帳CSV取込で「同一日・取引通番が空欄」の行は2件目以降が黙って捨てられる（既知のバグ・未修正）

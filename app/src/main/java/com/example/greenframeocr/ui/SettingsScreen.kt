@@ -1191,6 +1191,17 @@ private suspend fun exportAllData(
 }
 
 /**
+ * 旧バージョンのバックアップJSONには uuid フィールドが無い。Gson はコンストラクタの
+ * デフォルト値を使わずフィールドを null のまま残すため、NOT NULL 列の general_receipts.uuid が
+ * null のまま INSERT されて落ちる。復元時にここで採番し直す。
+ */
+private fun com.example.greenframeocr.data.GeneralReceipt.withRestoredUuid():
+    com.example.greenframeocr.data.GeneralReceipt {
+    val restored: String? = uuid
+    return if (restored.isNullOrBlank()) copy(uuid = java.util.UUID.randomUUID().toString()) else this
+}
+
+/**
  * 全データをインポート
  */
 private suspend fun importAllData(
@@ -1224,7 +1235,7 @@ private suspend fun importAllData(
 
         // レシート・領収書（IDを保持したまま復元。general_receipt_itemsはreceiptId経由でFK参照するため
         // 先にgeneral_receiptsを復元する）
-        importData.generalReceipts?.forEach { db.generalReceiptDao().insertReceipt(it) }
+        importData.generalReceipts?.forEach { db.generalReceiptDao().insertReceipt(it.withRestoredUuid()) }
         importData.generalReceiptItems?.let { db.generalReceiptDao().insertItems(it) }
         importData.invoiceStores?.let { db.invoiceStoreDao().upsertAll(it) }
         importData.generalItemMasters?.let { db.generalItemMasterDao().upsertAll(it) }
@@ -1498,7 +1509,17 @@ private suspend fun mergeYayoiAccounts(
     accounts.forEach { account ->
         val existing = account.accountCode?.let { dao.getByCode(it) }
         if (existing != null) {
-            dao.update(account.copy(id = existing.id, parentId = existing.parentId, isEnabled = existing.isEnabled))
+            dao.update(
+                account.copy(
+                    id = existing.id,
+                    parentId = existing.parentId,
+                    isEnabled = existing.isEnabled,
+                    // AoiroChobo とのマッピングはユーザーが画面で確定したもの。取り込む側が
+                    // 持っていなければ（旧バックアップ・科目マスタCSV由来）既存の確定を残す
+                    accountKey = account.accountKey ?: existing.accountKey,
+                    accountKeyName = account.accountKeyName ?: existing.accountKeyName
+                )
+            )
             updated++
         } else {
             dao.insert(account.copy(id = 0, parentId = null))
@@ -1522,7 +1543,15 @@ private suspend fun mergeRakurakuAccounts(
     accounts.forEach { account ->
         val existing = dao.getByCode(account.accountCode)
         if (existing != null) {
-            dao.update(account.copy(id = existing.id, parentId = existing.parentId))
+            dao.update(
+                account.copy(
+                    id = existing.id,
+                    parentId = existing.parentId,
+                    // 弥生側と同じく、AoiroChobo とのマッピングは取込で消さない
+                    accountKey = account.accountKey ?: existing.accountKey,
+                    accountKeyName = account.accountKeyName ?: existing.accountKeyName
+                )
+            )
             updated++
         } else {
             dao.insert(account.copy(id = 0, parentId = null))
@@ -1586,7 +1615,7 @@ private suspend fun importReceiptData(
         val importData = gson.fromJson(json, ReceiptExportData::class.java)
 
         // general_receipt_itemsはreceiptId経由でFK参照するため、先にgeneral_receiptsを復元する
-        importData.generalReceipts.forEach { db.generalReceiptDao().insertReceipt(it) }
+        importData.generalReceipts.forEach { db.generalReceiptDao().insertReceipt(it.withRestoredUuid()) }
         db.generalReceiptDao().insertItems(importData.generalReceiptItems)
         db.invoiceStoreDao().upsertAll(importData.invoiceStores)
         db.generalItemMasterDao().upsertAll(importData.generalItemMasters)

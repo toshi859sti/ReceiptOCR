@@ -45,5 +45,17 @@ data class RakurakuAccount(
     val usedForDeposit: Boolean = true,
 
     /** 親科目ID (階層構造用) */
-    val parentId: Long? = null
+    val parentId: Long? = null,
+
+    /**
+     * AoiroChobo（PC会計アプリ）の科目参照キー。null = 未マッピング。
+     * サーチキー英字と一致することが多いが、参照キーとしては使わず初期提案のヒントに留める。
+     */
+    val accountKey: String? = null,
+
+    /**
+     * accountKey を確定したときに見えていた AoiroChobo 側の科目名。
+     * 取込時に現在名と食い違ったら accountKey を外す（YayoiAccount と同じ扱い）。
+     */
+    val accountKeyName: String? = null
 )

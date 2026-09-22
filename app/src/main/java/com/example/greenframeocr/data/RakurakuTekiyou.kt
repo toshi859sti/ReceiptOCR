@@ -42,5 +42,18 @@ data class RakurakuTekiyou(
     val isShared: Boolean? = null,
 
     /** 使用するフラグ（選択可能かどうか） */
-    val isEnabled: Boolean = true
+    val isEnabled: Boolean = true,
+
+    /**
+     * AoiroChobo（PC会計アプリ）の摘要参照キー。null = 未マッピング
+     * （その摘要を使う仕訳は matchStatus = "UnmatchedMemo" で出す）。
+     */
+    val memoKey: String? = null,
+
+    /**
+     * memoKey を確定したときに見えていた AoiroChobo 側の摘要名。
+     * vocabulary.json 取込時にこれと現在名が食い違ったら memoKey を外す
+     * （CHANGELOG 2026-09-13 改訂・変更2）。
+     */
+    val memoKeyName: String? = null
 )
