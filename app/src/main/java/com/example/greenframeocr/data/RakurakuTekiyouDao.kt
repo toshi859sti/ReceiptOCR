@@ -5,6 +5,16 @@ import androidx.room.*
 @Dao
 interface RakurakuTekiyouDao {
 
+    /** AoiroChobo の摘要と紐付け済みの行（取込時の name 変化検出に使う） */
+    @Query("SELECT * FROM rakuraku_tekiyou WHERE memoKey IS NOT NULL")
+    suspend fun getLinkedToAoiroChobo(): List<RakurakuTekiyou>
+
+    @Query("UPDATE rakuraku_tekiyou SET memoKey = NULL, memoKeyName = NULL WHERE id = :id")
+    suspend fun clearMemoKey(id: Int)
+
+    @Query("UPDATE rakuraku_tekiyou SET memoKeyName = :name WHERE id = :id")
+    suspend fun updateMemoKeyName(id: Int, name: String)
+
     @Query("SELECT * FROM rakuraku_tekiyou ORDER BY mainCategory, subCategory, id")
     suspend fun getAll(): List<RakurakuTekiyou>
 

@@ -30,11 +30,13 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AccountingSoftware
+import com.example.greenframeocr.data.AoiroChoboVocabMeta
 import com.example.greenframeocr.data.AppDarkMode
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.AppThemePreset
 import com.example.greenframeocr.data.CameraResolution
 import com.example.greenframeocr.data.ReceiptDatabase
+import com.example.greenframeocr.util.AoiroChoboVocabImporter
 import com.example.greenframeocr.util.withComputedKey
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
@@ -96,6 +98,18 @@ fun SettingsScreen(
     var clearDataType by remember { mutableStateOf(DataType.ALL) }
     var clearMessage by remember { mutableStateOf<String?>(null) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
+
+    // AoiroChobo 科目・摘要の取込
+    var vocabImportResult by remember {
+        mutableStateOf<AoiroChoboVocabImporter.Result?>(null)
+    }
+    var isVocabImporting by remember { mutableStateOf(false) }
+    var vocabMeta by remember {
+        mutableStateOf<AoiroChoboVocabMeta?>(null)
+    }
+    LaunchedEffect(vocabImportResult) {
+        vocabMeta = db.aoiroChoboVocabDao().getMeta()
+    }
     var isClearing by remember { mutableStateOf(false) }
 
     // 全データエクスポート用ランチャー
@@ -202,6 +216,21 @@ fun SettingsScreen(
             scope.launch {
                 val result = exportReceiptData(context, db, it)
                 receiptExportMessage = result
+            }
+        }
+    }
+
+    // AoiroChobo 科目・摘要（vocabulary.json）取込用ランチャー。
+    // 既存の「インポート」は自前DBのバックアップ復元で、外部マスタの取込とは性質が違うため
+    // 同じ選択肢に混ぜず独立した項目にする（REPLY-phone-2026-09-22.md §2-1）
+    val vocabImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            scope.launch {
+                isVocabImporting = true
+                vocabImportResult = AoiroChoboVocabImporter.import(context, db, it)
+                isVocabImporting = false
             }
         }
     }
@@ -693,6 +722,31 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // AoiroChobo（PC会計アプリ）の科目・摘要スナップショットの取込。
+            // 上の「インポート」は自前DBのバックアップ復元で、外部マスタの取込とは性質が違うため
+            // 同じ選択肢に混ぜず独立した項目にしている（REPLY-phone-2026-09-22.md §2-1）
+            SettingItem(
+                title = "AoiroChobo 科目・摘要を取り込む",
+                subtitle = vocabMeta?.let { meta ->
+                    val age = AoiroChoboVocabImporter.ageInDays(meta.generatedAt)
+                    val freshness = when {
+                        age == null -> "生成日時が読めないファイル"
+                        age == 0L -> "今日書き出したファイル"
+                        else -> "${age}日前に書き出したファイル"
+                    }
+                    "${meta.fiscalYear}年度を取込済み（$freshness）"
+                } ?: "未取込。AoiroChoboの「スマホ連携」で書き出したJSONを選びます"
+            ) {
+                TextButton(
+                    onClick = { vocabImportLauncher.launch(arrayOf("application/json")) },
+                    enabled = !isVocabImporting
+                ) {
+                    Text(if (isVocabImporting) "取込中..." else "取込")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // データクリア
             DataManagementSection(
                 title = "データクリア",
@@ -744,6 +798,14 @@ fun SettingsScreen(
                 subtitle = "2025-12-14"
             ) {}
         }
+    }
+
+    // AoiroChobo 科目・摘要の取込結果
+    vocabImportResult?.let { result ->
+        AoiroChoboVocabImportDialog(
+            result = result,
+            onDismiss = { vocabImportResult = null }
+        )
     }
 
     // カメラ情報ダイアログ
@@ -1120,6 +1182,116 @@ data class ReceiptExportData(
     val generalItemMasters: List<com.example.greenframeocr.data.GeneralItemMaster>,
     val receiptPaymentMethodRules: List<com.example.greenframeocr.data.ReceiptPaymentMethodRule>
 )
+
+/**
+ * AoiroChobo の科目・摘要を取り込んだ結果。
+ *
+ * 契約が「安全側に失敗する」設計なので、黙って進まず何が起きたかを全部見せる。
+ * とくに「紐付けを外した」は、次に仕訳を出したときその科目が UnmatchedAccount になる
+ * という予告なので、件数ではなく具体名を並べる。
+ */
+@Composable
+private fun AoiroChoboVocabImportDialog(
+    result: AoiroChoboVocabImporter.Result,
+    onDismiss: () -> Unit
+) {
+    val title = when (result) {
+        is AoiroChoboVocabImporter.Result.Aborted -> "取り込めませんでした"
+        is AoiroChoboVocabImporter.Result.Skipped -> "前回と同じファイルです"
+        is AoiroChoboVocabImporter.Result.Imported -> "取り込みました"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                when (result) {
+                    is AoiroChoboVocabImporter.Result.Aborted -> {
+                        Text(result.message)
+                    }
+
+                    is AoiroChoboVocabImporter.Result.Skipped -> {
+                        Text(
+                            "前回取り込んだファイルと中身が同じ（contentHash が一致）でした。" +
+                                "科目・摘要は変更していません。"
+                        )
+                        Text(
+                            text = "${result.fiscalYear}年度" + freshnessSuffix(result.ageDays),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    is AoiroChoboVocabImporter.Result.Imported -> {
+                        Text("科目 ${result.accountCount}件・摘要 ${result.memoCount}件")
+                        Text(
+                            text = "${result.fiscalYear}年度" + freshnessSuffix(result.ageDays),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (result.fiscalYearChanged) {
+                            Text(
+                                "年度が変わったので、前の年度の科目・摘要は破棄しました（保持は1年度分）。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        if (result.unlinkedByRename.isNotEmpty()) {
+                            Divider()
+                            Text(
+                                "名前が変わったため紐付けを外しました（${result.unlinkedByRename.size}件）",
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                "AoiroChobo 側で科目が別の用途に作り替えられた合図です。" +
+                                    "付け直すまで、この科目を使う仕訳は「要確認」で出ます。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            result.unlinkedByRename.forEach {
+                                Text("・$it", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+
+                        if (result.danglingLinks > 0) {
+                            Divider()
+                            Text("ファイルから消えた科目・摘要を指している紐付け: ${result.danglingLinks}件")
+                            Text(
+                                "AoiroChobo 側で無効化されたものです。付け直すまで「要確認」で出ます。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        Divider()
+                        Text("まだ対応付けていない科目: 弥生 ${result.unmappedYayoi}件 / らくらく ${result.unmappedRakuraku}件")
+
+                        if (result.warnings.isNotEmpty()) {
+                            Divider()
+                            Text("警告", color = MaterialTheme.colorScheme.error)
+                            result.warnings.forEach {
+                                Text("・$it", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Text(
+                                "取り込みは止めていません。値はそのまま保持しています。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("OK") }
+        }
+    )
+}
+
+private fun freshnessSuffix(ageDays: Long?): String = when {
+    ageDays == null -> "（生成日時が読めないファイル）"
+    ageDays == 0L -> "（今日書き出したファイル）"
+    else -> "（${ageDays}日前に書き出したファイル）"
+}
 
 /**
  * 全データエクスポート用のデータクラス

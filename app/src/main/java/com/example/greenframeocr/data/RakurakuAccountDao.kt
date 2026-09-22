@@ -52,6 +52,19 @@ interface RakurakuAccountDao {
     @Query("SELECT * FROM rakuraku_accounts ORDER BY id")
     suspend fun getAllById(): List<RakurakuAccount>
 
+    /** AoiroChobo の科目と紐付け済みの行（取込時の name 変化検出に使う） */
+    @Query("SELECT COUNT(*) FROM rakuraku_accounts WHERE accountKey IS NULL")
+    suspend fun countWithoutAccountKey(): Int
+
+    @Query("SELECT * FROM rakuraku_accounts WHERE accountKey IS NOT NULL")
+    suspend fun getLinkedToAoiroChobo(): List<RakurakuAccount>
+
+    @Query("UPDATE rakuraku_accounts SET accountKey = NULL, accountKeyName = NULL WHERE id = :id")
+    suspend fun clearAccountKey(id: Long)
+
+    @Query("UPDATE rakuraku_accounts SET accountKeyName = :name WHERE id = :id")
+    suspend fun updateAccountKeyName(id: Long, name: String)
+
     @Query("DELETE FROM rakuraku_accounts")
     suspend fun deleteAll()
 

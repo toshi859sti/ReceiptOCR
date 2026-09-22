@@ -42,6 +42,20 @@ interface YayoiAccountDao {
     @Query("SELECT * FROM yayoi_accounts WHERE parentId = :parentId ORDER BY accountCode")
     suspend fun getByParentId(parentId: Long): List<YayoiAccount>
 
+    /** AoiroChobo の科目と紐付け済みの行（取込時の name 変化検出に使う） */
+    @Query("SELECT COUNT(*) FROM yayoi_accounts WHERE accountKey IS NULL AND isEnabled = 1")
+    suspend fun countWithoutAccountKey(): Int
+
+    @Query("SELECT * FROM yayoi_accounts WHERE accountKey IS NOT NULL")
+    suspend fun getLinkedToAoiroChobo(): List<YayoiAccount>
+
+    /** 紐付けを外す（PC側で科目が作り替えられたとき） */
+    @Query("UPDATE yayoi_accounts SET accountKey = NULL, accountKeyName = NULL WHERE id = :id")
+    suspend fun clearAccountKey(id: Long)
+
+    @Query("UPDATE yayoi_accounts SET accountKeyName = :name WHERE id = :id")
+    suspend fun updateAccountKeyName(id: Long, name: String)
+
     @Query("DELETE FROM yayoi_accounts")
     suspend fun deleteAll()
 
