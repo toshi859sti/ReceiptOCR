@@ -6,6 +6,67 @@
 
 ---
 
+## schemaVersion 2 — 2026-09-22 minor（`accountName` を追加・**スマホ側の回答を反映**）
+
+`schemaVersion` は据え置き（**2 のまま**）。前方互換の追加と文言修正のみ。
+
+スマホ側の回答 [REPLY-phone-2026-09-22.md](REPLY-phone-2026-09-22.md) を受けて、
+指摘された 3 点を直した。
+
+### 変更 1：`entries[].debit/credit.accountName` を追加（穴だったものを埋めた）
+
+2026-09-13 改訂（変更 4）で「PC 側が `accountName` のエコーを検証に使う」と決めたのに、
+`transaction-import.md` §3 のスキーマにも `examples/` にも `accountName` が**存在しなかった**。
+`accountKey` を引退させなくなった以上、これが古いスナップショットからの取込を検知する
+唯一の機構なので、穴のまま残せない。
+
+- 任意フィールド。値は「そのマッチングを決めたときに見えていた科目名」。
+  `accountKey` が `null` なら `null`。**送れるときは必ず送ること。**
+- 検証は `memoName` と同じ：入っていれば現在名と突き合わせる。**不一致はエラーにしない**
+  （ファイルは通る）が、**その行は「要確認」に回す**。スマホ側の提案は「警告どまり」だったが、
+  警告だけだと `matchStatus = "Matched"` のまま一括確定を素通りしてしまい、`accountName` を
+  足した意味（キーは生きているのに中身が別の科目）が消えるため、§4.6 の当初方針を採った。
+  **スマホ側の実装には影響しない**（送る内容は同じ）。
+- `examples/transactions.sample.json` にも入れた。
+- PC 側実装：`TransactionsFile.EntrySide.AccountName`・`TransactionsFileValidator`（`accountKey` が
+  `null` なのに `accountName` が入っていれば違反）・`ImportTransactionsUseCase.StaleNameWarnings`
+  （科目・摘要ともキー単位でまとめて警告）。**`memoName` 側の突き合わせも同時に実装した**
+  （§11 に書いてあったが未実装だった）。
+  「要確認」に回すために `ImportedTransaction` へ `DebitAccountName` / `CreditAccountName` /
+  `StaleNameDetected` を追加（マイグレーション `AddImportedTransactionNameEcho`）。
+  `NeedsReview` が拾い、一覧の「状態」列には**「名前が変わっている」**と出る。
+
+### 変更 2：`transaction-import.md` §7 の返品の主語を限定
+
+「元データが負なら借方／貸方を入れ替える」が `Deposit` にも掛かって読めていた。
+**`Deposit` の出金は返品ではなく通常の資金移動**で `meta.isReturn = false`、借方／貸方は
+§5 の表で入金／出金として既に分岐している。主語を `Purchase` / `Receipt` に限定した。
+（2026-09-10 のスマホ側指摘が未反映のままだった。）
+
+### 変更 3：`examples/vocabulary.sample.json` の `_note` が旧規約のままだった
+
+「科目を作り替えると新しい `accountKey` が採番され、旧キーはこのファイルから消える」は
+2026-09-13 改訂で**撤回済み**の内容。ゴールデン例を先に読んだ実装者が逆の実装をする危険が
+あったため、現行（キーは据え置き・`name` だけ変わる／消えるのは無効化されたものだけ）に直した。
+
+### スマホ側の回答で消えた宿題
+
+- **`contentHash` の正規化仕様の突き合わせは不要になった。** スマホは再計算せず、
+  受け取った値を `transactions.json` に**転記するだけ**。PC 側は自分で計算した現在値と
+  比べるので（`ExportVocabularyUseCase.ComputeCurrentContentHashAsync`）、
+  両側で正規化のバイト一致を保つ必要がそもそも無い。
+- **`vocabulary.json` の取込経路**：スマホの 設定 > データ管理 に専用項目を追加。SAF で選択、
+  Room の `aoirochobo_*` 3 テーブルへ保存（DB v33 → v34）。1 年度分のみ保持。自動同期はしない。
+- **預金スロット**：スマホ設定で**固定**。既定 `1`（`0` は撤回）。設定 UI は
+  `ledgerAffinity == "Bank" && bankSlotNo != null` の科目を**科目名で選ばせて**内部で番号を持つ。
+  `vocabulary.json` 未取込のときは AoiroChobo 形式の出力自体をブロックする。
+- **9/10 の §A（自前科目 → PC 科目の接続キーが無い）は取り下げ**。`rakurakuAccountCode` /
+  `yayoiAccountCode` / `aliases` の追加依頼は消えた。スマホ側が自前マスタに `accountKey` 列を
+  1 本足し、らくらくのサーチキー英字を**初期提案のヒント**にしてユーザーが確定する方式で閉じる
+  （実測：27 件中 22 件が自動一致）。**契約フィールドの追加は無し。**
+
+---
+
 ## schemaVersion 2 — 2026-09-14 minor（**PC 側の取込を実装**・契約フィールドの変更なし）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。
@@ -263,8 +324,6 @@ PC 側のコードと突き合わせた設計レビューの結果、schemaVersi
     `Account.KeyRevision`（INTEGER・既定 1）を追加。科目マスタの名称変更で「別用途に作り替え」を選んだときだけ +1。
     年度複製は `AccountKey` / `KeyRevision` とも引き継ぐ。
   - `JournalEntry.EditedAfterImport` / `ImportBatchId`（由来表示・バッチ取り消し用）。
-- **未確定 / スマホ側の残り仕様書待ち**：
-  - PC→スマホの `vocabulary.json` 取込経路（スマホ側 UI・保存先）。
-  - 預金スロットの割り当て方法（スマホ設定で固定 or 取込時に選択）の最終形。
-  - `contentHash` の正規化仕様をスマホ側実装と突き合わせて確定。
-  - ゴールデン例（`examples/`）を両側の実装で往復検証。
+- ~~**未確定 / スマホ側の残り仕様書待ち**~~：**4 件とも 2026-09-22 の回答で決着**
+  （取込経路・預金スロット・`contentHash`・往復検証。最上段の 2026-09-22 の項を見ること）。
+  往復検証だけは**手順が確定しただけで、まだやっていない**。

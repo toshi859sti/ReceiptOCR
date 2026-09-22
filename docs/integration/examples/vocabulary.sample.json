@@ -12,7 +12,7 @@
     "endDate": "2026-12-31"
   },
   "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-  "_note": "実際のファイルは IsActive=1 の全科目・全摘要を含む。これは構造を示す抜粋サンプル。科目参照キーは accountKey、摘要参照キーは memoKey（どちらも不透明・不変・年度非依存。既存科目の accountKey は現行スラッグと一致）。searchKey・name は AoiroChobo の検索用文字列／表示名で参照には使わない。科目を別用途に作り替えると新しい accountKey が採番され、旧キーはこのファイルから消える（§4.6）。",
+  "_note": "実際のファイルは IsActive=1 の全科目・全摘要を含む。これは構造を示す抜粋サンプル。科目参照キーは accountKey、摘要参照キーは memoKey（どちらも不透明・不変・年度非依存。既存科目の accountKey は現行スラッグと一致）。searchKey・name は AoiroChobo の検索用文字列／表示名で参照には使わない。科目を別用途に作り替えても accountKey は据え置きで、変わるのは name だけ（2026-09-13 改訂・§4.6）。ファイルから消えるのは無効化された科目・摘要のみ。",
   "enums": {
     "accountType": ["Asset", "Liability", "Income", "Expense", "Capital"],
     "ledgerType": ["Cash", "Bank", "AR", "AP", "Unpaid", "Transfer"],

@@ -58,8 +58,9 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
   "entryDate": "2026-01-20",                  // 西暦 ISO yyyy-MM-dd（和暦変換はスマホ側）
   "amount": 11000,                            // 税込・正の整数（円）。§「金額と返品」
 
-  "debit":  { "accountKey": "hiryou",  "taxRate": "10",  "businessRatio": 100 },
-  "credit": { "accountKey": "kaikake", "taxRate": null,  "businessRatio": 100 },
+  // accountName は任意・人間可読のエコー。PC は照合に使わず、古いマスタの検知だけに使う
+  "debit":  { "accountKey": "hiryou",  "accountName": "肥料費", "taxRate": "10", "businessRatio": 100 },
+  "credit": { "accountKey": "kaikake", "accountName": "買掛金", "taxRate": null, "businessRatio": 100 },
 
   "memoKey": "memo-0042",                     // 摘要。★ vocabulary の memoTemplates[].memoKey のみ（閉じた語彙）。
                                              //   逆引き0件なら null。§「摘要は閉じた語彙」
@@ -94,6 +95,7 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 | `bankSlotNo` | △ | `source=Deposit` のとき必須。§「bankSlotNo」 |
 | `entryDate` | ✔ | 西暦 ISO `yyyy-MM-dd`。空文字・和暦・分割整数は不可 |
 | `debit.accountKey` | ✔※ | `vocabulary.accounts[].accountKey`。source ごとの候補フィルタは [vocabulary-snapshot.md](vocabulary-snapshot.md) §4.5。解決不能でも推定値を入れ、`matchStatus` を立てる。本当に不明なら `null` |
+| `debit.accountName` | — | `accountKey` が指す科目の `name` のエコー。値は「そのマッチングを決めたときに見えていた名前」。PC は照合に使わず、**現在名と食い違ったらその行を「要確認」に回す**（古いスナップショットの検知。[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.6）。`accountKey` が `null` なら `null`。**送れるときは必ず送ること** |
 | `debit.taxRate` | — | [README.md](README.md) §4 のコード。相手科目側にだけ付く。省略/`null` 可 |
 | `debit.businessRatio` | — | 事業割合(%)。省略時 100。PC 側で家事按分を別途扱うので通常は 100 のままでよい |
 | `credit.*` | ✔※ | 借方と同様 |
@@ -172,10 +174,12 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 ## 7. 金額と返品
 
 - `amount` は**常に正の整数**（税込・円）。
-- 元データが負（返品・値引き）の場合：**借方／貸方を入れ替えて**正数で出す。
+- **`Purchase` / `Receipt` で**元データが負（返品・値引き）の場合：**借方／貸方を入れ替えて**正数で出す。
   - 例：肥料の返品 1,100 円 → 通常仕訳 `Dr hiryou / Cr kaikake` の逆で
     `debit.accountKey = "kaikake"`, `credit.accountKey = "hiryou"`, `amount = 1100`。
   - `meta.isReturn = true` を必ず立てる。
+- **`Deposit` の出金（元 amount < 0）は返品ではない**。通常の資金移動なので `meta.isReturn = false`。
+  借方／貸方は §5 の表で入金／出金として既に分岐しており、ここでの入れ替えは起きない。
 - 端数処理はしない（OCR で読んだ税込額をそのまま）。
 
 ---
@@ -258,14 +262,19 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 - `source` は `Purchase` / `Deposit` / `Receipt`。
 - `source = Deposit` なら `bankSlotNo` が `1`〜`5` の整数（`0`・`null` は不正）。
 - `debit` / `credit` は必須オブジェクト。`accountKey` は `null` か非空文字列。
+- `debit.accountName` / `credit.accountName` は省略可。入っている場合は `accountKey` が指す科目の
+  `name` と一致すること。`accountKey` が `null` なら `null`。`memoName` と同じ扱い。
+  **不一致はエラーにしない**（ファイルは通る）が、PC はその行を**「要確認」に回す**——
+  `matchStatus` が `Matched` でも自動では帳簿に入らない（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.6）。
+  あわせて取込サマリーに「マスタが古い可能性」と警告を出す。
 - `taxRate` / `credit.taxRate` は `null` か `["10","8","1","8_old","non","na","men"]` のいずれか。
   `"1"` は食料品の軽減税率 1%（2027年から予定。2026-09-14 に追加）。
 - `matchStatus` は 4 値のいずれか。
 - `memoKey` は `null` か、`vocabulary.memoTemplates[].memoKey` に実在するキー（フリーテキスト不可）。
   `matchStatus = "UnmatchedMemo"` のとき `memoKey` は必ず `null`。`UnmatchedAccount`（科目が `null`）も
   `memoKey` は `null`。`Matched` / `Ambiguous` のときは実在するキー。
-- `memoName` は省略可。入っている場合は `memoKey` が指す行の `name` と一致すること
-  （不一致はエラーにせず、取込サマリーに「マスタが古い可能性」と警告）。`memoKey` が `null` なら `null`。
+- `memoName` は省略可。入っている場合は `memoKey` が指す行の `name` と一致すること。
+  `memoKey` が `null` なら `null`。不一致の扱いは `accountName` と同じ（エラーにせず「要確認」へ＋警告）。
 - `vocabulary.contentHash`（あれば）が PC 側の当年度スナップショットと一致しないときは
   取込を止めず、サマリーに「マスタが一致しません」と警告表示（PC 側の挙動）。
 
