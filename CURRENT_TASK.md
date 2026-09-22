@@ -148,6 +148,8 @@ null のまま残すため、`uuid` を持たない旧 JSON を復元すると N
 - 2026-09-22 第3ラウンド：**DB v33 → v34** を実装（`accountKey` / `memoKey` と確定時の名前・
   AoiroChobo ミラー3テーブル・`general_receipts.uuid`）。取込でマッピングが消える経路と
   旧バックアップ復元時の uuid null も塞いだ。クリーンビルド BUILD SUCCESSFUL
+- 2026-09-22：PC側への返信に §9（第3ラウンド）を追記。v34 完了報告・`receipt_items.uuid` は
+  v35 になる訂正・「そのとき見た name」を接続キーの行に置いた件と PC から見た挙動差・回答待ち4件
 - 2026-09-22：`CLAUDE.md` の古い記述を実装に合わせて修正（DB v28→v34・ML Kit 前提の記述を
   Gemini に・`process()` のシグネチャ・存在しない `AccountSettingsScreen.kt` の要対応項目削除・
   docs 構成に `integration/` を追加）
