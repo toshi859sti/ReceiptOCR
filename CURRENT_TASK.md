@@ -93,17 +93,27 @@ PC側のClaude Codeがこの1ファイルを読めば、Android出力の全デ�
 - 2026-09-22：PC側 schemaVersion 2（9/22版）の契約一式を受領・コミット（`4f71a98`）。
   `HANDOVER.md` §5-1 の4件（取込経路・預金スロット・contentHash・往復検証）に方針を出し、
   §A の取り下げと契約の穴3点を含めた返信 `docs/integration/REPLY-phone-2026-09-22.md` を作成
+- 2026-09-22 第2ラウンド：PC側が指摘3点を全部修正（`accountName` 追加・§7 返品の主語限定・
+  sample の `_note`）→ コミット `b93e3ec`。継続協議3件に回答し返信に §8 を追記 → コミット `0ec1bbd`
+  - `accountName` の不一致を「警告」でなく「要確認」に回すPC側の判断に同意
+  - Purchase の `externalId` を **UUID方式**（`ocr:purchase:{rowUuid}`）に変更することを提案
+  - Deposit の通番空欄フォールバックは**ハッシュ不要**と回答（合成番号で取込バグごと解消）
+  - 収入科目の税率は摘要の `taxRate` から引くで合意
+  - `docs/known-issues.md` に2件追加（通帳CSV取込の無言スキップ／行挿入・削除の行番号シフト）
 
 ### 未完了・中断した理由
 - 不整合 #3（弥生CSVの列構成が購買/預金とレシートで不一致）・#4（弥生税区分文字列が
   やよい実仕様と不一致の疑い）は、弥生が現在使えず実インポート検証ができないため保留
 - 2026-09-10 の未完了項目1〜4（`accountKey` 数値キーの詰め）は **2026-09-22 に解消**。
   v2 契約で `accountKey` は PC 所有の不透明文字列に確定したため、論点自体が消えた
-- 2026-09-22：スマホ側の実装は**未着手**。PC側の回答（契約の穴3点、特に `accountName` の追加）待ち。
-  ただし `accountName` に依存しないタスク（DB v34 マイグレーション一式・取込UI）は先行着手できる
+- 2026-09-22：**スマホ側の実装は未着手**（契約の詰めだけで終了）。契約側のブロッカーは全部解消したので、
+  実装に入れる状態になっている
+- PC側の回答待ちは **1件だけ**：Purchase の `externalId` を UUID 方式にすることへの同意
+  （同意が来れば `transaction-import.md` §4 の書き換えと `receipt_items.uuid` の追加が確定する）。
+  これは DB v34 に相乗りさせるだけなので、他のマイグレーション作業は待たずに進められる
 
 ### 次回セッションで最初にやること
-`docs/integration/REPLY-phone-2026-09-22.md` を PC 側セッションに渡して §4 の3点の回答を得る。並行して、スマホ側タスク1〜3・6（`accountKey` 列追加／`aoirochobo_*` 3テーブル／学習テーブルの name 列／`general_receipts.uuid`）をまとめて DB v34 のマイグレーションとして実装する。
+DB v34 のマイグレーションをまとめて実装する（返信 §6 のタスク1〜3・6）：`yayoi_accounts`/`rakuraku_accounts` への `accountKey: String?` 追加／`aoirochobo_accounts`・`aoirochobo_memo_templates`・`aoirochobo_vocab_meta` の3テーブル新設／学習系テーブルへの「そのとき見た name」列追加／`general_receipts.uuid` 追加＋バックフィル。PC から UUID 方式の同意が来ていれば `receipt_items.uuid` も同じ回に入れる。
 
 ### 2026-09-22 第2ラウンドで判明した実装上の事実
 - `ReceiptInputScreen` の行「挿入」「削除」は**以降の行を全部シフト**（`rows[i] = rows[i-1]`）。
@@ -118,3 +128,6 @@ PC側のClaude Codeがこの1ファイルを読めば、Android出力の全デ�
 - `docs/known-issues.md` の「既知のバグ」に4点追加済み（#1・#2修正済み、#3・#4保留）
 - externalId 用に `general_receipts` へ UUID カラム追加＋既存行バックフィルが必要（DB v34 想定・未着手）
 - `searchKeyAlpha` は `rakuraku_accounts` 内で重複があり結合キーに使えない（既知化）
+- **2026-09-22 追加（`docs/known-issues.md` に転記済み）**
+  - 通帳CSV取込で「同一日・取引通番が空欄」の行は2件目以降が黙って捨てられる（既知のバグ・未修正）
+  - JA伝票グリッドの行「挿入」「削除」は以降の行番号を全部シフトする（制約・注意事項）
