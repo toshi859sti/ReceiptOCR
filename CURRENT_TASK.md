@@ -21,7 +21,10 @@ PC会計アプリを同時進行で開発中。PC側のClaude Code / 開発者�
 - [x] 契約レビュー回答を `docs/integration/REPLY-phone-2026-09-10.md` に作成（未確定事項A〜LをPC側へ返す）
 - [x] PC側が schemaVersion 2（2026-09-22版）を発行。受領分をコミット（`4f71a98`）
 - [x] `HANDOVER.md` §5-1 の4件に方針を出し、`REPLY-phone-2026-09-22.md` として返信を作成
-- [ ] PC側の回答待ち：`accountName` の契約追加（往復検証のブロッカー）・sample の旧規約記述修正・§7 isReturn 文言
+- [x] PC側が指摘3点を修正（`accountName` 追加・§7 isReturn 主語限定・sample の `_note`）→ コミット `b93e3ec`
+- [x] 継続協議3件に回答（返信 §8）：Purchase の externalId を **UUID方式に変更提案**／Deposit 空欄は
+      **ハッシュ不要**（合成番号でバグごと解消）／収入科目の税率は摘要から引くで了解
+- [ ] PC側の回答待ち：Purchase の UUID 方式への同意（`transaction-import.md` §4 の書き換えが必要）
 - [ ] スマホ側実装の着手（DB v34 マイグレーション一式から）
 
 ## 完了条件
@@ -101,6 +104,15 @@ PC側のClaude Codeがこの1ファイルを読めば、Android出力の全デ�
 
 ### 次回セッションで最初にやること
 `docs/integration/REPLY-phone-2026-09-22.md` を PC 側セッションに渡して §4 の3点の回答を得る。並行して、スマホ側タスク1〜3・6（`accountKey` 列追加／`aoirochobo_*` 3テーブル／学習テーブルの name 列／`general_receipts.uuid`）をまとめて DB v34 のマイグレーションとして実装する。
+
+### 2026-09-22 第2ラウンドで判明した実装上の事実
+- `ReceiptInputScreen` の行「挿入」「削除」は**以降の行を全部シフト**（`rows[i] = rows[i-1]`）。
+  保存時 `itemNumber` は `rowNumber = index + 1` で位置から振り直されるため、位置ベースの
+  `externalId` は挿入1回で以降が全部ずれ、**同じIDが別商品を指す**。PC側の再取込規則では
+  「内容差分があれば更新」＝黙って上書きされる → **Purchase も UUID 方式を提案**
+- `deposit_meisai` は `UNIQUE(transactionDate, transactionNumber)` ＋ CSV取込が
+  `insertAllIgnoreDuplicates`(IGNORE) なので、**同日・通番空欄の行は2件目以降が無言でスキップ**。
+  ＝PC提案の連番サフィックスは発火しない。同時にこれは取込バグ（known-issues に登録済み）
 
 ### 新たに発覚した問題・制約
 - `docs/known-issues.md` の「既知のバグ」に4点追加済み（#1・#2修正済み、#3・#4保留）

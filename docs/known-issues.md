@@ -50,6 +50,15 @@
     マークした品目も出力候補に並んでいた
   - 修正：`loadOutputItems()` でも `dao.getItemsForExport(...).filter { !it.isExcluded }` するようにした
 
+- [ ] 通帳CSV取込で「同一日・取引通番が空欄」の行は2件目以降が黙って捨てられる（発覚 2026-09-22 / 未修正）
+  - `deposit_meisai` は `UNIQUE(transactionDate, transactionNumber)`、CSV取込は
+    `insertAllIgnoreDuplicates`（`OnConflictStrategy.IGNORE`）を使う（`PassbookDataScreen.kt:109`）。
+    銀行CSVの取引通番列が空の行が同じ日に複数あると、2件目以降が**無言でスキップ**される
+    （エラーも件数表示も出ない）
+  - 影響：取込件数がCSVの行数と合わない。ユーザーは気づけない
+  - 修正方針：取込時に空欄の `transactionNumber` へ日付内の連番（`#01`/`#02` …）を合成して入れる。
+    AoiroChobo 連携の `externalId` の「取引通番が空のときのフォールバック規則」も同時に不要になる
+
 ---
 
 ## 制約・注意事項
@@ -78,6 +87,15 @@
   画像直接送信（`parseReceiptFromImage`）に一本化した。オフライン・APIキー未設定時の
   手動入力フォールバックは廃止済み（精度優先のユーザー判断、`onImageCaptured()`は
   単純にエラー表示するのみ）
+- JA伝票グリッドの「挿入」「削除」は**以降の行を全部シフトする**（`ReceiptInputScreen.kt` の
+  行アクション。`rows[i] = rows[i - 1]` / `rows[i] = rows[i + 1]`）。保存時の `itemNumber` は
+  `rowNumber = index + 1` でリストの位置から振り直されるため、**行を1つ挿入するとそれ以降の
+  行番号がすべてずれる**
+  - 表示・印字上は問題ないが、AoiroChobo 連携の `externalId` を「伝票内の位置」で作ると、
+    挿入・削除のたびに**同じ externalId が別の商品を指す**ことになる（PC 側は「内容が変わった」と
+    解釈して黙って上書きする）
+  - 対策として `receipt_items` に行単位の `uuid` を持たせる方針（DB v34・`docs/integration/` 参照）。
+    挿入・削除は行オブジェクトごとシフトするので、`uuid` を載せておけば行に付いて動く
 
 ---
 
