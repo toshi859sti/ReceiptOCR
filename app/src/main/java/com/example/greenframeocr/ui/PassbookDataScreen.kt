@@ -106,13 +106,22 @@ fun PassbookDataScreen(
                 }
 
                 if (parsedList.isNotEmpty()) {
-                    val results = database.depositMeisaiDao().insertAllIgnoreDuplicates(parsedList)
+                    // 取引通番が空欄の行に合成番号を振ってから入れる。空欄のままだと
+                    // UNIQUE(日付,通番) ＋ IGNORE で同じ日の2件目以降が無言で落ちる
+                    val numbered = withContext(Dispatchers.IO) {
+                        com.example.greenframeocr.util.DepositNumberAssigner.assign(
+                            database.depositMeisaiDao(), parsedList
+                        )
+                    }
+                    val synthesizedCount = parsedList.count { it.transactionNumber.isBlank() }
+                    val results = database.depositMeisaiDao().insertAllIgnoreDuplicates(numbered)
                     val newCount = results.count { it != -1L }
                     val skipCount = results.count { it == -1L }
-                    importResultMessage = if (skipCount > 0) {
-                        "${newCount}件追加（${skipCount}件は既存のためスキップ）"
-                    } else {
-                        "${newCount}件のデータを取り込みました"
+                    val synthesizedNote = if (synthesizedCount > 0) "・通番なし${synthesizedCount}件に番号を付与" else ""
+                    importResultMessage = when {
+                        skipCount > 0 -> "${newCount}件追加（${skipCount}件は既存のためスキップ${synthesizedNote}）"
+                        synthesizedCount > 0 -> "${newCount}件のデータを取り込みました（通番なし${synthesizedCount}件に番号を付与）"
+                        else -> "${newCount}件のデータを取り込みました"
                     }
                     loadData()
                 } else {

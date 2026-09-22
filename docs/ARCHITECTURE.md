@@ -145,9 +145,9 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 ## データベース設計
 
 - **DB 名**: `receipt_database`
-- **バージョン**: 34（`ReceiptDatabase.kt`の`entities`/`version`が一次情報源。このドキュメントの
+- **バージョン**: 35（`ReceiptDatabase.kt`の`entities`/`version`が一次情報源。このドキュメントの
   値は更新が追いつかず古くなることがあるため、正確なバージョンは実装を確認すること）
-- **マイグレーション**: 1→2→...→34（全ステップ定義済み、`fallbackToDestructiveMigration()`は
+- **マイグレーション**: 1→2→...→35（全ステップ定義済み、`fallbackToDestructiveMigration()`は
   2026-07-12に削除済み。以後マイグレーション必須）
 
 | テーブル | 用途 |

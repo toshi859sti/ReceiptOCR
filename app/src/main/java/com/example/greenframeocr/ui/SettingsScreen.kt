@@ -1192,9 +1192,15 @@ private suspend fun exportAllData(
 
 /**
  * 旧バージョンのバックアップJSONには uuid フィールドが無い。Gson はコンストラクタの
- * デフォルト値を使わずフィールドを null のまま残すため、NOT NULL 列の general_receipts.uuid が
- * null のまま INSERT されて落ちる。復元時にここで採番し直す。
+ * デフォルト値を使わずフィールドを null のまま残すため、NOT NULL 列の
+ * receipt_items.uuid / general_receipts.uuid に null が入って落ちる。復元時にここで採番し直す。
  */
+private fun com.example.greenframeocr.data.ReceiptItem.withRestoredUuid():
+    com.example.greenframeocr.data.ReceiptItem {
+    val restored: String? = uuid
+    return if (restored.isNullOrBlank()) copy(uuid = java.util.UUID.randomUUID().toString()) else this
+}
+
 private fun com.example.greenframeocr.data.GeneralReceipt.withRestoredUuid():
     com.example.greenframeocr.data.GeneralReceipt {
     val restored: String? = uuid
@@ -1218,7 +1224,7 @@ private suspend fun importAllData(
         val importData = gson.fromJson(json, AllExportData::class.java)
 
         // 購買伝票
-        db.receiptDao().insertReceiptItems(importData.receiptItems)
+        db.receiptDao().insertReceiptItems(importData.receiptItems.map { it.withRestoredUuid() })
         importData.sheetData.forEach { db.receiptDao().insertSheetData(it) }
         importData.monthlyData.forEach { db.receiptDao().insertMonthlyData(it) }
 
@@ -1296,7 +1302,7 @@ private suspend fun importPurchaseData(
         val gson = Gson()
         val importData = gson.fromJson(json, PurchaseExportData::class.java)
 
-        db.receiptDao().insertReceiptItems(importData.receiptItems)
+        db.receiptDao().insertReceiptItems(importData.receiptItems.map { it.withRestoredUuid() })
         importData.sheetData.forEach { db.receiptDao().insertSheetData(it) }
         importData.monthlyData.forEach { db.receiptDao().insertMonthlyData(it) }
 

@@ -2015,7 +2015,11 @@ data class ReceiptRowData(
     // V3: 学習登録用
     val originalOcrName: String? = null,  // OCR取得時の原本（編集不可）
     val productMasterId: Long? = null,    // 商品マスタID（確定時）
-    val ocrConfidence: String? = null     // Gemini自己申告の確信度（"high"/"medium"/"low"）
+    val ocrConfidence: String? = null,    // Gemini自己申告の確信度（"high"/"medium"/"low"）
+    // AoiroChobo連携の externalId の材料（receipt_items.uuid にそのまま保存される）。
+    // 行オブジェクトが持つので「挿入」「削除」のシフトでは行の内容に付いて動き、
+    // 保存の全DELETE→全INSERTを跨いでも変わらない。新しい空白行には新しい値が入る
+    val uuid: String = java.util.UUID.randomUUID().toString()
 )
 
 enum class CellType {
@@ -2820,7 +2824,8 @@ private fun convertReceiptItemsToRows(items: List<com.example.greenframeocr.data
                 category = item.category,  // データベースのカテゴリをコピー
                 subtotalCategory = subtotalCategory,  // 小計行の場合はSubtotalCategoryも設定
                 ocrConfidence = item.ocrConfidence,
-                productMasterId = item.productMasterId
+                productMasterId = item.productMasterId,
+                uuid = item.uuid
             )
         } else {
             ReceiptRowData(
@@ -2847,7 +2852,8 @@ private fun convertReceiptItemsToRows(items: List<com.example.greenframeocr.data
                 amount = totalItem.amount,
                 isSubtotal = false,
                 isTotalRow = true,
-                selectedCells = emptySet()
+                selectedCells = emptySet(),
+                uuid = totalItem.uuid
             )
         } else {
             // 合計行がDB上にない場合は計算して作成
@@ -2943,7 +2949,8 @@ private suspend fun saveMonthData(
                         category = row.category,  // 既存のカテゴリを保持（新規は「未分類」）
                         isOcrOverwriteTarget = false,
                         ocrConfidence = row.ocrConfidence,
-                        productMasterId = if (row.isSubtotal || row.isTotalRow) null else row.productMasterId
+                        productMasterId = if (row.isSubtotal || row.isTotalRow) null else row.productMasterId,
+                        uuid = row.uuid
                     )
                 }
 

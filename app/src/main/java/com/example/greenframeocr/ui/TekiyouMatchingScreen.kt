@@ -1325,7 +1325,12 @@ private suspend fun importMeisaiFromCsv(context: Context, database: ReceiptDatab
             reader.close()
 
             if (meisaiList.isNotEmpty()) {
-                database.depositMeisaiDao().insertAll(meisaiList)
+                // 通番が空欄の行は合成番号を振ってから入れる（PassbookDataScreen の取込と同じ扱い。
+                // REPLACE なので、空欄のままだと同じ日の行が上書きし合って消える）
+                val numbered = com.example.greenframeocr.util.DepositNumberAssigner.assign(
+                    database.depositMeisaiDao(), meisaiList
+                )
+                database.depositMeisaiDao().insertAll(numbered)
             }
             Unit
         } catch (e: Exception) {

@@ -52,6 +52,10 @@ interface DepositMeisaiDao {
     @Query("SELECT COUNT(*) FROM deposit_meisai")
     suspend fun getCount(): Int
 
+    /** 合成番号の再利用判定で使う。取込対象の日付ぶんだけ既存行を引く */
+    @Query("SELECT * FROM deposit_meisai WHERE transactionDate IN (:dates)")
+    suspend fun getByDates(dates: List<String>): List<DepositMeisai>
+
     @Query("SELECT * FROM deposit_meisai WHERE transactionDate = :date AND transactionNumber = :number LIMIT 1")
     suspend fun findByDateAndNumber(date: String, number: String): DepositMeisai?
 

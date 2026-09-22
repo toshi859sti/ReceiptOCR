@@ -50,14 +50,20 @@
     マークした品目も出力候補に並んでいた
   - 修正：`loadOutputItems()` でも `dao.getItemsForExport(...).filter { !it.isExcluded }` するようにした
 
-- [ ] 通帳CSV取込で「同一日・取引通番が空欄」の行は2件目以降が黙って捨てられる（発覚 2026-09-22 / 未修正）
+- [x] 通帳CSV取込で「同一日・取引通番が空欄」の行は2件目以降が黙って捨てられる（発覚 2026-09-22 / 修正済み 2026-09-22）
   - `deposit_meisai` は `UNIQUE(transactionDate, transactionNumber)`、CSV取込は
-    `insertAllIgnoreDuplicates`（`OnConflictStrategy.IGNORE`）を使う（`PassbookDataScreen.kt:109`）。
-    銀行CSVの取引通番列が空の行が同じ日に複数あると、2件目以降が**無言でスキップ**される
+    `insertAllIgnoreDuplicates`（`OnConflictStrategy.IGNORE`）を使う（`PassbookDataScreen.kt`）。
+    銀行CSVの取引通番列が空の行が同じ日に複数あると、2件目以降が**無言でスキップ**されていた
     （エラーも件数表示も出ない）
   - 影響：取込件数がCSVの行数と合わない。ユーザーは気づけない
-  - 修正方針：取込時に空欄の `transactionNumber` へ日付内の連番（`#01`/`#02` …）を合成して入れる。
-    AoiroChobo 連携の `externalId` の「取引通番が空のときのフォールバック規則」も同時に不要になる
+  - 修正：`DepositNumberAssigner` で取込時に空欄へ合成番号（`x01`/`x02` …）を入れる。
+    既存の空欄行は DB v35 のマイグレーションで `x01` に埋めた（UNIQUE 制約により空欄は1日1件しか
+    存在しないため衝突しない）。`TekiyouMatchingScreen` の assets CSV 取込にも同じ処理を入れた
+  - 番号の形には AoiroChobo 側の条件が2つある（`docs/integration/REPLY-pc-2026-09-22.md` §3）：
+    **`#` は使えない**（`externalId` の文字種 `[a-z0-9:_-]` 違反＋PC側が `…#2` を
+    「別の取引として追加」に予約済み）／**同じCSVを取り込み直したら同じ番号になること**。
+    後者は「日付・摘要・金額・メモが同じ既存の合成番号行を先に再利用する」ことで満たしている
+    （`DepositNumberAssignerTest` で担保）
 
 ---
 
@@ -94,8 +100,12 @@
   - 表示・印字上は問題ないが、AoiroChobo 連携の `externalId` を「伝票内の位置」で作ると、
     挿入・削除のたびに**同じ externalId が別の商品を指す**ことになる（PC 側は「内容が変わった」と
     解釈して黙って上書きする）
-  - 対策として `receipt_items` に行単位の `uuid` を持たせる方針（DB v34・`docs/integration/` 参照）。
-    挿入・削除は行オブジェクトごとシフトするので、`uuid` を載せておけば行に付いて動く
+  - 対策済み（2026-09-22・DB v35）：`receipt_items.uuid` と `ReceiptRowData.uuid` を追加し、
+    `externalId` は `ocr:purchase:{rowUuid}` にした。挿入・削除は行オブジェクトごとシフトするので
+    `uuid` は行の内容に付いて動き、保存の全DELETE→全INSERTも跨ぐ
+  - 残るトレードオフ：UUID は**再作成に弱い**（その月を消して入力し直すと全行が新しい
+    `externalId` になる）。PC 側が「重複の可能性」検知で受け止める合意ができている
+    （`docs/integration/transaction-import.md` §10）ため、スマホ側の追加対応は不要
 
 ---
 

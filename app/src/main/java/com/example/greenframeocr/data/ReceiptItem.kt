@@ -1,9 +1,14 @@
 package com.example.greenframeocr.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
-@Entity(tableName = "receipt_items")
+@Entity(
+    tableName = "receipt_items",
+    indices = [Index(value = ["uuid"], unique = true)]
+)
 data class ReceiptItem(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -20,5 +25,11 @@ data class ReceiptItem(
     val isOcrOverwriteTarget: Boolean = false,  // 再OCR上書き対象フラグ
     val ocrConfidence: String? = null,  // Gemini自己申告の確信度（"high"/"medium"/"low"）。ML Kit由来はnull
     val productMasterId: Long? = null,  // product_master.id への紐づけ（未マッチ・小計/合計行はnull）
-    val exportedAt: String? = null  // CSV出力日時（yyyy/MM/dd HH:mm）。未出力ならnull
+    val exportedAt: String? = null,  // CSV出力日時（yyyy/MM/dd HH:mm）。未出力ならnull
+    // AoiroChobo連携の externalId（"ocr:purchase:{uuid}"）の材料。
+    // 月データの保存は「月単位で全DELETE→全INSERT」で id も itemNumber も安定しないため、
+    // 行の同一性はこのUUIDで持つ（docs/integration/transaction-import.md §4）。
+    // グリッドの「挿入」「削除」は行オブジェクトごとシフトするので、uuid は行の内容に付いて動く。
+    // 小文字のまま送ること（externalId の文字種は [a-z0-9:_-]）
+    val uuid: String = UUID.randomUUID().toString()
 )
