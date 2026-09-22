@@ -8,11 +8,15 @@
 
 発行日：2026-09-22 ／ 対象：`schemaVersion: 2`
 
-> **2026-09-22 追記：回答を受け取った。**
+> **2026-09-22 追記：回答を受け取った（第 3 ラウンドまで完了）。**
 > [REPLY-phone-2026-09-22.md](REPLY-phone-2026-09-22.md) で §5 の 9 項目に回答があり、
 > 指摘された契約側の 3 点は**修正済み**（`accountName` の追加・§7 の返品の主語・
-> `_note` の旧規約）。`CHANGELOG.md` の最上段を見ること。
-> **残っているのは往復検証（§6）と、§7 の継続協議 3 件だけ。**
+> `_note` の旧規約）。続く §8・§9 の継続協議 3 件にも
+> [REPLY-pc-2026-09-22.md](REPLY-pc-2026-09-22.md) で回答した——
+> **Purchase の `externalId` は行の UUID に変更**（`ocr:purchase:{rowUuid}`）、
+> Deposit は合成番号、収入科目の税率は摘要から。`CHANGELOG.md` の最上段 2 本を見ること。
+> **§5 の 9 項目に未回答は無く、往復検証も手順 3 まで終わっている**
+> （ゴールデン例は契約検証を通る）。残りはスマホ側の実装と手順 2・4・5。
 
 ---
 
@@ -41,6 +45,8 @@
 | `examples/vocabulary.sample.json` | `vocabulary.json` のゴールデン例 |
 | `examples/transactions.sample.json` | `transactions.json` のゴールデン例 |
 | `REVIEW-notes.md` | スマホ側一次仕様書（`docs/PC_ACCOUNTING_INTEGRATION_SPEC.md`）へのレビュー所見 |
+| `REPLY-phone-2026-09-10.md` / `REPLY-phone-2026-09-22.md` | スマホ側からの回答（第 1〜3 ラウンド） |
+| `REPLY-pc-2026-09-22.md` | PC 側からの回答（§8・§9 の継続協議 3 件へ） |
 | `HANDOVER.md` | この文書 |
 
 `docs/PC_ACCOUNTING_INTEGRATION_SPEC.md`（スマホ側の一次仕様書）は AoiroChobo リポジトリにも

@@ -13,10 +13,10 @@
     "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
   "accountingSoftwareOnPhone": "RAKURAKU",
-  "_note": "摘要の参照キーは memoKey（vocabulary.memoTemplates[].memoKey か null の二択＝閉じた語彙）。memoName は人間可読のエコーで PC は照合に使わない。逆引き0件は memoKey=null + UnmatchedMemo で、生テキストは note に入れる。科目未確定(UnmatchedAccount)なら memoKey も null。同じ摘要名でも帳簿(ledgerType)が違えば別レコード＝別 memoKey（例: 諸材料購入 は AP の memo-0013 と Unpaid の memo-0016）。",
+  "_note": "摘要の参照キーは memoKey（vocabulary.memoTemplates[].memoKey か null の二択＝閉じた語彙）。memoName は人間可読のエコーで PC は照合に使わない。逆引き0件は memoKey=null + UnmatchedMemo で、生テキストは note に入れる。科目未確定(UnmatchedAccount)なら memoKey も null。同じ摘要名でも帳簿(ledgerType)が違えば別レコード＝別 memoKey（例: 諸材料購入 は AP の memo-0013 と Unpaid の memo-0016）。この例のキーは説明用の作り物で、実機が書き出す vocabulary.json は memo-102 のような連番（ゼロ埋めなし）になる——キーは不透明なので桁数や形を当てにしないこと。",
   "entries": [
     {
-      "externalId": "ocr:purchase:202601-3-5",
+      "externalId": "ocr:purchase:3f2b9c14-77a1-4a6e-9c02-1d5e8b4a0c71",
       "source": "Purchase",
       "ledgerType": "AP",
       "bankSlotNo": null,
@@ -43,7 +43,7 @@
       }
     },
     {
-      "externalId": "ocr:purchase:202601-3-8",
+      "externalId": "ocr:purchase:8d41a2e7-5c60-4b19-a3f8-2e7c6b1d90a4",
       "source": "Purchase",
       "ledgerType": "AP",
       "bankSlotNo": null,

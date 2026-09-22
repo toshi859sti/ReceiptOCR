@@ -51,7 +51,7 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 
 ```jsonc
 {
-  "externalId": "ocr:purchase:202601-3-5",   // ★ 必須・グローバル一意・復元耐性（§4）
+  "externalId": "ocr:purchase:3f2b9c14-77a1-4a6e-9c02-1d5e8b4a0c71", // ★ 必須・グローバル一意・復元耐性（§4）
   "source": "Purchase",                       // Purchase | Deposit | Receipt
   "ledgerType": "AP",                         // 省略可（PC が科目から推定）。§「ledgerType」
   "bankSlotNo": null,                         // source=Deposit のとき必須。§「bankSlotNo」
@@ -128,7 +128,7 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 
 | source | 形式 | 例 | 構成要素 |
 |---|---|---|---|
-| Purchase | `ocr:purchase:{issueYearAD}{issueMonth:02}-{sheetNumber}-{itemNumber}` | `ocr:purchase:202601-3-5` | 伝票発行年月（西暦4桁+月2桁）＋伝票番号＋行番号。伝票内の位置は安定 |
+| Purchase | `ocr:purchase:{rowUuid}` | `ocr:purchase:3f2b9c14-77a1-4a6e-9c02-1d5e8b4a0c71` | 伝票の**行**ごとに採番して Room に永続化した UUID（`receipt_items.uuid`）。行を挿入・削除・並べ替えても値に付いて動く |
 | Deposit | `ocr:deposit:{transactionDate}-{transactionNumber}` | `ocr:deposit:2026-02-05-0012` | `(transactionDate, transactionNumber)` は Android 側で UNIQUE 制約あり＝◎ |
 | Receipt | `ocr:receipt:{receiptUuid}:{itemIndex}` | `ocr:receipt:9f1c8b0e-4a2d-4f1a-9b3e-7c6d5e4f3a21:2` | レシート単位の UUID をスマホ側が採番して Room に永続化。`itemIndex` は 0 始まりの明細順 |
 
@@ -136,6 +136,29 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
   （品目 `id` は復元で変わるので使わない）。既存レシートには移行時に一度だけ採番。
 - 1 枚のレシートを複数仕訳に分ける場合（品目ごとに科目が違う等）、`itemIndex` で分ける。
 - レシートを 1 仕訳にまとめる場合は `itemIndex` を `sum` などの固定語にする（`ocr:receipt:{uuid}:sum`）。
+
+**Purchase が伝票内の位置（`{年月}-{伝票番号}-{行番号}`）から UUID に変わった理由**（2026-09-22）
+
+伝票グリッドの「挿入」「削除」は以降の行を 1 つずつシフトし、保存時の `itemNumber` は
+リストの位置から振り直される。位置ベースだと **5 行目に 1 行挿入しただけで 6 行目以降の
+`externalId` がすべてずれ、空いた番号に隣の行の商品が入る**。PC はそれを「同じ取引の訂正」と
+読んで黙って上書きしてしまう（§10）。挿入・削除はワンタップの日常操作なので、
+**編集に強い UUID** を採る。
+
+- **UUID は再作成に弱い**（その月を消して入力し直すと全行が新しい `externalId` になる）。
+  PC 側はこれを「重複の可能性」として検知して「要確認」に回す（§10）。
+- 月データの保存が「全 DELETE → 全 INSERT」でも、UI の行データが `uuid` を持ったまま
+  書き戻されるなら値は不変。既存行には移行時に一度だけ採番する。
+
+**`transactionNumber` は必ず値があること**（Deposit・2026-09-22）
+
+通帳 CSV の取引通番が空欄の行は、スマホ側の取込時に**合成番号**を入れて `deposit_meisai` に
+保存する。PC 側にフォールバック規則は置かない（`ocr:deposit:{日付}-{番号}` の 1 本で覆う）。
+
+- 合成番号も `externalId` の文字種（`[a-z0-9:_-]`）に収めること。**`#` は使えない**
+  ——PC が「別の取引として追加」の連番サフィックス（`…#2`）に予約している。
+- 合成番号は**同じ CSV を取り込み直しても同じ値になる**こと。位置だけで振ると、
+  範囲の違う CSV を取り込んだときに番号がずれて同じ取引が二重に届く。
 
 ---
 
@@ -245,11 +268,21 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 - **物理削除はしない**（`IsVoided = 1` の論理削除のみ）。`ExternalId` は void 行にも残す。
 - 再取込：
   - 同じ `externalId` が未編集で存在 → 内容差分があれば更新、なければスキップ。
+    ただし**借方／貸方の `accountKey` か `note` が変わっている**ときは黙って更新せず、
+    編集済みのときと同じ 3 択（上書き／維持／別の取引として追加）をユーザーに出す
+    （2026-09-22 追加）。日付や金額だけの違いは素直な訂正だが、科目や商品名まで変わって
+    いるのは「別の取引になった」合図で、`externalId` の採番がずれたときの最後の砦になる。
   - 同じ `externalId` が**編集済み**で内容差分あり → ダイアログで
     「取込値で上書き／このまま維持／別行として追加」をユーザーに選ばせる。
     **「別行として追加」を選んだ行の `JournalEntry.ExternalId` には `#2` `#3` … の連番サフィックスを付ける**
     （`JournalEntry.ExternalId` は UNIQUE 制約付きのため。元の値は `ImportedTransaction` 側に残る）。
   - 同じ `externalId` が void 済み → 「削除済み N 件」として取込サマリーに表示し、黙って復活させない。
+- **重複の可能性**（2026-09-22 追加）：`externalId` が未知の行でも、**日付・金額・借方貸方の
+  `accountKey` が既存の取込行と同じ**なら、その行を「要確認」に回して取込サマリーに出す
+  （`ImportedTransaction.DuplicateOfExternalId` に相手の `externalId` を入れる）。
+  スマホが `externalId` を採り直す状況（月をまるごと入力し直した・行の UUID を振り直した）で
+  二重計上を防ぐ唯一の手掛かり。取り消し済み（`IsVoided = 1`）の取引とは突き合わせない
+  ——消したものを入れ直したのなら、それは重複ではない。
 
 ---
 
