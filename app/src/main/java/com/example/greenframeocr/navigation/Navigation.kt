@@ -31,6 +31,7 @@ import com.example.greenframeocr.ui.SettingsScreen
 import com.example.greenframeocr.ui.TekiyouMatchingScreen
 import com.example.greenframeocr.ui.BookkeepingMenuScreen
 import com.example.greenframeocr.ui.RakurakuAccountSettingsScreen
+import com.example.greenframeocr.ui.AoiroChoboAccountMappingScreen
 import com.example.greenframeocr.ui.YayoiAccountEditScreen
 import com.example.greenframeocr.ui.YayoiAccountSettingsScreen
 import com.example.greenframeocr.ui.GeneralItemMatchingScreen
@@ -66,6 +67,7 @@ sealed class Screen(val route: String) {
     object BookkeepingMenu : Screen("bookkeeping_menu")
     object YayoiAccountSettings : Screen("yayoi_account_settings")
     object RakurakuAccountSettings : Screen("rakuraku_account_settings")
+    object AoiroChoboAccountMapping : Screen("aoirochobo_account_mapping")
     object YayoiAccountEdit : Screen("yayoi_account_edit/{accountId}?parentId={parentId}") {
         fun createRoute(accountId: Long, parentId: Long = -1L): String =
             "yayoi_account_edit/$accountId?parentId=$parentId"
@@ -241,7 +243,18 @@ fun ReceiptNavGraph(
                 },
                 onNavigateToRakurakuTekiyou = {
                     navController.navigate(Screen.RakurakuTekiyou.route)
+                },
+                onNavigateToAoiroChoboAccountMapping = {
+                    navController.navigate(Screen.AoiroChoboAccountMapping.route)
                 }
+            )
+        }
+
+        // あおいろ帳簿 科目マッピング画面（弥生科目に accountKey を割り当てる）
+        composable(Screen.AoiroChoboAccountMapping.route) {
+            AoiroChoboAccountMappingScreen(
+                database = database,
+                onBack = { navController.popBackStack() }
             )
         }
 

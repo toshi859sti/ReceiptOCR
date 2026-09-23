@@ -49,7 +49,18 @@ interface YayoiAccountDao {
     @Query("SELECT * FROM yayoi_accounts WHERE accountKey IS NOT NULL")
     suspend fun getLinkedToAoiroChobo(): List<YayoiAccount>
 
-    /** 紐付けを外す（PC側で科目が作り替えられたとき） */
+    /** 同じ accountKey に複数の弥生科目を紐付けられる（弥生「建物」「構築物」→「建物・構築物（資産）」など） */
+    @Query("SELECT * FROM yayoi_accounts WHERE accountKey = :accountKey ORDER BY accountCode")
+    suspend fun getByAccountKey(accountKey: String): List<YayoiAccount>
+
+    /**
+     * 紐付けを確定する。`accountKeyName` には確定時に見えていた AoiroChobo 側の科目名を入れる
+     * （取込時にこれと食い違ったら作り替えとみなして外す）。
+     */
+    @Query("UPDATE yayoi_accounts SET accountKey = :accountKey, accountKeyName = :accountKeyName WHERE id = :id")
+    suspend fun setAccountKey(id: Long, accountKey: String, accountKeyName: String)
+
+    /** 紐付けを外す（PC側で科目が作り替えられたとき／ユーザーが解除したとき） */
     @Query("UPDATE yayoi_accounts SET accountKey = NULL, accountKeyName = NULL WHERE id = :id")
     suspend fun clearAccountKey(id: Long)
 
