@@ -121,6 +121,10 @@
   品目名リネーム）。いずれも AoiroChobo 用の `accountKey` / `memoKey` が、弥生の科目を選び直しただけで
   消える挙動だった。**エンティティに列を足したら、そのエンティティを `new` している箇所を全部見る**
   （`grep -rn "ProductMaster(" app/src/main`）
+- `AoiroChoboVocabDao.getMemoTemplatesFor(ledgerType, direction)` は ledgerType で絞るため、
+  **預金の摘要には使えない（常に0件）**。AoiroChobo は預金出納帳の摘要も `ledgerType = "Cash"` で持ち、
+  `showInBank` で出し分けている（`"Bank"` の摘要は実在しない）。帳簿ごとの摘要候補は
+  `util/AoiroChoboMemoRules.MemoTab` を使うこと。2026-09-24 時点で呼び出し元なし
 
 ---
 
