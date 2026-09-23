@@ -580,3 +580,24 @@ v36 の列は KSP 生成の期待スキーマと完全一致。**テーブル再
   （実際の伝票にその列は無く、取れるのは小計行の3分類のみ）。返信 §4-1 で指摘済み
 - **`CLAUDE.md` の「Room DB バージョン（現在 v35）」が古くなった**（実際 v36）。
   CLAUDE.md の更新はユーザー確認が必要なため未実施
+
+---
+
+## 2026-09-23 実機確認：DB v35 → v36（完了）
+
+moto g66j 5G 実機で v36 ビルドを上書きインストールし、実データ入りの v35 DB を移行した。**問題なし。**
+
+- バックアップ：`receipt_database` + `-wal` + `-shm` をアプリ停止後にセットで取得。
+  `C:\Users\toshiro\GreenFrameOCR-db-backups\v35-20260923-190632\`（プロジェクト外に保存）
+- `PRAGMA user_version` 35 → **36**、`integrity_check` ok、`foreign_key_check` 空
+- `yayoi_accounts` 98件・`rakuraku_accounts` 61件：v36 に残る全列で**全行が移行前と完全一致**
+  （id・`parentId` を含む。`sqlite_sequence` も 98 / 61 のまま）
+- 撤去した `accountKey` / `accountKeyName` は移行前から全行 NULL だったので失ったデータなし
+- インデックスも移行前と同じ（yayoi の `accountCode` は非ユニーク、rakuraku はユニーク）。`_new` の残骸なし
+- 他テーブルの件数も不変（product_master 115 / tekiyou_matching_rules 39 / general_item_master 12 /
+  receipt_payment_method_rules 3 / deposit_meisai 157 / receipt_items 73）。学習5テーブルに新列あり
+- `room_master_table` の identity hash `57bdf5f4…` が KSP 生成物と一致。起動・再起動ともクラッシュなし
+
+### 次回セッションで最初にやること（更新）
+
+あおいろモードの商品編集UI（科目 → その科目で絞った摘要 → ユーザー確定）に着手する。
