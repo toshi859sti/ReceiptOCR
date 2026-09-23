@@ -26,13 +26,15 @@ import java.util.concurrent.TimeUnit
  * 2. contentHash が前回取込値と文字列一致ならスキップ
  * 3. name が変わった accountKey / memoKey の紐付けを外す  ← 主機構
  * 4. ファイルから消えたキーを指している紐付けを数えて知らせる
- * 5. 未マッピングの科目数を知らせる（確定は科目マッピングUI側の仕事）
+ * 5. 科目・摘要が未確定の学習件数を知らせる
  *
- * 3 について: スマホの学習（商品名→科目など）は自前の科目を指していて、ユーザーは
- * 自前の科目名を見て決めている。PC 側がスロットを作り替えても、その判断自体は無効に
- * ならないし、同じ学習を弥生・らくらくCSVでも使っている。だから外すのは学習ではなく
- * yayoi_accounts.accountKey などの接続キー1件にする。結果としてその科目を通る仕訳は
- * 全部 UnmatchedAccount になり、契約が求める「安全側に失敗する」は満たせる。
+ * 3 について: 学習（商品名→科目／摘要など）は AoiroChobo のキーを**直接**持っている。
+ * 弥生用の yayoiAccountId とは独立で、同じ商品でも弥生で A、あおいろで B を選ぶことがあるため、
+ * 両者を結ぶ対応表は存在しない（2026-09-23 ユーザー確認）。
+ * PC 側が科目を作り替えたら name が変わるので、そのキーを指している学習の
+ * accountKey / memoKey を外す（弥生側の紐付けは無関係なので残る）。外した学習に当たった仕訳は
+ * UnmatchedAccount になり、契約が求める「安全側に失敗する」を満たす。
+ * 判定はキー単位で 1 回。同じ科目を指す学習が何件あっても再確認は科目 1 件で済む。
  *
  * 4 は専用の後始末を持たない。ミラー3テーブルは取込のたび丸ごと入れ替わるので、
  * 消えたキーは解決時の引き当てに失敗する＝自動的に自動マッチから外れる。
@@ -69,9 +71,10 @@ object AoiroChoboVocabImporter {
             val unlinkedByRename: List<String>,
             /** ファイルから消えたキーを指したままの紐付け件数 */
             val danglingLinks: Int,
-            /** accountKey が未設定の科目数（弥生 / らくらく） */
-            val unmappedYayoi: Int,
-            val unmappedRakuraku: Int,
+            /** 科目がまだ決まっていない学習の件数（当たると UnmatchedAccount で出る） */
+            val learningWithoutAccount: Int,
+            /** 科目は決まったが摘要が未確定の学習の件数（UnmatchedMemo。科目は出せる） */
+            val learningWithoutMemo: Int,
             /** 未知の enum 値など。中止はしない */
             val warnings: List<String>
         ) : Result
@@ -167,52 +170,38 @@ object AoiroChoboVocabImporter {
             val unlinked = mutableListOf<String>()
             var dangling = 0
 
-            db.yayoiAccountDao().getLinkedToAoiroChobo().forEach { account ->
-                val key = account.accountKey ?: return@forEach
-                when (val verdict = verify(key, account.accountKeyName, accountNames)) {
+            // 紐付けはキー単位で見る。同じ科目を指す学習が何件あっても、作り替えの判定は 1 回。
+            val linkDao = db.aoiroChoboLinkDao()
+
+            linkDao.getLinkedAccountKeys().forEach { link ->
+                when (val verdict = verify(link.vocabKey, link.name, accountNames)) {
                     is Verdict.Renamed -> {
-                        db.yayoiAccountDao().clearAccountKey(account.id)
-                        unlinked += "弥生「${account.accountName}」" +
-                            "（${verdict.before} → ${verdict.after} に変わった）"
+                        // 摘要は科目に属する（counterAccountKey == accountKey のものしか選べない）ので、
+                        // 科目を外すときは摘要も道連れにする。clearAccountKeyEverywhere がまとめて外す
+                        linkDao.clearAccountKeyEverywhere(link.vocabKey)
+                        unlinked += "科目「${verdict.before}」（${verdict.after} に変わった）"
                     }
                     Verdict.Missing -> dangling++
                     is Verdict.NameUnknown ->
-                        db.yayoiAccountDao().updateAccountKeyName(account.id, verdict.name)
-                    Verdict.Unchanged -> Unit
-                }
-            }
-            db.rakurakuAccountDao().getLinkedToAoiroChobo().forEach { account ->
-                val key = account.accountKey ?: return@forEach
-                when (val verdict = verify(key, account.accountKeyName, accountNames)) {
-                    is Verdict.Renamed -> {
-                        db.rakurakuAccountDao().clearAccountKey(account.id)
-                        unlinked += "らくらく「${account.accountName}」" +
-                            "（${verdict.before} → ${verdict.after} に変わった）"
-                    }
-                    Verdict.Missing -> dangling++
-                    is Verdict.NameUnknown ->
-                        db.rakurakuAccountDao().updateAccountKeyName(account.id, verdict.name)
-                    Verdict.Unchanged -> Unit
-                }
-            }
-            db.rakurakuTekiyouDao().getLinkedToAoiroChobo().forEach { tekiyou ->
-                val key = tekiyou.memoKey ?: return@forEach
-                when (val verdict = verify(key, tekiyou.memoKeyName, memoNames)) {
-                    is Verdict.Renamed -> {
-                        // 学習へ書き下ろした memoKey も一緒に外す。ここを外し忘れると、
-                        // 作り替えられた摘要を指したまま仕訳が Matched で出てしまう
-                        db.rakurakuTekiyouDao().unlinkMemoKey(tekiyou.id)
-                        unlinked += "摘要「${tekiyou.tekiyouName}」" +
-                            "（${verdict.before} → ${verdict.after} に変わった）"
-                    }
-                    Verdict.Missing -> dangling++
-                    is Verdict.NameUnknown ->
-                        db.rakurakuTekiyouDao().updateMemoKeyName(tekiyou.id, verdict.name)
+                        linkDao.fillAccountKeyNameEverywhere(link.vocabKey, verdict.name)
                     Verdict.Unchanged -> Unit
                 }
             }
 
-            // ---- 5. 未マッピングの科目数 ----
+            linkDao.getLinkedMemoKeys().forEach { link ->
+                when (val verdict = verify(link.vocabKey, link.name, memoNames)) {
+                    is Verdict.Renamed -> {
+                        linkDao.clearMemoKeyEverywhere(link.vocabKey)
+                        unlinked += "摘要「${verdict.before}」（${verdict.after} に変わった）"
+                    }
+                    Verdict.Missing -> dangling++
+                    is Verdict.NameUnknown ->
+                        linkDao.fillMemoKeyNameEverywhere(link.vocabKey, verdict.name)
+                    Verdict.Unchanged -> Unit
+                }
+            }
+
+            // ---- 5. 未確定の学習件数 ----
             Result.Imported(
                 accountCount = accounts.size,
                 memoCount = memos.size,
@@ -221,8 +210,8 @@ object AoiroChoboVocabImporter {
                 ageDays = ageDays,
                 unlinkedByRename = unlinked,
                 danglingLinks = dangling,
-                unmappedYayoi = db.yayoiAccountDao().countWithoutAccountKey(),
-                unmappedRakuraku = db.rakurakuAccountDao().countWithoutAccountKey(),
+                learningWithoutAccount = linkDao.countWithoutAccountKey(),
+                learningWithoutMemo = linkDao.countWithoutMemoKey(),
                 warnings = warnings
             )
         }

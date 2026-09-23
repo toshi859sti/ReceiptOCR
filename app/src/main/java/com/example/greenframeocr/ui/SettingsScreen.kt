@@ -1264,7 +1264,10 @@ private fun AoiroChoboVocabImportDialog(
                         }
 
                         Divider()
-                        Text("まだ対応付けていない科目: 弥生 ${result.unmappedYayoi}件 / らくらく ${result.unmappedRakuraku}件")
+                        Text(
+                            "科目がまだ決まっていない学習: ${result.learningWithoutAccount}件" +
+                                "（摘要だけ未確定: ${result.learningWithoutMemo}件）"
+                        )
 
                         if (result.warnings.isNotEmpty()) {
                             Divider()
@@ -1691,11 +1694,7 @@ private suspend fun mergeYayoiAccounts(
                 account.copy(
                     id = existing.id,
                     parentId = existing.parentId,
-                    isEnabled = existing.isEnabled,
-                    // AoiroChobo とのマッピングはユーザーが画面で確定したもの。取り込む側が
-                    // 持っていなければ（旧バックアップ・科目マスタCSV由来）既存の確定を残す
-                    accountKey = account.accountKey ?: existing.accountKey,
-                    accountKeyName = account.accountKeyName ?: existing.accountKeyName
+                    isEnabled = existing.isEnabled
                 )
             )
             updated++
@@ -1724,10 +1723,7 @@ private suspend fun mergeRakurakuAccounts(
             dao.update(
                 account.copy(
                     id = existing.id,
-                    parentId = existing.parentId,
-                    // 弥生側と同じく、AoiroChobo とのマッピングは取込で消さない
-                    accountKey = account.accountKey ?: existing.accountKey,
-                    accountKeyName = account.accountKeyName ?: existing.accountKeyName
+                    parentId = existing.parentId
                 )
             )
             updated++

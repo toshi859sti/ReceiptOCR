@@ -42,31 +42,6 @@ interface YayoiAccountDao {
     @Query("SELECT * FROM yayoi_accounts WHERE parentId = :parentId ORDER BY accountCode")
     suspend fun getByParentId(parentId: Long): List<YayoiAccount>
 
-    /** AoiroChobo の科目と紐付け済みの行（取込時の name 変化検出に使う） */
-    @Query("SELECT COUNT(*) FROM yayoi_accounts WHERE accountKey IS NULL AND isEnabled = 1")
-    suspend fun countWithoutAccountKey(): Int
-
-    @Query("SELECT * FROM yayoi_accounts WHERE accountKey IS NOT NULL")
-    suspend fun getLinkedToAoiroChobo(): List<YayoiAccount>
-
-    /** 同じ accountKey に複数の弥生科目を紐付けられる（弥生「建物」「構築物」→「建物・構築物（資産）」など） */
-    @Query("SELECT * FROM yayoi_accounts WHERE accountKey = :accountKey ORDER BY accountCode")
-    suspend fun getByAccountKey(accountKey: String): List<YayoiAccount>
-
-    /**
-     * 紐付けを確定する。`accountKeyName` には確定時に見えていた AoiroChobo 側の科目名を入れる
-     * （取込時にこれと食い違ったら作り替えとみなして外す）。
-     */
-    @Query("UPDATE yayoi_accounts SET accountKey = :accountKey, accountKeyName = :accountKeyName WHERE id = :id")
-    suspend fun setAccountKey(id: Long, accountKey: String, accountKeyName: String)
-
-    /** 紐付けを外す（PC側で科目が作り替えられたとき／ユーザーが解除したとき） */
-    @Query("UPDATE yayoi_accounts SET accountKey = NULL, accountKeyName = NULL WHERE id = :id")
-    suspend fun clearAccountKey(id: Long)
-
-    @Query("UPDATE yayoi_accounts SET accountKeyName = :name WHERE id = :id")
-    suspend fun updateAccountKeyName(id: Long, name: String)
-
     @Query("DELETE FROM yayoi_accounts")
     suspend fun deleteAll()
 

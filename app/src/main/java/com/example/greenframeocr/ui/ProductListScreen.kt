@@ -1190,7 +1190,14 @@ private fun ProductEditDialog(
                             frequencyCount = product?.frequencyCount ?: 0,
                             kaikakeTekiyouId = if (accountingSoftware == AccountingSoftware.YAYOI) product?.kaikakeTekiyouId else selectedTekiyouId,
                             yayoiAccountId = if (accountingSoftware == AccountingSoftware.YAYOI) selectedYayoiAccountId else product?.yayoiAccountId,
-                            isCertified = true
+                            isCertified = true,
+                            // このダイアログは弥生／らくらくの紐付けしか編集しない。
+                            // フィールド列挙で組み直しているので、AoiroChobo 側は明示的に引き継がないと
+                            // 商品名を直しただけで消える
+                            accountKey = product?.accountKey,
+                            accountKeyName = product?.accountKeyName,
+                            memoKey = product?.memoKey,
+                            memoKeyName = product?.memoKeyName
                         ).withComputedKey()
                         onSave(newProduct)
                     }

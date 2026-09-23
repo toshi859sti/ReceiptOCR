@@ -55,17 +55,26 @@ data class ProductMaster(
     val yayoiAccountId: Long? = null,
 
     /**
-     * AoiroChobo の摘要参照キー。`kaikakeTekiyouId` の置き換え先。
+     * AoiroChobo の科目参照キー。あおいろ出力の借方科目。
      *
-     * らくらくのサポート終了にともない `rakuraku_tekiyou` を廃止するため、学習が摘要を
-     * 指す先をキー直指しに移す。摘要マッピング画面で `rakuraku_tekiyou.memoKey` を確定したとき、
-     * その摘要を指していた学習にここまで書き下ろす（`RakurakuTekiyouDao.linkMemoKey`）。
+     * 弥生用の yayoiAccountId とは**独立**。同じ商品でも弥生で A、あおいろで B を選ぶことがある
+     * （2026-09-23 ユーザー確認）。両者を結ぶ対応表は存在しない。
+     */
+    val accountKey: String? = null,
+
+    /** accountKey を確定したときに見えていた AoiroChobo 側の科目名（作り替え検知用） */
+    val accountKeyName: String? = null,
+
+    /**
+     * AoiroChobo の摘要参照キー。null = 未確定（matchStatus = "UnmatchedMemo" で出す）。
+     *
+     * 摘要は「相手科目・税区分・税率・事業割合」が不可分のセットで、内容は変えられない。
+     * したがって選べるのは counterAccountKey == accountKey の摘要だけで、科目を変えたら外す。
+     * 相手科目も税率も同じで事業割合だけ違う摘要があり（電気料金 40% / 電気料金（事業専用）100%）、
+     * そこは商品名からは決まらないので最後はユーザーが選ぶ。
      */
     val memoKey: String? = null,
 
-    /**
-     * memoKey を確定したときに見えていた AoiroChobo 側の摘要名。
-     * 取込時にこれと現在名が食い違ったら memoKey を外す（CHANGELOG 2026-09-13 改訂・変更2）。
-     */
+    /** memoKey を確定したときに見えていた AoiroChobo 側の摘要名（作り替え検知用） */
     val memoKeyName: String? = null
 )

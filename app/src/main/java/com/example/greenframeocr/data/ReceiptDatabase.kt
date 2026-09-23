@@ -48,6 +48,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun generalItemMasterDao(): GeneralItemMasterDao
     abstract fun receiptPaymentMethodRuleDao(): ReceiptPaymentMethodRuleDao
     abstract fun aoiroChoboVocabDao(): AoiroChoboVocabDao
+    abstract fun aoiroChoboLinkDao(): AoiroChoboLinkDao
 
     companion object {
         @Volatile
@@ -930,11 +931,99 @@ abstract class ReceiptDatabase : RoomDatabase() {
          */
         private val MIGRATION_35_36 = object : Migration(35, 36) {
             override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("ALTER TABLE product_master ADD COLUMN memoKey TEXT")
-                database.execSQL("ALTER TABLE product_master ADD COLUMN memoKeyName TEXT")
-                database.execSQL("ALTER TABLE tekiyou_matching_rules ADD COLUMN memoKey TEXT")
-                database.execSQL("ALTER TABLE tekiyou_matching_rules ADD COLUMN memoKeyName TEXT")
+                // ① 学習テーブルに AoiroChobo 用の科目・摘要キーを足す。
+                //    弥生用の yayoiAccountId とは**独立の列**にする。同じ商品でも弥生で A、
+                //    あおいろで B を選ぶことがあり、両者を結ぶ対応表は作れない（2026-09-23 確認）。
+                //    摘要は「相手科目・税区分・税率・事業割合」が不可分のセットなので、
+                //    選べるのは counterAccountKey == accountKey のものだけ。順序は科目 → 摘要。
+                for (table in listOf("product_master", "tekiyou_matching_rules", "general_item_master")) {
+                    database.execSQL("ALTER TABLE $table ADD COLUMN accountKey TEXT")
+                    database.execSQL("ALTER TABLE $table ADD COLUMN accountKeyName TEXT")
+                    database.execSQL("ALTER TABLE $table ADD COLUMN memoKey TEXT")
+                    database.execSQL("ALTER TABLE $table ADD COLUMN memoKeyName TEXT")
+                }
+                // 支払方法は貸方科目なので摘要を持たない
+                database.execSQL("ALTER TABLE receipt_payment_method_rules ADD COLUMN accountKey TEXT")
+                database.execSQL("ALTER TABLE receipt_payment_method_rules ADD COLUMN accountKeyName TEXT")
+                database.execSQL("ALTER TABLE deposit_meisai ADD COLUMN overrideAccountKey TEXT")
+                database.execSQL("ALTER TABLE deposit_meisai ADD COLUMN overrideAccountKeyName TEXT")
                 database.execSQL("ALTER TABLE deposit_meisai ADD COLUMN overrideMemoKey TEXT")
+                database.execSQL("ALTER TABLE deposit_meisai ADD COLUMN overrideMemoKeyName TEXT")
+
+                // ② v34 で入れた「自前の科目マスタ → AoiroChobo 科目」の橋渡し列を落とす。
+                //    弥生科目とあおいろ科目は体系が別で 1 対 1 に対応しないため、前提から成立しない。
+                //    SQLite の DROP COLUMN は端末の SQLite バージョンに依存するので、
+                //    残す列だけを SELECT して作り直す（この DB の他のマイグレーションと同じ形）。
+                database.execSQL(
+                    """
+                    CREATE TABLE yayoi_accounts_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        accountName TEXT NOT NULL,
+                        searchKeyAlpha TEXT NOT NULL,
+                        accountCode TEXT,
+                        debitCredit TEXT NOT NULL,
+                        categoryA TEXT NOT NULL,
+                        categoryB TEXT NOT NULL,
+                        defaultTaxCategory TEXT NOT NULL,
+                        usedForPurchase INTEGER NOT NULL,
+                        usedForDeposit INTEGER NOT NULL,
+                        usedForReceipt INTEGER NOT NULL,
+                        isEnabled INTEGER NOT NULL,
+                        parentId INTEGER
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    INSERT INTO yayoi_accounts_new
+                        (id, accountName, searchKeyAlpha, accountCode, debitCredit, categoryA,
+                         categoryB, defaultTaxCategory, usedForPurchase, usedForDeposit,
+                         usedForReceipt, isEnabled, parentId)
+                    SELECT id, accountName, searchKeyAlpha, accountCode, debitCredit, categoryA,
+                           categoryB, defaultTaxCategory, usedForPurchase, usedForDeposit,
+                           usedForReceipt, isEnabled, parentId
+                    FROM yayoi_accounts
+                    """.trimIndent()
+                )
+                database.execSQL("DROP TABLE yayoi_accounts")
+                database.execSQL("ALTER TABLE yayoi_accounts_new RENAME TO yayoi_accounts")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_yayoi_accounts_accountCode ON yayoi_accounts (accountCode)"
+                )
+
+                database.execSQL(
+                    """
+                    CREATE TABLE rakuraku_accounts_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        accountCode TEXT NOT NULL,
+                        accountName TEXT NOT NULL,
+                        searchKeyAlpha TEXT NOT NULL,
+                        debitCredit TEXT NOT NULL,
+                        categoryC TEXT NOT NULL,
+                        categoryB TEXT NOT NULL,
+                        categoryA TEXT NOT NULL,
+                        usedForPurchase INTEGER NOT NULL,
+                        usedForDeposit INTEGER NOT NULL,
+                        parentId INTEGER
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    INSERT INTO rakuraku_accounts_new
+                        (id, accountCode, accountName, searchKeyAlpha, debitCredit, categoryC,
+                         categoryB, categoryA, usedForPurchase, usedForDeposit, parentId)
+                    SELECT id, accountCode, accountName, searchKeyAlpha, debitCredit, categoryC,
+                           categoryB, categoryA, usedForPurchase, usedForDeposit, parentId
+                    FROM rakuraku_accounts
+                    """.trimIndent()
+                )
+                database.execSQL("DROP TABLE rakuraku_accounts")
+                database.execSQL("ALTER TABLE rakuraku_accounts_new RENAME TO rakuraku_accounts")
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_rakuraku_accounts_accountCode " +
+                        "ON rakuraku_accounts (accountCode)"
+                )
             }
         }
 

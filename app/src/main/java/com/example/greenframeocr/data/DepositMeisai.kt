@@ -43,8 +43,13 @@ data class DepositMeisai(
     /** 個別オーバーライド弥生勘定科目ID（nullならグループのデフォルトを使用・弥生用） */
     val overrideYayoiAccountId: Long? = null,
 
-    /** 個別オーバーライド摘要の AoiroChobo キー。`overrideTekiyouId` の置き換え先 */
+    /** 個別オーバーライドの AoiroChobo 科目キー（overrideYayoiAccountId のあおいろ版） */
+    val overrideAccountKey: String? = null,
+    val overrideAccountKeyName: String? = null,
+
+    /** 個別オーバーライドの AoiroChobo 摘要キー。選べるのは overrideAccountKey に属する摘要だけ */
     val overrideMemoKey: String? = null,
+    val overrideMemoKeyName: String? = null,
 
     /** CSV出力日時（yyyy/MM/dd HH:mm）。未出力ならnull */
     val exportedAt: String? = null

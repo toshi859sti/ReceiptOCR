@@ -14,5 +14,14 @@ data class ReceiptPaymentMethodRule(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val keyword: String,
     val yayoiAccountId: Long,
-    val sortOrder: Int = 0
+    val sortOrder: Int = 0,
+
+    /**
+     * AoiroChobo の科目参照キー（貸方＝支払方法の科目）。
+     * 弥生用の yayoiAccountId とは独立。貸方なので摘要は持たない。
+     */
+    val accountKey: String? = null,
+
+    /** accountKey を確定したときに見えていた AoiroChobo 側の科目名（作り替え検知用） */
+    val accountKeyName: String? = null
 )

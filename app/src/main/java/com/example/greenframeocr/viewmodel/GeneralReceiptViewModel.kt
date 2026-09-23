@@ -214,7 +214,13 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
      *  （預金摘要集約リストと同じ「グループ保存時は全件リセット」挙動） */
     fun updateGroupDefaultAccount(canonicalKey: String, accountId: Long?) {
         viewModelScope.launch(Dispatchers.IO) {
-            db.generalItemMasterDao().upsert(GeneralItemMaster(canonicalKey, accountId))
+            // 弥生の科目を変えても AoiroChobo 側の紐付けは別物なので消さない
+            // （同じ商品でも弥生で A、あおいろで B を選ぶことがある）
+            val existing = db.generalItemMasterDao().getByKey(canonicalKey)
+            db.generalItemMasterDao().upsert(
+                existing?.copy(yayoiAccountId = accountId)
+                    ?: GeneralItemMaster(canonicalKey, accountId)
+            )
             dao.clearOverridesForGroup(canonicalKey)
         }
     }
@@ -275,7 +281,8 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             val oldMaster = db.generalItemMasterDao().getByKey(oldCanonicalKey)
             val existingMaster = db.generalItemMasterDao().getByKey(newKey)
             if (existingMaster == null && oldMaster != null) {
-                db.generalItemMasterDao().upsert(GeneralItemMaster(newKey, oldMaster.yayoiAccountId))
+                // 品目名を直しただけなので、弥生・AoiroChobo どちらの紐付けも引き継ぐ
+                db.generalItemMasterDao().upsert(oldMaster.copy(canonicalKey = newKey))
             }
             db.generalItemMasterDao().deleteByKey(oldCanonicalKey)
         }
