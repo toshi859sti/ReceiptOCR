@@ -4,13 +4,20 @@
 
 農業経営者向けの会計デジタル化 Android アプリ。
 島原雲仙農業協同組合の購買代金請求明細書（A5横・3辺のみ緑枠・右辺なし）を
-台紙（ArUco マーカー）なしで直接 OCR し、
-弥生会計・らくらく青色申告（農業版）への仕訳 CSV を自動生成する。
+台紙（ArUco マーカー）なしで直接 OCR し、会計ソフト向けの仕訳データを自動生成する。
+
+**出力先は2つ**（2026-09-23 決定）:
+- **弥生の青色申告** — 仕訳 CSV
+- **あおいろ帳簿**（PC会計アプリ `AoiroChobo`・同時進行で自作中） — `transactions.json`
+
+**らくらく青色申告農業版のサポートは終了**（2026-09-23 決定・撤去作業は未着手）。
+弥生とあおいろは**科目体系が別物で1対1に対応しない**。同じ商品でも弥生でA・あおいろでBになるため、
+学習テーブルは両方の紐付けを独立した列で持つ。詳細は `docs/integration/REPLY-phone-2026-09-23.md`。
 
 - **アプリ名**: JA仕訳変換
 - **パッケージ**: `com.example.greenframeocr`
 - **minSdk**: 24 / **targetSdk**: 34 / **Kotlin JVM**: 17
-- **ビルド状態**: BUILD SUCCESSFUL（2026-09-22）
+- **ビルド状態**: BUILD SUCCESSFUL（2026-09-23）
 
 ---
 
@@ -139,11 +146,17 @@ fun process(inputBitmap: Bitmap, debugMode: Boolean = false, sharpness: Double =
 そのまま Gemini に渡す画像なので、下げれば読み取り精度に直接効く。変えるなら実機で
 精度を測り直すこと。
 
-### Room DB バージョン（現在 v35）
+### Room DB バージョン（現在 v36）
 バージョンアップ時は `ReceiptDatabase.kt` にマイグレーションを追加すること。
 `ReceiptDatabase.kt` の `version` / `entities` が一次情報源。docs 側の記載は古くなることがある。
 `fallbackToDestructiveMigration()` は削除済み（2026-07-12）。
 スキーマ変更時にマイグレーションを書き忘れるとデータ消失ではなく**起動時クラッシュ**になる。
+
+### エンティティに列を足したら、そのエンティティを `new` している箇所を全部見る
+保存処理の一部が `.copy()` ではなく**フィールドを列挙して組み直している**。
+そのままだと新しい列は保存のたびに黙って null に戻る（2026-09-23 に3か所で踏みかけた）。
+列を足したら `grep -rn "ProductMaster(" app/src/main` のように呼び出し側を洗うこと。
+詳細は `docs/known-issues.md` の「制約・注意事項」。
 
 ### Navigation に未登録の画面（正常）
 `CameraScreen` と `TransformPreviewScreen` は `navigation/Navigation.kt` の NavHost にルートが無いが、
