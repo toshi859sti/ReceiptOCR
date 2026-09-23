@@ -6,6 +6,43 @@
 
 ---
 
+## schemaVersion 2 — 2026-09-23 minor（3）（事業割合は摘要から採る・JA 伝票と預金摘要の記述訂正）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形も、スマホが送る値（`businessRatio = 100`）も
+変わらない。変わったのは **PC 側の解釈**と文書の誤り。
+スマホ側 [REPLY-phone-2026-09-23.md](REPLY-phone-2026-09-23.md) への回答は
+[REPLY-pc-2026-09-23b.md](REPLY-pc-2026-09-23b.md)。
+
+### 変更 1：`memoKey` が解決できたら、仕訳の事業割合は**摘要の `businessRatio`**（§3）
+
+旧：「スマホは 100 固定で出す。按分は PC の年末『家事按分自動生成』の仕事」。
+**その自動生成は PC に存在しなかった。** PC の按分は仕訳 1 件ごとの `BusinessRatio` を決算書が掛ける方式で、
+取込は送られた 100 をそのまま入れていたため、**「電気料金（40%）」の取込仕訳が全額経費になっていた**。
+
+新：取込が仕訳を書く 4 経路（確定・再取込の更新・「取込値で上書き」・「別行として追加」）すべてで、
+`memoKey` が当年度の摘要に解決できたら**その摘要の `businessRatio`** を入れる。`memoKey = null` の行は
+従来どおり送られた値（相手科目側）。帳簿の手入力で摘要を選んだときと同じ結果になる。
+
+スマホ側への影響：**事業割合だけ違う摘要の取り違えが経費額に効く**ようになる。候補にそういう組み合わせが
+並んだら自動確定せずユーザーに選ばせること（スマホ側は §4-2 で既にそうすると決めている）。
+[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7・[matching-rules.md](matching-rules.md) §1・§4・
+[transaction-import.md](transaction-import.md) の `debit.businessRatio`・[README.md](README.md) 9／決定表 L を改訂。
+
+### 変更 2：JA 購買伝票に摘要カラムは無い（[matching-rules.md](matching-rules.md) §2・§5）
+
+「伝票の摘要カラム（肥料/農薬/諸材料/種苗/飼料）→ 科目が決定論的」は**事実誤認**。取れる分類は
+小計行の `一般購買`/`給油所`/`農業機械` の 3 つだけで、`一般購買` の振り分けは商品名から学習する。
+「ほぼ完結」の見積もりは据え置くが、根拠は「選択肢が少なく語彙が閉じている」に改めた。
+
+### 変更 3：預金の摘要候補は `ledgerType == "Bank"` ではない（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.5）
+
+`ledgerType == "Bank"` の摘要は実在しない。預金出納帳の摘要も `"Cash"` で持ち、`showInBank` で出し分けている
+（PC の摘要登録画面の預金タブも `showInBank && direction` だけで絞る）。旧 §4.5 の「`Deposit`→`Bank`」どおりだと
+候補が常に 0 件になる。`Deposit`＝「`ledgerType ∈ {Cash, Bank}` かつ `showInBank`」、`Receipt` 現金＝同 `showInCash` に改めた。
+あわせて `direction` の説明を「お金の向き」から「帳簿上の発生／解消」に直した。
+
+---
+
 ## schemaVersion 2 — 2026-09-22 minor（2）（Purchase の `externalId` を UUID に・二重計上の検知）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形（フィールドの追加・削除）は無く、

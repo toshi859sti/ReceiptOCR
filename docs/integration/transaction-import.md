@@ -97,7 +97,7 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 | `debit.accountKey` | ✔※ | `vocabulary.accounts[].accountKey`。source ごとの候補フィルタは [vocabulary-snapshot.md](vocabulary-snapshot.md) §4.5。解決不能でも推定値を入れ、`matchStatus` を立てる。本当に不明なら `null` |
 | `debit.accountName` | — | `accountKey` が指す科目の `name` のエコー。値は「そのマッチングを決めたときに見えていた名前」。PC は照合に使わず、**現在名と食い違ったらその行を「要確認」に回す**（古いスナップショットの検知。[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.6）。`accountKey` が `null` なら `null`。**送れるときは必ず送ること** |
 | `debit.taxRate` | — | [README.md](README.md) §4 のコード。相手科目側にだけ付く。省略/`null` 可 |
-| `debit.businessRatio` | — | 事業割合(%)。省略時 100。PC 側で家事按分を別途扱うので通常は 100 のままでよい |
+| `debit.businessRatio` | — | 事業割合(%)。省略時 100。**100 のままでよい**。`memoKey` が当年度の摘要に解決できた行では PC は**この値を使わず摘要の `businessRatio` を仕訳に入れる**（手入力で摘要を選んだときと同じ）。`memoKey = null` の行だけこの値（相手科目側）が使われる |
 | `credit.*` | ✔※ | 借方と同様 |
 | `memoKey` | ✔※ | 帳簿の「摘要」列。**`vocabulary.memoTemplates[].memoKey` のいずれかのみ**（閉じた語彙）。キー自体は必須だが、逆引き 0 件のときは `null`（`UnmatchedMemo`）。§「摘要は閉じた語彙」 |
 | `memoName` | — | `memoKey` に対応する `name` のエコー。PC は照合に使わない（取込サマリーの表示・契約テストの突き合わせ用）。`memoKey` が `null` なら `null` |
