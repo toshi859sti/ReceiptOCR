@@ -19,7 +19,8 @@ fun BookkeepingMenuScreen(
     onNavigateToYayoiAccounts: () -> Unit,
     onNavigateToRakurakuAccounts: () -> Unit,
     onNavigateToRakurakuTekiyou: () -> Unit,
-    onNavigateToAoiroChoboAccountMapping: () -> Unit
+    onNavigateToAoiroChoboAccountMapping: () -> Unit,
+    onNavigateToAoiroChoboMemoMapping: () -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -54,7 +55,10 @@ fun BookkeepingMenuScreen(
 
             SoftwareSection(
                 title = "あおいろ帳簿（PC会計アプリ）",
-                items = listOf("科目マッピング" to onNavigateToAoiroChoboAccountMapping)
+                items = listOf(
+                    "科目マッピング" to onNavigateToAoiroChoboAccountMapping,
+                    "摘要マッピング" to onNavigateToAoiroChoboMemoMapping
+                )
             )
 
             SoftwareSection(

@@ -30,7 +30,7 @@ import com.example.greenframeocr.util.toCanonicalKey
         AoiroChoboMemoTemplate::class,
         AoiroChoboVocabMeta::class
     ],
-    version = 35,
+    version = 36,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -916,6 +916,28 @@ abstract class ReceiptDatabase : RoomDatabase() {
         // 保存時の itemNumber はリストの位置から振り直される。5行目に1行挿入しただけで
         // 6行目以降の externalId が全部ずれ、空いた番号に隣の行の商品が入るため、
         // PC 側が「同じ取引の訂正」と読んで黙って上書きしてしまう。
+        /**
+         * version 35 → 36：学習が摘要を指す先を `rakuraku_tekiyou.id` から AoiroChobo の
+         * `memoKey` に移すための列を足す。
+         *
+         * らくらく青色申告農業版のサポート終了（2026-09-23 決定）にともない `rakuraku_tekiyou` は
+         * 廃止するが、そこを指している学習（商品名→摘要・通帳パターン→摘要・預金の個別上書き）は
+         * ユーザーの資産なので捨てられない。
+         *
+         * **ここではバックフィルしない。** この時点では `rakuraku_tekiyou.memoKey` がまだ空で、
+         * 何に張り替えるべきか決まっていないため。実際の書き下ろしは摘要マッピング画面で
+         * ユーザーが 1 件確定するたびに `RakurakuTekiyouDao.linkMemoKey` が行う。
+         */
+        private val MIGRATION_35_36 = object : Migration(35, 36) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE product_master ADD COLUMN memoKey TEXT")
+                database.execSQL("ALTER TABLE product_master ADD COLUMN memoKeyName TEXT")
+                database.execSQL("ALTER TABLE tekiyou_matching_rules ADD COLUMN memoKey TEXT")
+                database.execSQL("ALTER TABLE tekiyou_matching_rules ADD COLUMN memoKeyName TEXT")
+                database.execSQL("ALTER TABLE deposit_meisai ADD COLUMN overrideMemoKey TEXT")
+            }
+        }
+
         private val MIGRATION_34_35 = object : Migration(34, 35) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE receipt_items ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
@@ -1340,7 +1362,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36)
                     .build()
                 INSTANCE = instance
                 instance

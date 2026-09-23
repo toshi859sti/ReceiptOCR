@@ -199,7 +199,9 @@ object AoiroChoboVocabImporter {
                 val key = tekiyou.memoKey ?: return@forEach
                 when (val verdict = verify(key, tekiyou.memoKeyName, memoNames)) {
                     is Verdict.Renamed -> {
-                        db.rakurakuTekiyouDao().clearMemoKey(tekiyou.id)
+                        // 学習へ書き下ろした memoKey も一緒に外す。ここを外し忘れると、
+                        // 作り替えられた摘要を指したまま仕訳が Matched で出てしまう
+                        db.rakurakuTekiyouDao().unlinkMemoKey(tekiyou.id)
                         unlinked += "摘要「${tekiyou.tekiyouName}」" +
                             "（${verdict.before} → ${verdict.after} に変わった）"
                     }

@@ -50,5 +50,11 @@ data class TekiyouMatchingRule(
     val isDeposit: Boolean = true,
 
     /** 弥生勘定科目ID（弥生モード時に使用） */
-    val yayoiAccountId: Long? = null
+    val yayoiAccountId: Long? = null,
+
+    /** AoiroChobo の摘要参照キー。`rakurakuTekiyouId` の置き換え先（ProductMaster.memoKey と同じ扱い） */
+    val memoKey: String? = null,
+
+    /** memoKey を確定したときに見えていた AoiroChobo 側の摘要名 */
+    val memoKeyName: String? = null
 )

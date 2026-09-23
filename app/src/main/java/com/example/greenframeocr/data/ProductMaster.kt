@@ -52,5 +52,20 @@ data class ProductMaster(
     val isCertified: Boolean = false,
 
     /** 弥生勘定科目ID（YayoiAccountのID、弥生モード時に使用） */
-    val yayoiAccountId: Long? = null
+    val yayoiAccountId: Long? = null,
+
+    /**
+     * AoiroChobo の摘要参照キー。`kaikakeTekiyouId` の置き換え先。
+     *
+     * らくらくのサポート終了にともない `rakuraku_tekiyou` を廃止するため、学習が摘要を
+     * 指す先をキー直指しに移す。摘要マッピング画面で `rakuraku_tekiyou.memoKey` を確定したとき、
+     * その摘要を指していた学習にここまで書き下ろす（`RakurakuTekiyouDao.linkMemoKey`）。
+     */
+    val memoKey: String? = null,
+
+    /**
+     * memoKey を確定したときに見えていた AoiroChobo 側の摘要名。
+     * 取込時にこれと現在名が食い違ったら memoKey を外す（CHANGELOG 2026-09-13 改訂・変更2）。
+     */
+    val memoKeyName: String? = null
 )
