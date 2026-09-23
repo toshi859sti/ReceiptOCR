@@ -17,6 +17,7 @@ import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.ReceiptDao
+import com.example.greenframeocr.ui.AoiroChoboVocabularyScreen
 import com.example.greenframeocr.ui.DepositMenuScreen
 import com.example.greenframeocr.ui.KaikakeTekiyouScreen
 import com.example.greenframeocr.ui.MenuScreen
@@ -66,6 +67,7 @@ sealed class Screen(val route: String) {
     object BookkeepingMenu : Screen("bookkeeping_menu")
     object YayoiAccountSettings : Screen("yayoi_account_settings")
     object RakurakuAccountSettings : Screen("rakuraku_account_settings")
+    object AoiroChoboVocabulary : Screen("aoirochobo_vocabulary")
     object YayoiAccountEdit : Screen("yayoi_account_edit/{accountId}?parentId={parentId}") {
         fun createRoute(accountId: Long, parentId: Long = -1L): String =
             "yayoi_account_edit/$accountId?parentId=$parentId"
@@ -241,7 +243,18 @@ fun ReceiptNavGraph(
                 },
                 onNavigateToRakurakuTekiyou = {
                     navController.navigate(Screen.RakurakuTekiyou.route)
+                },
+                onNavigateToAoiroChoboVocabulary = {
+                    navController.navigate(Screen.AoiroChoboVocabulary.route)
                 }
+            )
+        }
+
+        // あおいろ帳簿（AoiroChobo）から取り込んだ科目・摘要の閲覧画面
+        composable(Screen.AoiroChoboVocabulary.route) {
+            AoiroChoboVocabularyScreen(
+                database = database,
+                onBack = { navController.popBackStack() }
             )
         }
 

@@ -624,3 +624,13 @@ moto g66j 5G 実機で v36 ビルドを上書きインストールし、実デ�
 ### 次回セッションで最初にやること（更新）
 
 あおいろモードの商品編集UI（科目 → その科目で絞った摘要 → ユーザー確定）に着手する。上の4点を仕様として入れる。
+
+## 2026-09-23 あおいろ科目・摘要の閲覧画面（完了）
+
+- 入口：メニュー「簿記ソフト連携」→「あおいろ帳簿／勘定科目・摘要辞書」（`AoiroChoboVocabularyScreen.kt`・閲覧専用）
+- 科目は資産/負債/収入/支出/資本（未知の区分は「その他」）、内訳科目は親の直下。摘要は PC と同じ11タブ
+- 判定ロジックを `util/AoiroChoboMemoRules.kt` に分離（`MemoTab`＝帳簿タブの絞り込み、
+  `ratioSensitiveMemoKeys`＝自動で選ばない組）。商品編集UIでもこれを使う
+- テスト7件追加（本番 vocabulary.json を入力にした2件を含む）。全35件パス・実機で表示確認済み
+- 注意：`AoiroChoboVocabDao.getMemoTemplatesFor(ledgerType, direction)` は ledgerType で絞るので
+  預金には使えない（常に0件）。現在呼び出し元なし。商品編集UIでは `MemoTab` を使うこと
