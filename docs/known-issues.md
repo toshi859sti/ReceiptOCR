@@ -115,6 +115,13 @@
     `externalId` になる）。PC 側が「重複の可能性」検知で受け止める合意ができている
     （`docs/integration/transaction-import.md` §10）ため、スマホ側の追加対応は不要
 
+- エンティティを `.copy()` せず**フィールドを列挙して組み直している保存処理**が複数ある。
+  新しい列を足すと、その画面で保存しただけで**黙って null に戻る**。2026-09-23 に 3 か所で踏みかけた
+  （`ProductListScreen` の商品編集ダイアログ、`GeneralReceiptViewModel.updateGroupDefaultAccount` と
+  品目名リネーム）。いずれも AoiroChobo 用の `accountKey` / `memoKey` が、弥生の科目を選び直しただけで
+  消える挙動だった。**エンティティに列を足したら、そのエンティティを `new` している箇所を全部見る**
+  （`grep -rn "ProductMaster(" app/src/main`）
+
 ---
 
 ## 未実装・将来対応
