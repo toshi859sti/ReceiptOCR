@@ -601,3 +601,26 @@ moto g66j 5G 実機で v36 ビルドを上書きインストールし、実デ�
 ### 次回セッションで最初にやること（更新）
 
 あおいろモードの商品編集UI（科目 → その科目で絞った摘要 → ユーザー確定）に着手する。
+
+## 2026-09-23 往復検証・手順2（完了）と PC側 2通目への返信
+
+- 本番 `vocabulary.json`（`docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260923_194016.json`）を実機に取込。
+  科目64・摘要107・警告なし。`contentHash` を契約 §5 の手順で独立計算して一致
+- PC側 `REPLY-pc-2026-09-23b.md` を受領（PC側がこの repo に直接コミット済み `1ecf3cd`）。
+  回答済みの返信は書き換えず、新しく `REPLY-phone-2026-09-23b.md` を作成。PCへの未回答の質問はゼロ
+
+### 実装に効く決定（商品編集UIで必ず反映すること）
+
+- **businessRatio は B**：PC は `memoKey` が解決できたら**摘要側の事業割合を仕訳に入れる**。
+  スマホが送る値は 100 固定のままでよい
+- よって**事業割合だけ違う摘要は自動で選ばない**（帳簿の金額を守る唯一の防壁）。判定：同じ
+  `ledgerType × direction × counterAccountKey × taxRate` の中で `businessRatio` が1つでも違えばその組は自動選択禁止。
+  本番データでは Cash/Out の動力光熱費（8件）と雑費（4件）の2組。**AP には0組**なので JA 購買は自動選択してよい
+- **買掛の摘要は本番で6件**（肥料・農薬・農具・諸材料・種苗・飼料）。`給油所`＝動力光熱費と修繕費は
+  科目だけ確定して `memoKey = null`（UnmatchedMemo）。摘要件数を固定で作り込まない
+- 摘要候補の絞り込み：`Purchase`→`AP`／`Receipt` クレカ→`Unpaid`／`Receipt` 現金→`ledgerType ∈ {Cash,Bank}` かつ
+  `showInCash`／`Deposit`→`ledgerType ∈ {Cash,Bank}` かつ `showInBank`（`ledgerType == "Bank"` 単独で絞ると0件になる）
+
+### 次回セッションで最初にやること（更新）
+
+あおいろモードの商品編集UI（科目 → その科目で絞った摘要 → ユーザー確定）に着手する。上の4点を仕様として入れる。
