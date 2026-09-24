@@ -101,7 +101,7 @@ AoiroChobo の `Account` テーブルのうち **`IsActive = 1` の行**を、�
   "allowsTaxable": false,        // 課税区分「課税」を選べるか（損益科目のみ意味を持つ）
   "allowsNonTaxable": false,     // 課税区分「課税以外」を選べるか
   "defaultTaxCategory": null,    // enums.defaultTaxCategory。既定の課税区分。null 可
-  "displayOrder": 1,             // AoiroChobo 内の並び順
+  "displayOrder": 1010,          // 科目マスタの枠番号（§4.4 の後の「displayOrder」）。並べる順。参照キーにしない
   "isSystem": true,              // らくらく標準科目か（ユーザー追加科目は false）
   "ocrRoleExpenseDebit": false,  // JA購買・レシートの「借方」候補にしてよい科目か（§4.5）
   "ocrRoleDepositCounter": true  // 通帳の「相手科目」候補にしてよい科目か（§4.5）
@@ -125,7 +125,7 @@ AoiroChobo の `Account` テーブルのうち **`IsActive = 1` の行**を、�
 | `AllowsTaxable` | `allowsTaxable` | 0/1 → bool |
 | `AllowsNonTaxable` | `allowsNonTaxable` | 0/1 → bool |
 | `DefaultTaxCategory` | `defaultTaxCategory` | |
-| `DisplayOrder` | `displayOrder` | |
+| `DisplayOrder` | `displayOrder` | 2026-09-24 から**枠番号**（年度内で一意・連番ではない）。§4.4 の後の「`displayOrder`」 |
 | `IsSystem` | `isSystem` | 0/1 → bool |
 | `OcrRoleExpenseDebit`（Phase 4） | `ocrRoleExpenseDebit` | 0/1 → bool。§4.5 |
 | `OcrRoleDepositCounter`（Phase 4） | `ocrRoleDepositCounter` | 0/1 → bool。§4.5 |
@@ -290,15 +290,30 @@ AoiroChobo は複数の預金口座を「スロット」で管理する。
 - **科目マスタの 1 行に 1 対 1**（2026-09-13 改訂／2026-09-14 表現を明確化）：`accountKey` が指すのは
   **その行そのもの**であって、そこに今入っている概念ではない。作り替えても**キーは据え置かれ、
   `name` だけが変わる**（§4.6）。旧版は「概念に 1 対 1・作り替えで新規採番」としていたが撤回した。
-  - **表示位置ではない**。`DisplayOrder` はユーザーが並べ替えられる（`AccountMasterViewModel.MoveUp`/
-    `MoveDown` が 2 行の `DisplayOrder` を交換する）が、`accountKey` は行に付いたまま一緒に動く。
+  - **表示位置ではない**。`displayOrder`（枠番号）はユーザーが並べ替えられる（科目マスタの「上へ／下へ」が
+    2 科目の枠番号を交換する。2026-09-24 から保存される）が、`accountKey` は行に付いたまま一緒に動く。
     位置に紐づけると並べ替えだけで学習と残高が別科目に付け替わるので、そう解釈してはいけない。
   - **名前でもない**。改名しても作り替えても `accountKey` は変わらない。
   - 「スロット」という語は任意科目にしか当てはまらない。システム科目（現金・肥料費など）は枠では
     なく固定の科目で、キーは歴史的スラッグ（`genkin` `hiryou`）。どちらも「行の識別子」で統一される。
 - **引退しない**：キーを引退させないので `AccountKeyRegistry`（引退年度・`supersededBy`）も作らない。
   科目を無効化した場合はその年度のファイルからキーが消えるが、同じスロットが再び有効化されれば
-  同じキーで戻る。
+  同じキーで戻る（2026-09-24 実装。科目マスタの「削除」は無効化で、無効化した行は枠番号を持ち続け、
+  その枠に科目を作ると行が有効に戻る）。**名前は作り直したときのものに変わる**ので、§4.6 の
+  「`name` が変わったキーの学習は外す」がそのまま効く。
+
+#### `displayOrder` — 科目マスタの枠番号（2026-09-24 minor（4））
+
+- 科目マスタの**枠（空き枠を含む）ごとに固定の番号**。年度内で一意（PC の DB に UNIQUE 制約）。
+  科目を足しても消しても、**他の科目の番号は動かない**（以前は足すたびに後ろが +1 ずれていた）。
+- 番号は全タブ通しで、PC の科目マスタの画面の並びと同じ順になる（資産 1000 番台・負債と資本 2000・
+  収入 3000・支出 4000）。事業主貸・事業主借・専従者給与・家計費も、画面に出る位置の番号を持つ。
+- **連番ではない**。枠と枠の間は 10 空いている（口座だけは 1 きざみ：普通預金 1020 の口座が 1021〜1025）。
+  間の番号は「今は無い枠」なので、飛び番を欠番として扱わないこと。
+- 空き枠の一覧はファイルに出していない（空き枠は DB に行が無い）。スマホが空き枠まで描く必要が
+  出たら minor で足す。
+- 使い道は**並べる順だけ**。科目の参照は引き続き `accountKey`。番号で科目を覚えないこと
+  （並べ替えで入れ替わる）。
 - **不透明**：スマホ側は中身を解釈しない（パースしない・意味を読まない）。ただの識別子として扱う。
   参考までに、既存のシステム科目では歴史的なスラッグ（`genkin` `hiryou` `kaikake` …）と一致し、
   ユーザーが後から追加・作り替えた科目では `acct-<英数字>` 形式になる。
