@@ -6,6 +6,15 @@
 
 ---
 
+## schemaVersion 2 — 2026-09-24 記述の整合（版・JSON とも変更なし）
+
+[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7「ラベル選好キャッシュ」が「`memoKey` が残っていれば
+そのまま使う」とだけ書いており、§4.8 の「摘要の `name` が変わったらスマホ側の学習を外す」と食い違っていた。
+§4.7 に「残っていても `name` が変わっていれば選好を捨てる（学習時の `name` を一緒に持つ）」を足して揃えた。
+PC 側は従来どおり `memoName` の食い違いを「要確認」に回すので、取込の挙動は変わらない。
+
+---
+
 ## schemaVersion 2 — 2026-09-23 minor（3）（事業割合は摘要から採る・JA 伝票と預金摘要の記述訂正）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形も、スマホが送る値（`businessRatio = 100`）も
