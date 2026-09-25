@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.*
 import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.util.AoiroChoboAccountRules
+import com.example.greenframeocr.util.AoiroChoboMemoRules
+import com.example.greenframeocr.util.AoiroChoboPurchaseRules
 import com.example.greenframeocr.util.GeminiApiException
 import com.example.greenframeocr.util.GeminiApiKeyMissingException
 import com.example.greenframeocr.util.GeminiQuotaExhaustedException
@@ -36,7 +39,6 @@ import com.example.greenframeocr.util.normalizeSpaces
 import com.example.greenframeocr.util.withComputedKey
 import kotlinx.coroutines.launch
 
-private const val LABEL_BRP = "Windows側で管理"
 
 /** 並び替え順 */
 enum class SortOrder(val label: String) {
@@ -71,6 +73,9 @@ fun ProductListScreen(
     var kaikakeTekiyouList by remember { mutableStateOf<List<RakurakuTekiyou>>(emptyList()) }
     var yayoiAccountList by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var yayoiFlaggedList by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
+    // あおいろ帳簿（BLUE_RETURN_PREP）モードの科目・摘要。PC から取り込んだミラー
+    var aoiroAccounts by remember { mutableStateOf<List<AoiroChoboAccount>>(emptyList()) }
+    var aoiroMemos by remember { mutableStateOf<List<AoiroChoboMemoTemplate>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var sortOrder by remember { mutableStateOf(SortOrder.FREQUENCY) }
@@ -99,6 +104,8 @@ fun ProductListScreen(
         val allYayoi = database.yayoiAccountDao().getAll().filter { it.isEnabled }
         yayoiAccountList = allYayoi
         yayoiFlaggedList = allYayoi.filter { it.usedForPurchase }
+        aoiroAccounts = database.aoiroChoboVocabDao().getAllAccounts()
+        aoiroMemos = database.aoiroChoboVocabDao().getAllMemoTemplates()
         allProducts = database.productMasterDao().getAll()
     }
 
@@ -123,7 +130,7 @@ fun ProductListScreen(
             TekiyouFilter.ALL -> filtered
             TekiyouFilter.MISSING -> when (accountingSoftware) {
                 AccountingSoftware.YAYOI -> filtered.filter { it.yayoiAccountId == null }
-                AccountingSoftware.BLUE_RETURN_PREP -> filtered  // BRPはマッチングなし
+                AccountingSoftware.BLUE_RETURN_PREP -> filtered.filter { it.accountKey == null }
                 else -> filtered.filter { it.kaikakeTekiyouId == null }
             }
             TekiyouFilter.CERTIFIED -> filtered.filter { it.isCertified }
@@ -352,7 +359,7 @@ fun ProductListScreen(
             // 統計カード
             val matchedProductCount = when (accountingSoftware) {
                 AccountingSoftware.YAYOI -> allProducts.count { it.yayoiAccountId != null }
-                AccountingSoftware.BLUE_RETURN_PREP -> allProducts.size  // BRPは全件Windows側で管理扱い
+                AccountingSoftware.BLUE_RETURN_PREP -> allProducts.count { it.accountKey != null }
                 else -> allProducts.count { it.kaikakeTekiyouId != null }
             }
             val unmatchedProductCount = allProducts.size - matchedProductCount
@@ -479,7 +486,7 @@ fun ProductListScreen(
                     // 摘要フィルタ
                     Text("絞込:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     TekiyouFilter.values().forEach { filter ->
-                        val chipLabel = if (filter == TekiyouFilter.MISSING && accountingSoftware == AccountingSoftware.YAYOI)
+                        val chipLabel = if (filter == TekiyouFilter.MISSING && accountingSoftware != AccountingSoftware.RAKURAKU)
                             "科目未設定" else filter.label
                         FilterChip(
                             selected = tekiyouFilter == filter,
@@ -513,7 +520,7 @@ fun ProductListScreen(
                                     if (acc.accountCode.isNullOrEmpty()) acc.accountName
                                     else "${acc.accountName}（${acc.accountCode}）"
                                 }
-                        AccountingSoftware.BLUE_RETURN_PREP -> LABEL_BRP
+                        AccountingSoftware.BLUE_RETURN_PREP -> aoiroLabel(product, aoiroAccounts, aoiroMemos)
                         else -> kaikakeTekiyouList.find { it.id == product.kaikakeTekiyouId }?.tekiyouName
                     }
                     ProductListItem(
@@ -543,6 +550,8 @@ fun ProductListScreen(
             kaikakeTekiyouList = kaikakeTekiyouList,
             yayoiAccountList = yayoiAccountList,
             yayoiFlaggedList = yayoiFlaggedList,
+            aoiroAccounts = aoiroAccounts,
+            aoiroMemos = aoiroMemos,
             categories = categories,
             onDismiss = {
                 showEditDialog = false
@@ -576,6 +585,8 @@ fun ProductListScreen(
             kaikakeTekiyouList = kaikakeTekiyouList,
             yayoiAccountList = yayoiAccountList,
             yayoiFlaggedList = yayoiFlaggedList,
+            aoiroAccounts = aoiroAccounts,
+            aoiroMemos = aoiroMemos,
             categories = categories,
             onDismiss = { showAddDialog = false },
             onSave = { newProduct ->
@@ -620,10 +631,13 @@ fun ProductListScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        // id は起動前に取る。直後に selectedProduct = null にするので、
+                        // コルーチンの中で読むと null になって落ちる（2026-09-25 実機で発覚）
+                        val productId = selectedProduct!!.id
                         scope.launch {
                             // OCR学習データも一緒に削除（CASCADE）
-                            database.ocrVariantDao().deleteByProductId(selectedProduct!!.id)
-                            database.productMasterDao().deleteById(selectedProduct!!.id)
+                            database.ocrVariantDao().deleteByProductId(productId)
+                            database.productMasterDao().deleteById(productId)
                             loadProducts()
                         }
                         showDeleteDialog = false
@@ -906,6 +920,27 @@ private fun AiMatchingDialog(
 }
 
 /**
+ * あおいろモードの一覧に出す「科目 ／ 摘要」。科目が無ければ null（＝未設定として赤で出る）。
+ *
+ * 名前は今の辞書から引く（PC で改名されていればそちらを出す）。辞書から消えたキーは
+ * 保存時の名前で出す。摘要は、選べる候補があるのに選んでいなければ「摘要未選択」と出す。
+ */
+private fun aoiroLabel(
+    product: ProductMaster,
+    accounts: List<AoiroChoboAccount>,
+    memos: List<AoiroChoboMemoTemplate>
+): String? {
+    val accountKey = product.accountKey ?: return null
+    val accountName = accounts.find { it.accountKey == accountKey }?.name ?: product.accountKeyName ?: accountKey
+    val memoName = product.memoKey?.let { key -> memos.find { it.memoKey == key }?.name ?: product.memoKeyName ?: key }
+    return when {
+        memoName != null -> "$accountName ／ $memoName"
+        AoiroChoboPurchaseRules.memoCandidates(accountKey, memos).isNotEmpty() -> "$accountName ／ 摘要未選択"
+        else -> accountName
+    }
+}
+
+/**
  * 商品リストアイテム
  */
 @Composable
@@ -963,10 +998,8 @@ private fun ProductListItem(
             Spacer(modifier = Modifier.height(4.dp))
 
             // マッチング科目/摘要
-            val isBrp = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
             val labelPrefix = when (accountingSoftware) {
-                AccountingSoftware.BLUE_RETURN_PREP -> ""
-                AccountingSoftware.YAYOI -> "科目: "
+                AccountingSoftware.YAYOI, AccountingSoftware.BLUE_RETURN_PREP -> "科目: "
                 else -> "摘要: "
             }
             val labelText = matchLabel ?: "未設定"
@@ -975,7 +1008,6 @@ private fun ProductListItem(
                 text = "$labelPrefix$labelText",
                 fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
                 color = when {
-                    isBrp -> MaterialTheme.colorScheme.onSurfaceVariant
                     isUnset -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.primary
                 }
@@ -1026,6 +1058,8 @@ private fun ProductEditDialog(
     kaikakeTekiyouList: List<RakurakuTekiyou>,
     yayoiAccountList: List<YayoiAccount>,
     yayoiFlaggedList: List<YayoiAccount>,
+    aoiroAccounts: List<AoiroChoboAccount>,
+    aoiroMemos: List<AoiroChoboMemoTemplate>,
     categories: List<String>,
     onDismiss: () -> Unit,
     onSave: (ProductMaster) -> Unit,
@@ -1038,6 +1072,11 @@ private fun ProductEditDialog(
     var showTekiyouPicker by remember { mutableStateOf(false) }
     var showYayoiPicker by remember { mutableStateOf(false) }
     var categoryExpanded by remember { mutableStateOf(false) }
+    var selectedAccountKey by remember { mutableStateOf(product?.accountKey) }
+    var selectedMemoKey by remember { mutableStateOf(product?.memoKey) }
+    var showAoiroAccountPicker by remember { mutableStateOf(false) }
+    var showAoiroMemoPicker by remember { mutableStateOf(false) }
+    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
 
     val isNew = product == null
     val title = if (isNew) "購買品追加" else "購買品編集"
@@ -1119,14 +1158,17 @@ private fun ProductEditDialog(
                 // 買掛摘要 / 弥生勘定科目 / BRP
                 when (accountingSoftware) {
                     AccountingSoftware.BLUE_RETURN_PREP -> {
-                        Text(
-                            "マッチングはWindows側アプリで実施します",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.small)
-                                .padding(12.dp)
+                        AoiroAccountAndMemoFields(
+                            accounts = aoiroAccounts,
+                            memos = aoiroMemos,
+                            accountKey = selectedAccountKey,
+                            memoKey = selectedMemoKey,
+                            fallbackAccountName = product?.accountKeyName,
+                            fallbackMemoName = product?.memoKeyName,
+                            onPickAccount = { showAoiroAccountPicker = true },
+                            onPickMemo = { showAoiroMemoPicker = true },
+                            onClearAccount = { selectedAccountKey = null; selectedMemoKey = null },
+                            onClearMemo = { selectedMemoKey = null }
                         )
                     }
                     AccountingSoftware.YAYOI -> {
@@ -1191,13 +1233,21 @@ private fun ProductEditDialog(
                             kaikakeTekiyouId = if (accountingSoftware == AccountingSoftware.YAYOI) product?.kaikakeTekiyouId else selectedTekiyouId,
                             yayoiAccountId = if (accountingSoftware == AccountingSoftware.YAYOI) selectedYayoiAccountId else product?.yayoiAccountId,
                             isCertified = true,
-                            // このダイアログは弥生／らくらくの紐付けしか編集しない。
-                            // フィールド列挙で組み直しているので、AoiroChobo 側は明示的に引き継がないと
-                            // 商品名を直しただけで消える
-                            accountKey = product?.accountKey,
-                            accountKeyName = product?.accountKeyName,
-                            memoKey = product?.memoKey,
-                            memoKeyName = product?.memoKeyName
+                            // フィールド列挙で組み直しているので、あおいろ側は明示的に書かないと
+                            // 商品名を直しただけで消える。あおいろモード以外では元の値を引き継ぐ。
+                            // 名前はそのとき見えていた PC 側の名前（取込時に変わっていたら紐付けを外す合図）
+                            accountKey = if (isAoiro) selectedAccountKey else product?.accountKey,
+                            accountKeyName = if (isAoiro) {
+                                selectedAccountKey?.let { key ->
+                                    aoiroAccounts.find { it.accountKey == key }?.name ?: product?.accountKeyName
+                                }
+                            } else product?.accountKeyName,
+                            memoKey = if (isAoiro) selectedMemoKey else product?.memoKey,
+                            memoKeyName = if (isAoiro) {
+                                selectedMemoKey?.let { key ->
+                                    aoiroMemos.find { it.memoKey == key }?.name ?: product?.memoKeyName
+                                }
+                            } else product?.memoKeyName
                         ).withComputedKey()
                         onSave(newProduct)
                     }
@@ -1237,6 +1287,38 @@ private fun ProductEditDialog(
         )
     }
 
+    // あおいろ科目の選択。選び直したら摘要は作り直す（摘要は科目に属する）
+    if (showAoiroAccountPicker) {
+        AoiroAccountPickerDialog(
+            productName = name,
+            accounts = AoiroChoboPurchaseRules.accountCandidates(aoiroAccounts),
+            memos = aoiroMemos,
+            selectedKey = selectedAccountKey,
+            onSelect = { key ->
+                if (key != selectedAccountKey) {
+                    selectedAccountKey = key
+                    selectedMemoKey = AoiroChoboPurchaseRules.preselectedMemo(key, aoiroMemos)?.memoKey
+                }
+                showAoiroAccountPicker = false
+            },
+            onDismiss = { showAoiroAccountPicker = false }
+        )
+    }
+
+    if (showAoiroMemoPicker && selectedAccountKey != null) {
+        AoiroMemoPickerDialog(
+            productName = name,
+            memos = AoiroChoboPurchaseRules.memoCandidates(selectedAccountKey!!, aoiroMemos),
+            ratioSensitive = remember(aoiroMemos) { AoiroChoboMemoRules.ratioSensitiveMemoKeys(aoiroMemos) },
+            selectedKey = selectedMemoKey,
+            onSelect = { key ->
+                selectedMemoKey = key
+                showAoiroMemoPicker = false
+            },
+            onDismiss = { showAoiroMemoPicker = false }
+        )
+    }
+
     // 買掛摘要選択ダイアログ
     if (showTekiyouPicker) {
         TekiyouPickerDialog(
@@ -1249,6 +1331,234 @@ private fun ProductEditDialog(
             },
             onDismiss = { showTekiyouPicker = false }
         )
+    }
+}
+
+/**
+ * あおいろモードの「科目 → 摘要」欄。
+ *
+ * 摘要は科目を選ぶまで出さない。科目に買掛/仕入の摘要が無ければ、摘要なしで保存してよいことを伝える
+ * （PC は UnmatchedMemo として受け、PC 側で摘要を決める）。
+ */
+@Composable
+private fun AoiroAccountAndMemoFields(
+    accounts: List<AoiroChoboAccount>,
+    memos: List<AoiroChoboMemoTemplate>,
+    accountKey: String?,
+    memoKey: String?,
+    fallbackAccountName: String?,
+    fallbackMemoName: String?,
+    onPickAccount: () -> Unit,
+    onPickMemo: () -> Unit,
+    onClearAccount: () -> Unit,
+    onClearMemo: () -> Unit
+) {
+    if (accounts.isEmpty()) {
+        Text(
+            "あおいろ帳簿の科目・摘要がまだ取り込まれていません。設定画面の「AoiroChobo 科目・摘要を取り込む」から取り込んでください。",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.small)
+                .padding(12.dp)
+        )
+        return
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val accountName = accountKey?.let { key ->
+            accounts.find { it.accountKey == key }?.name ?: fallbackAccountName ?: key
+        }
+        PickerField(
+            label = "あおいろ科目",
+            value = accountName ?: "未設定",
+            hasValue = accountKey != null,
+            onPick = onPickAccount,
+            onClear = onClearAccount
+        )
+
+        if (accountKey != null) {
+            val candidates = AoiroChoboPurchaseRules.memoCandidates(accountKey, memos)
+            if (candidates.isEmpty() && memoKey == null) {
+                Text(
+                    "この科目には買掛/仕入の摘要がありません。摘要なしで PC に送り、PC 側で摘要を決めます。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                val memo = memoKey?.let { key -> memos.find { it.memoKey == key } }
+                PickerField(
+                    label = "あおいろ摘要",
+                    value = memo?.name ?: memoKey?.let { fallbackMemoName ?: it } ?: "未選択",
+                    hasValue = memoKey != null,
+                    onPick = onPickMemo,
+                    onClear = onClearMemo
+                )
+                memo?.let {
+                    Text(
+                        memoDetail(it),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PickerField(
+    label: String,
+    value: String,
+    hasValue: Boolean,
+    onPick: () -> Unit,
+    onClear: () -> Unit
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = {},
+        readOnly = true,
+        label = { Text(label) },
+        trailingIcon = {
+            Row {
+                if (hasValue) {
+                    IconButton(onClick = onClear) { Icon(Icons.Default.Clear, "クリア") }
+                }
+                IconButton(onClick = onPick) { Icon(Icons.Default.ArrowDropDown, "選択") }
+            }
+        },
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onPick)
+    )
+}
+
+/** 摘要が仕訳に持ち込む値（税率・事業割合）。PC は摘要側の事業割合を使う */
+private fun memoDetail(memo: AoiroChoboMemoTemplate): String = buildList {
+    memo.taxRate?.let { add("税率 " + (AoiroChoboAccountRules.taxRateLabel(it) ?: it)) }
+    memo.businessRatio?.let { add("事業割合 $it%") }
+}.joinToString("・")
+
+/**
+ * あおいろ科目の選択。借方に使ってよい科目（契約 §4.5）だけを枠番号順に出す。
+ * 科目ごとに買掛/仕入の摘要の件数を添える（0 件なら摘要なしで送ることになる）。
+ */
+@Composable
+private fun AoiroAccountPickerDialog(
+    productName: String,
+    accounts: List<AoiroChoboAccount>,
+    memos: List<AoiroChoboMemoTemplate>,
+    selectedKey: String?,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(productName.ifEmpty { "新規商品" }, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("あおいろ科目を選択", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
+                items(accounts, key = { it.accountKey }) { account ->
+                    val memoCount = AoiroChoboPurchaseRules.memoCandidates(account.accountKey, memos).size
+                    PickerRow(
+                        selected = account.accountKey == selectedKey,
+                        title = account.name,
+                        subtitle = listOfNotNull(
+                            account.displayGroup,
+                            if (memoCount == 0) "摘要なし" else "摘要 $memoCount 件"
+                        ).joinToString("・"),
+                        onClick = { onSelect(account.accountKey) }
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
+    )
+}
+
+/**
+ * あおいろ摘要の選択。選んだ科目の買掛/仕入の摘要だけ。先頭に「摘要なし」を置く。
+ * 事業割合だけ違う組の摘要には「要確定」を付ける（帳簿の金額が変わるので、ここで確定したものだけが使われる）。
+ */
+@Composable
+private fun AoiroMemoPickerDialog(
+    productName: String,
+    memos: List<AoiroChoboMemoTemplate>,
+    ratioSensitive: Set<String>,
+    selectedKey: String?,
+    onSelect: (String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(productName.ifEmpty { "新規商品" }, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("あおいろ摘要を選択", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
+                item(key = "none") {
+                    PickerRow(
+                        selected = selectedKey == null,
+                        title = "摘要なし",
+                        subtitle = "PC 側で摘要を決める",
+                        onClick = { onSelect(null) }
+                    )
+                }
+                items(memos, key = { it.memoKey }) { memo ->
+                    PickerRow(
+                        selected = memo.memoKey == selectedKey,
+                        title = memo.name,
+                        subtitle = memoDetail(memo),
+                        tag = if (memo.memoKey in ratioSensitive) "要確定" else null,
+                        onClick = { onSelect(memo.memoKey) }
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
+    )
+}
+
+@Composable
+private fun PickerRow(
+    selected: Boolean,
+    title: String,
+    subtitle: String,
+    tag: String? = null,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp)
+            if (subtitle.isNotEmpty()) {
+                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        tag?.let {
+            Text(
+                it,
+                fontSize = 11.sp,
+                color = Color(0xFF8A4B00),
+                modifier = Modifier
+                    .background(Color(0xFFFFE0B2), MaterialTheme.shapes.small)
+                    .padding(horizontal = 4.dp, vertical = 1.dp)
+            )
+        }
     }
 }
 
