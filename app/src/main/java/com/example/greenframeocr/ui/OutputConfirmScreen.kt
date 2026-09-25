@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.*
+import com.example.greenframeocr.util.AoiroChoboTransactionsBuilder
 import com.example.greenframeocr.util.CsvUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -80,6 +81,8 @@ data class PurchaseOutputItem(
     val yayoiSubAccountName: String = "",
     val defaultTaxCategory: String = "対象外",
     val exportedAt: String? = null,  // 直近のCSV出力日時。未出力ならnull
+    /** あおいろ帳簿モードだけ。transactions.json を組み立てる元（行と紐付いた商品） */
+    val aoiroRow: AoiroChoboTransactionsBuilder.PurchaseRow? = null,
     var isSelected: Boolean = true
 )
 
@@ -148,6 +151,32 @@ private fun PurchaseOutputConfirmContent(
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // あおいろ帳簿（transactions.json）
+    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    var aoiroResult by remember { mutableStateOf<AoiroChoboTransactionsBuilder.Result?>(null) }
+    val jsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                val selected = outputItems.filter { item -> item.isSelected }
+                val result = exportPurchaseAoiroJsonToUri(context, it, database, selected) ?: return@launch
+                // 出せなかった行（金額 0・不正な日付）は出力済みにしない
+                val exportedIds = result.file.entries.map { entry -> entry.meta.sourceRowId }.toSet()
+                val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date())
+                database.receiptDao().markExported(exportedIds.toList(), timestamp)
+                val currentSelection = outputItems.associateBy { item -> item.id }
+                allItems = allItems.map { item ->
+                    when {
+                        item.id in exportedIds -> item.copy(exportedAt = timestamp, isSelected = false)
+                        else -> currentSelection[item.id]?.let { item.copy(isSelected = it.isSelected) } ?: item
+                    }
+                }
+                aoiroResult = result
             }
         }
     }
@@ -336,18 +365,21 @@ private fun PurchaseOutputConfirmContent(
                             onClick = {
                                 val hasUnmatched = accountingSoftware == AccountingSoftware.YAYOI &&
                                     outputItems.any { it.isSelected && it.tekiyou.isBlank() }
+                                val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                                val timestamp = dateFormat.format(Date())
                                 if (hasUnmatched) {
                                     showUnmatchedBlockDialog = true
+                                } else if (isAoiro) {
+                                    // 科目・摘要が未確定の行も止めない。PC が「要確認」で受ける（契約 §9）
+                                    jsonLauncher.launch("ja_shiwake_$timestamp.json")
                                 } else {
-                                    val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-                                    val timestamp = dateFormat.format(Date())
                                     val fileName = "購買_$timestamp.csv"
                                     csvLauncher.launch(fileName)
                                 }
                             },
                             enabled = selectedCount > 0
                         ) {
-                            Text("CSV出力")
+                            Text(if (isAoiro) "JSON出力" else "CSV出力")
                         }
                     }
                 }
@@ -363,7 +395,55 @@ private fun PurchaseOutputConfirmContent(
                 onDismiss = { showUnmatchedBlockDialog = false }
             )
         }
+
+        aoiroResult?.let { result ->
+            AoiroExportResultDialog(result = result, onDismiss = { aoiroResult = null })
+        }
     }
+}
+
+/**
+ * transactions.json を書き出した結果。PC で「要確認」になる行の数と、出せなかった行を知らせる
+ */
+@Composable
+private fun AoiroExportResultDialog(
+    result: AoiroChoboTransactionsBuilder.Result,
+    onDismiss: () -> Unit
+) {
+    val entries = result.file.entries
+    val byStatus = entries.groupingBy { it.matchStatus }.eachCount()
+    val matched = byStatus[AoiroChoboTransactionsBuilder.MatchStatus.MATCHED] ?: 0
+    val noAccount = byStatus[AoiroChoboTransactionsBuilder.MatchStatus.UNMATCHED_ACCOUNT] ?: 0
+    val noMemo = byStatus[AoiroChoboTransactionsBuilder.MatchStatus.UNMATCHED_MEMO] ?: 0
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("JSONを出力しました") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("${entries.size} 件を出力しました（${result.file.vocabulary.fiscalYear} 年度の科目・摘要で作成）")
+                Text("・科目・摘要とも確定: $matched 件")
+                if (noMemo > 0) Text("・摘要なし: $noMemo 件（PC の「要確認」で摘要を選びます）")
+                if (noAccount > 0) Text("・科目なし: $noAccount 件（PC の「要確認」で科目を選びます）")
+                if (result.skipped.isNotEmpty()) {
+                    Text(
+                        "出力できなかった行 ${result.skipped.size} 件（出力済みにはしていません）",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    result.skipped.take(10).forEach { skipped ->
+                        Text("・${skipped.item.productName.ifBlank { "（商品名なし）" }}：${skipped.reason.label}", fontSize = 13.sp)
+                    }
+                    if (result.skipped.size > 10) Text("ほか ${result.skipped.size - 10} 件", fontSize = 13.sp)
+                }
+                result.warnings.forEach { warning ->
+                    Text(warning, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("OK") }
+        }
+    )
 }
 
 /**
@@ -371,7 +451,11 @@ private fun PurchaseOutputConfirmContent(
  */
 @Composable
 private fun PurchaseGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU) {
-    val tekiyouLabel = if (accountingSoftware == AccountingSoftware.YAYOI) "科目/メモ" else "摘要/メモ"
+    val tekiyouLabel = when (accountingSoftware) {
+        AccountingSoftware.YAYOI -> "科目/メモ"
+        AccountingSoftware.BLUE_RETURN_PREP -> "科目 ／ 摘要/メモ"
+        else -> "摘要/メモ"
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -954,6 +1038,11 @@ private suspend fun loadPurchaseOutputItems(
         val ocrVariantDao = database.ocrVariantDao()
         val allYayoiAccounts = if (accountingSoftware == AccountingSoftware.YAYOI)
             database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
+        val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+        val aoiroAccountNames = if (isAoiro)
+            database.aoiroChoboVocabDao().getAllAccounts().associate { it.accountKey to it.name } else emptyMap()
+        val aoiroMemoNames = if (isAoiro)
+            database.aoiroChoboVocabDao().getAllMemoTemplates().associate { it.memoKey to it.name } else emptyMap()
 
         val sortedItems = receiptItems.sortedWith(
             compareBy<ReceiptItem> { it.receiptYear * 10000 + it.receiptMonth * 100 + it.receiptDay }
@@ -989,6 +1078,19 @@ private suspend fun loadPurchaseOutputItems(
                         yayoiSubAccountName = subName,
                         defaultTaxCategory = account?.defaultTaxCategory ?: "対象外",
                         exportedAt = item.exportedAt
+                    )
+                } else if (isAoiro) {
+                    // 表示は今の vocabulary の名前。当年度に無いキーは出さない（JSON でも送らない）
+                    val accountName = productMaster?.accountKey?.let { aoiroAccountNames[it] }
+                    val memoName = productMaster?.memoKey?.let { aoiroMemoNames[it] }
+                    PurchaseOutputItem(
+                        id = item.id,
+                        date = date,
+                        tekiyou = listOfNotNull(accountName, memoName).joinToString(" ／ "),
+                        memo = item.productName,
+                        amount = item.amount,
+                        exportedAt = item.exportedAt,
+                        aoiroRow = AoiroChoboTransactionsBuilder.PurchaseRow(item, productMaster)
                     )
                 } else {
                     val tekiyouName = productMaster?.kaikakeTekiyouId?.let { tekiyouId ->
@@ -1090,6 +1192,43 @@ private fun normalizeTekiyou(tekiyou: String): String {
 /**
  * 購買CSVを出力（URI経由）
  */
+/**
+ * あおいろ帳簿向け transactions.json を書き出す（docs/integration/transaction-import.md）。
+ * 成功したらビルダーの結果（出した行・出せなかった行・警告）を返す。失敗・vocabulary 未取込なら null。
+ */
+private suspend fun exportPurchaseAoiroJsonToUri(
+    context: Context,
+    uri: Uri,
+    database: ReceiptDatabase,
+    items: List<PurchaseOutputItem>
+): AoiroChoboTransactionsBuilder.Result? = withContext(Dispatchers.IO) {
+    try {
+        val vocabDao = database.aoiroChoboVocabDao()
+        val meta = vocabDao.getMeta() ?: error("あおいろ帳簿の科目・摘要がまだ取り込まれていません")
+        val appVersion = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: ""
+        val result = AoiroChoboTransactionsBuilder.buildPurchase(
+            rows = items.mapNotNull { it.aoiroRow },
+            accounts = vocabDao.getAllAccounts(),
+            memos = vocabDao.getAllMemoTemplates(),
+            vocabMeta = meta,
+            appVersion = appVersion
+        )
+        // UTF-8・BOM なし（契約 §1）
+        context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+            writer.write(result.json)
+            writer.write("\n")
+        } ?: error("ファイルを開けませんでした")
+        result
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "JSON出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+        null
+    }
+}
+
 private suspend fun exportPurchaseCsvToUri(context: Context, uri: Uri, items: List<PurchaseOutputItem>): Boolean =
     withContext(Dispatchers.IO) {
         try {
@@ -1322,6 +1461,7 @@ private fun UnmatchedAccountBlockDialog(
 private fun OutputFormatBadge(accountingSoftware: AccountingSoftware) {
     val (bgColor, badgeLabel, formatNote) = when (accountingSoftware) {
         AccountingSoftware.YAYOI -> Triple(Color(0xFF1565C0), "弥生の青色申告", "仕訳CSV（Shift-JIS・25列）")
+        AccountingSoftware.BLUE_RETURN_PREP -> Triple(Color(0xFF00695C), "あおいろ帳簿", "transactions.json（UTF-8）")
         else -> Triple(Color(0xFF2E7D32), "らくらく青色申告", "シンプルCSV（UTF-8）")
     }
     Row(

@@ -125,6 +125,9 @@
   **預金の摘要には使えない（常に0件）**。AoiroChobo は預金出納帳の摘要も `ledgerType = "Cash"` で持ち、
   `showInBank` で出し分けている（`"Bank"` の摘要は実在しない）。帳簿ごとの摘要候補は
   `util/AoiroChoboMemoRules.MemoTab` を使うこと。2026-09-24 時点で呼び出し元なし
+- **`java.time` は使えない**（minSdk 24・coreLibraryDesugaring なし。API 26 未満の端末で実行時に落ちる）。
+  日付は `java.util.Calendar` / `SimpleDateFormat` で扱う。`util/ValidationUtils.kt` が `LocalDate` を
+  使っているが、2026-09-25 時点で呼び出し元が無いので実害はない（2026-09-25 発見）
 
 ---
 
