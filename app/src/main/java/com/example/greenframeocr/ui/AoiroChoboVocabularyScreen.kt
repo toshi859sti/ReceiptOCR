@@ -145,6 +145,18 @@ private val GridColor = Color(0xFFB0B0B0)
 
 // ---- 勘定科目 ----
 
+// 列幅。見出しとセルで同じ値を使う。科目の表は画面幅（moto g66j 5G で 443dp）に収めて
+// 「既定の課税区分」まで横スクロールなしで見えるようにする。検索文字は長ければ 2 行に折り返す
+private val GROUP_W = 84.dp        // 「(任意) 経費」が 1 行に収まる幅
+private val ACCOUNT_NAME_W = 132.dp
+private val SUB_NAME_W = 110.dp
+private val BS_SEARCH_W = 96.dp    // 資産・負債：84 + 132 + 110 + 96 = 422
+private val PL_SEARCH_W = 96.dp    // 収入・支出：84 + 132 + 96 + 64 + 64 = 440
+private val TAX_W = 64.dp          // 「課税のみ」「課税以外」が 1 行に収まる幅（60dp では折り返す）
+
+// 摘要名は「要確定」の印と並べても 1 行に収まる幅（印の付く摘要は本番で最長 10 文字）
+private val MEMO_NAME_W = 190.dp
+
 @Composable
 private fun AccountTable(accounts: List<AoiroChoboAccount>) {
     val tabs = remember(accounts) {
@@ -165,10 +177,10 @@ private fun AccountTable(accounts: List<AoiroChoboAccount>) {
         // 資産・負債は内訳科目、収入・支出は課税区分を出す（PC と同じ列）
         val profitAndLoss = selected == AccountTab.INCOME || selected == AccountTab.EXPENSE
         val columns = if (profitAndLoss) {
-            listOf("グループ" to 76.dp, "科目名" to 150.dp, "検索文字" to 104.dp,
-                "有効な\n課税区分" to 72.dp, "既定の\n課税区分" to 72.dp)
+            listOf("グループ" to GROUP_W, "科目名" to ACCOUNT_NAME_W, "検索文字" to PL_SEARCH_W,
+                "有効な\n課税区分" to TAX_W, "既定の\n課税区分" to TAX_W)
         } else {
-            listOf("グループ" to 76.dp, "科目名" to 150.dp, "内訳科目名" to 110.dp, "検索文字" to 104.dp)
+            listOf("グループ" to GROUP_W, "科目名" to ACCOUNT_NAME_W, "内訳科目名" to SUB_NAME_W, "検索文字" to BS_SEARCH_W)
         }
 
         PcTable(columns = columns, headerColor = AccountHeaderColor, rows = rows, scrollKey = selected, rowKey = { it.account.accountKey }) { row ->
@@ -176,26 +188,26 @@ private fun AccountTable(accounts: List<AoiroChoboAccount>) {
             val group = if (row.isChild) null else a.displayGroup?.takeIf { it.isNotBlank() }
             // グループ欄は続く間ずっと同じ色で塗り、名前は先頭の行にだけ出す
             val groupColor = if (rowGroupName(row, rows) != null) GroupNamedColor else GroupNoneColor
-            Cell(if (row.startsGroup) group.orEmpty() else "", 76.dp, groupColor, align = TextAlign.End,
+            Cell(if (row.startsGroup) group.orEmpty() else "", GROUP_W, groupColor, align = TextAlign.End,
                 drawGrid = row.startsGroup)
             val nameColor = if (a.isSystem) SystemNameColor else CellColor
             if (profitAndLoss) {
-                Cell(if (row.isChild) "└ ${a.name}" else a.name, 150.dp, nameColor)
-                Cell(a.searchKey, 104.dp)
+                Cell(if (row.isChild) "└ ${a.name}" else a.name, ACCOUNT_NAME_W, nameColor)
+                Cell(a.searchKey, PL_SEARCH_W)
                 val allowed = AoiroChoboAccountRules.allowedTaxLabel(a)
-                Cell(allowed.orEmpty(), 72.dp, if (allowed == null) GroupNoneColor else CellColor, TextAlign.Center)
+                Cell(allowed.orEmpty(), TAX_W, if (allowed == null) GroupNoneColor else CellColor, TextAlign.Center)
                 val default = AoiroChoboAccountRules.taxCategoryLabel(a.defaultTaxCategory)
-                Cell(default.orEmpty(), 72.dp, if (default == null) GroupNoneColor else CellColor, TextAlign.Center)
+                Cell(default.orEmpty(), TAX_W, if (default == null) GroupNoneColor else CellColor, TextAlign.Center)
             } else {
                 // 内訳科目は科目名の欄を空けて内訳欄に名前を出す（PC は親の欄を縦に結合している）
-                Cell(if (row.isChild) "" else a.name, 150.dp, nameColor)
+                Cell(if (row.isChild) "" else a.name, ACCOUNT_NAME_W, nameColor)
                 val subColor = when {
                     row.isChild -> CellColor
                     row.hasChildren -> CellColor
                     else -> GroupNoneColor
                 }
-                Cell(if (row.isChild) a.name else "", 110.dp, subColor)
-                Cell(a.searchKey, 104.dp)
+                Cell(if (row.isChild) a.name else "", SUB_NAME_W, subColor)
+                Cell(a.searchKey, BS_SEARCH_W)
             }
         }
     }
@@ -288,7 +300,7 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
         }
 
         if (selected == MemoTab.TRANSFER) {
-            val columns = listOf("摘要名" to 170.dp, "検索文字" to 96.dp,
+            val columns = listOf("摘要名" to MEMO_NAME_W, "検索文字" to 96.dp,
                 "借方科目" to 130.dp, "借方\n税率" to 60.dp, "借方\n事業割合" to 64.dp,
                 "貸方科目" to 130.dp, "貸方\n税率" to 60.dp, "貸方\n事業割合" to 64.dp)
             PcTable(columns = columns, headerColor = MemoHeaderColor, rows = shown, scrollKey = selected, rowKey = { it.memoKey }) { m ->
@@ -303,7 +315,7 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
             }
         } else {
             val columns = buildList {
-                add("摘要名" to 170.dp); add("検索文字" to 96.dp); add("科目" to 130.dp)
+                add("摘要名" to MEMO_NAME_W); add("検索文字" to 96.dp); add("科目" to 130.dp)
                 add("税率" to 60.dp); add("事業\n割合(%)" to 64.dp)
                 sharedHeader?.let { add(it to 56.dp) }
             }
@@ -326,7 +338,7 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
 private fun MemoNameCell(memo: AoiroChoboMemoTemplate, isRatioSensitive: Boolean) {
     Row(
         modifier = Modifier
-            .width(170.dp)
+            .width(MEMO_NAME_W)
             .fillMaxHeight()
             .background(CellColor)
             .border(0.5.dp, GridColor)
@@ -345,6 +357,7 @@ private fun MemoNameCell(memo: AoiroChoboMemoTemplate, isRatioSensitive: Boolean
             Text(
                 text = "要確定",
                 modifier = Modifier
+                    .padding(start = 4.dp)
                     .background(Color(0xFFFFE0B2), RoundedCornerShape(3.dp))
                     .padding(horizontal = 3.dp),
                 fontSize = 10.sp,
@@ -421,7 +434,7 @@ private fun <T> PcTable(
                 }
             }
             items(rows, key = rowKey) { row ->
-                Row(modifier = Modifier.height(IntrinsicSize.Min).heightIn(min = 36.dp)) {
+                Row(modifier = Modifier.height(IntrinsicSize.Max).heightIn(min = 36.dp)) {
                     rowContent(row)
                 }
             }
