@@ -162,7 +162,8 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 | `yayoi_accounts` | 弥生会計 勘定科目マスタ |
 | `rakuraku_accounts` | らくらく青色申告 勘定科目マスタ |
 | `rakuraku_tekiyou` | 摘要辞書（購買・預金共用） |
-| `deposit_meisai` | 通帳明細データ |
+| `deposit_meisai` | 通帳明細データ（`passbookId` でどの通帳か・DB v39〜） |
+| `passbooks` | 通帳（預金口座・最大 5 冊）。弥生の補助科目と AoiroChobo の預金スロット科目を別々に持つ（DB v39〜） |
 | `tekiyou_matching_rules` | 預金摘要マッチングルール |
 | `ocr_fallback_logs` | OCR フォールバックログ |
 | `general_receipts` / `general_receipt_items` | 一般レシート（Gemini） |

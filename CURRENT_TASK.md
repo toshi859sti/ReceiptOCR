@@ -113,6 +113,8 @@ JA購買の商品には あおいろ帳簿の科目・摘要（`product_master.a
 - transactions.json ビルダー（JA購買）・契約テスト 12 件・出力確認画面の JSON 出力
 - 複数通帳（最大 5 冊・DB v39）と PC への契約変更依頼（`REPLY-phone-2026-09-25c.md`）
 - 実機確認：v38 → v39・通帳の管理と取込・購買 JSON の書き出し（すべて通過）
+- 既存バグ 2 件の修正：「通帳再読込」ボタン（確認なしで全明細削除）を撤去／横向きでメニュー画面の下側に届かない件
+- `CLAUDE.md` の DB バージョンを v39 に。`docs/functional-design.md`・`docs/architecture.md` に通帳（passbooks）を反映
 
 ### 未完了・中断した理由
 - PC への返信 25c の回答待ち（回答を受けてから Deposit の transactions.json に進む）

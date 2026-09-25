@@ -144,8 +144,17 @@ erDiagram
         int isShared
         int isEnabled
     }
+    passbooks {
+        int id PK
+        string name
+        int displayOrder
+        string yayoiSubAccountName
+        string aoiroAccountKey
+        string aoiroAccountKeyName
+    }
     deposit_meisai {
         int id PK
+        int passbookId
         string transactionDate
         int transactionNumber
         string tekiyou
@@ -170,7 +179,12 @@ erDiagram
     rakuraku_tekiyou ||--o{ tekiyou_matching_rules : "rakurakuTekiyouId"
     tekiyou_matching_rules ||--o{ deposit_meisai : "matchingRuleId"
     rakuraku_tekiyou ||--o{ deposit_meisai : "overrideTekiyouId"
+    passbooks ||--o{ deposit_meisai : "passbookId（外部キーは張らない）"
 ```
+
+通帳（預金口座）は最大 5 冊（DB v39〜）。明細の重複判定は UNIQUE(passbookId, transactionDate, transactionNumber)。
+CSV に口座番号が無いので、取り込むときに取込先の通帳を選ぶ。摘要マッチングのルールは通帳をまたいで共通。
+弥生 CSV は預金側の「普通預金」の補助科目に通帳の `yayoiSubAccountName` を入れる。
 
 （`ocr_explicit_joins`・`correction_logs`・`ocr_score_logs`はPhase6（v27→v28、`MIGRATION_27_28`）で
 DROP済みのためこの図から削除。上記以外にも`general_item_master`・`receipt_payment_method_rules`等の
