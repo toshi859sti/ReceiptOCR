@@ -25,6 +25,7 @@ import com.example.greenframeocr.data.*
 import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.util.GeminiApiException
+import com.example.greenframeocr.util.RomajiSearch
 import com.example.greenframeocr.util.GeminiApiKeyMissingException
 import com.example.greenframeocr.util.GeminiQuotaExhaustedException
 import com.example.greenframeocr.util.GeminiRateLimitException
@@ -919,7 +920,7 @@ private fun MatchingRuleEditDialog(
             (searchText.isEmpty() ||
              acc.accountName.contains(searchText, ignoreCase = true) ||
              (acc.accountCode?.contains(searchText, ignoreCase = true) == true) ||
-             acc.searchKeyAlpha.contains(searchText, ignoreCase = true))
+             RomajiSearch.matches(acc.searchKeyAlpha, searchText))
         }
     }
 
@@ -1471,7 +1472,7 @@ private fun IndividualYayoiOverrideDialog(
             (searchText.isEmpty() ||
              acc.accountName.contains(searchText, ignoreCase = true) ||
              (acc.accountCode?.contains(searchText, ignoreCase = true) == true) ||
-             acc.searchKeyAlpha.contains(searchText, ignoreCase = true))
+             RomajiSearch.matches(acc.searchKeyAlpha, searchText))
         }
     }
 

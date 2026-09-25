@@ -33,6 +33,7 @@ import com.example.greenframeocr.data.GeneralItemGroup
 import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.YayoiAccount
 import com.example.greenframeocr.util.GeminiReceiptClient
+import com.example.greenframeocr.util.RomajiSearch
 import com.example.greenframeocr.util.NumericPrefixCandidate
 import com.example.greenframeocr.util.SimilarGroupPair
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
@@ -1000,7 +1001,7 @@ private fun GroupDefaultEditDialog(
             (searchText.isEmpty() ||
              acc.accountName.contains(searchText, ignoreCase = true) ||
              (acc.accountCode?.contains(searchText) == true) ||
-             acc.searchKeyAlpha.contains(searchText, ignoreCase = true))
+             RomajiSearch.matches(acc.searchKeyAlpha, searchText))
         }
     }
 
@@ -1146,7 +1147,7 @@ private fun IndividualItemOverrideDialog(
             (searchText.isEmpty() ||
              acc.accountName.contains(searchText, ignoreCase = true) ||
              (acc.accountCode?.contains(searchText) == true) ||
-             acc.searchKeyAlpha.contains(searchText, ignoreCase = true))
+             RomajiSearch.matches(acc.searchKeyAlpha, searchText))
         }
     }
 

@@ -41,6 +41,16 @@ class RomajiSearchTest {
     }
 
     @Test
+    fun `弥生の検索文字（大文字ヘボン式・8文字で切れている）にもかなで当たる`() {
+        // 実機の yayoi_accounts.searchKeyAlpha の値
+        assertTrue(RomajiSearch.matches("FUTSUUYO", "ふつう"))   // 普通預金
+        assertTrue(RomajiSearch.matches("MISHUUKI", "みしゅう")) // 未収金
+        assertTrue(RomajiSearch.matches("KOUCHIKU", "こうちく")) // 構築物
+        assertTrue(RomajiSearch.matches("ZATSUSHI", "ざつし"))   // 雑資産
+        assertTrue(RomajiSearch.matches("GENKIN", "genkin"))
+    }
+
+    @Test
     fun `関係ない入力は当たらない・空なら全部当たる`() {
         assertFalse(RomajiSearch.matches("douryoku", "ひりょう"))
         assertTrue(RomajiSearch.matches("douryoku", "  "))

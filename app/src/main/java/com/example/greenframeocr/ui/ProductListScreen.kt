@@ -1851,7 +1851,7 @@ private fun YayoiAccountPickerDialog(
             (searchQuery.isEmpty() ||
              acc.accountName.contains(searchQuery, ignoreCase = true) ||
              (acc.accountCode?.contains(searchQuery, ignoreCase = true) == true) ||
-             acc.searchKeyAlpha.contains(searchQuery, ignoreCase = true))
+             RomajiSearch.matches(acc.searchKeyAlpha, searchQuery))
         }
     }
 
