@@ -171,7 +171,7 @@ private fun AccountTable(accounts: List<AoiroChoboAccount>) {
             listOf("グループ" to 76.dp, "科目名" to 150.dp, "内訳科目名" to 110.dp, "検索文字" to 104.dp)
         }
 
-        PcTable(columns = columns, headerColor = AccountHeaderColor, rows = rows, rowKey = { it.account.accountKey }) { row ->
+        PcTable(columns = columns, headerColor = AccountHeaderColor, rows = rows, scrollKey = selected, rowKey = { it.account.accountKey }) { row ->
             val a = row.account
             val group = if (row.isChild) null else a.displayGroup?.takeIf { it.isNotBlank() }
             // グループ欄は続く間ずっと同じ色で塗り、名前は先頭の行にだけ出す
@@ -291,7 +291,7 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
             val columns = listOf("摘要名" to 170.dp, "検索文字" to 96.dp,
                 "借方科目" to 130.dp, "借方\n税率" to 60.dp, "借方\n事業割合" to 64.dp,
                 "貸方科目" to 130.dp, "貸方\n税率" to 60.dp, "貸方\n事業割合" to 64.dp)
-            PcTable(columns = columns, headerColor = MemoHeaderColor, rows = shown, rowKey = { it.memoKey }) { m ->
+            PcTable(columns = columns, headerColor = MemoHeaderColor, rows = shown, scrollKey = selected, rowKey = { it.memoKey }) { m ->
                 MemoNameCell(m, m.memoKey in ratioSensitive)
                 Cell(m.searchKey, 96.dp)
                 Cell(nameOf(m.debitAccountKey), 130.dp)
@@ -307,7 +307,7 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
                 add("税率" to 60.dp); add("事業\n割合(%)" to 64.dp)
                 sharedHeader?.let { add(it to 56.dp) }
             }
-            PcTable(columns = columns, headerColor = MemoHeaderColor, rows = shown, rowKey = { it.memoKey }) { m ->
+            PcTable(columns = columns, headerColor = MemoHeaderColor, rows = shown, scrollKey = selected, rowKey = { it.memoKey }) { m ->
                 MemoNameCell(m, m.memoKey in ratioSensitive)
                 Cell(m.searchKey, 96.dp)
                 Cell(nameOf(m.counterAccountKey), 130.dp)
@@ -379,6 +379,9 @@ private fun PcTabBar(labels: List<String>, selectedIndex: Int, onSelect: (Int) -
 /**
  * 横にはみ出す表。列見出しは縦スクロールしても上に残す。
  * 画面幅に収まらないので、表全体を横スクロールさせる（列幅は固定）。
+ *
+ * [scrollKey] が変わったらスクロール位置を先頭に戻す。タブを切り替えても同じ位置の部品として
+ * 再利用されるので、渡さないと前のタブのスクロール位置のまま途中から表示される。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -386,9 +389,10 @@ private fun <T> PcTable(
     columns: List<Pair<String, Dp>>,
     headerColor: Color,
     rows: List<T>,
+    scrollKey: Any,
     rowKey: (T) -> String,
     rowContent: @Composable RowScope.(T) -> Unit
-) {
+) = key(scrollKey) {
     val tableWidth = columns.fold(0.dp) { acc, (_, w) -> acc + w }
     Box(
         modifier = Modifier
