@@ -81,15 +81,16 @@ class AoiroChoboPurchaseRulesTest {
     }
 
     @Test
-    fun `本番データ：借方24科目のうち6科目は摘要が1件で先に埋まる`() {
+    fun `本番データ：借方25科目のうち6科目は摘要が1件で先に埋まる`() {
         // Gradle のユニットテストは app/ を作業ディレクトリにして走る
-        val file = File("../docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260925_120800.json")
+        val file = File("../docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260925_134932.json")
         val parsed = Gson().fromJson(file.readText(Charsets.UTF_8), AoiroChoboVocabularyFile::class.java)
         val accounts = parsed.accounts.orEmpty().mapNotNull { it.toEntityOrNull() }
         val memos = parsed.memoTemplates.orEmpty().mapNotNull { it.toEntityOrNull() }
 
         val candidates = AoiroChoboPurchaseRules.accountCandidates(accounts)
-        assertEquals(24, candidates.size)
+        // minor（6）で事業主貸が加わって 25 件
+        assertEquals(25, candidates.size)
         val preselected = candidates.mapNotNull { a ->
             AoiroChoboPurchaseRules.preselectedMemo(a.accountKey, memos)?.let { a.accountKey to it.name }
         }.toMap()

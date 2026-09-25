@@ -84,7 +84,7 @@ class AoiroChoboAccountRulesTest {
 
     private fun loadProductionAccounts(): List<AoiroChoboAccount> {
         // Gradle のユニットテストは app/ を作業ディレクトリにして走る
-        val file = File("../docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260925_120800.json")
+        val file = File("../docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260925_134932.json")
         val parsed = Gson().fromJson(file.readText(Charsets.UTF_8), AoiroChoboVocabularyFile::class.java)
         return parsed.accounts.orEmpty().mapNotNull { it.toEntityOrNull() }
     }
