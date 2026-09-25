@@ -36,6 +36,7 @@ import com.example.greenframeocr.util.GeminiApiKeyMissingException
 import com.example.greenframeocr.util.GeminiQuotaExhaustedException
 import com.example.greenframeocr.util.GeminiRateLimitException
 import com.example.greenframeocr.util.GeminiReceiptClient
+import com.example.greenframeocr.util.RomajiSearch
 import com.example.greenframeocr.util.normalizeSpaces
 import com.example.greenframeocr.util.withComputedKey
 import kotlinx.coroutines.launch
@@ -1558,6 +1559,13 @@ private fun AoiroAccountPickerDialog(
     val hidden = allAccounts.size - accounts.size
     var showAll by remember { mutableStateOf(selectedKey != null && accounts.none { it.accountKey == selectedKey }) }
     val shown = if (showAll) allAccounts else accounts
+    // 弥生の科目選択と同じく、科目名か検索文字（PC の searchKey・ローマ字）で絞る。
+    // 日本語キーボードで打ったかな（どう → douryoku）でも検索文字に当たる
+    var searchQuery by remember { mutableStateOf("") }
+    val query = searchQuery.trim()
+    val filtered = shown.filter {
+        query.isEmpty() || it.name.contains(query, ignoreCase = true) || RomajiSearch.matches(it.searchKey, query)
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -1574,14 +1582,30 @@ private fun AoiroAccountPickerDialog(
             }
         },
         text = {
-            // 切り替えたら先頭に戻す。そのままだと表示中の行が基準になり、上に増えた科目が画面外に隠れる
-            key(showAll) { LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
-                items(shown, key = { it.accountKey }) { account ->
+            Column(modifier = Modifier.heightIn(max = 440.dp)) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("検索（科目名・検索文字）") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, null) }
+            )
+            Text(
+                text = "${filtered.size}件",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp)
+            )
+            // 切り替え・検索のたびに先頭に戻す。そのままだと表示中の行が基準になり、上に増えた科目が画面外に隠れる
+            key(showAll, searchQuery) { LazyColumn {
+                items(filtered, key = { it.accountKey }) { account ->
                     val memoCount = AoiroChoboPurchaseRules.memoCandidates(account.accountKey, memos).size
                     PickerRow(
                         selected = account.accountKey == selectedKey,
                         title = account.name,
                         subtitle = listOfNotNull(
+                            account.searchKey.ifBlank { null },
                             account.displayGroup,
                             if (memoCount == 0) "摘要なし" else "摘要 $memoCount 件"
                         ).joinToString("・"),
@@ -1589,6 +1613,7 @@ private fun AoiroAccountPickerDialog(
                     )
                 }
             } }
+            }
         },
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
