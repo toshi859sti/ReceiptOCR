@@ -62,6 +62,8 @@ object AoiroChoboAccountRules {
      *
      * 順は displayOrder（2026-09-24 から PC の科目マスタの枠番号・契約 vocabulary-snapshot.md §4.4 の後）。
      * 内訳科目は親の直後に置き、グループは親のものを引き継ぐ。親がこのタブにいない内訳は普通の行として出す。
+     * グループは displayGroup（PC 画面のグループ欄の名前）。groupName は決算書内訳の区分で画面とは違う
+     * （育成費用は groupName「繰入額」・画面「経費」など。REPLY-pc-2026-09-25.md §3）。
      */
     fun rowsFor(tab: AccountTab, accounts: List<AoiroChoboAccount>): List<AccountRow> {
         val inTab = accounts.filter { tabOf(it) == tab }
@@ -72,7 +74,7 @@ object AoiroChoboAccountRules {
         val rows = mutableListOf<AccountRow>()
         var previousGroup: String? = null
         inTab.filterNot(::isChild).sortedBy { it.displayOrder }.forEachIndexed { i, parent ->
-            val group = parent.groupName?.takeIf { it.isNotBlank() }
+            val group = parent.displayGroup?.takeIf { it.isNotBlank() }
             val kids = children[parent.accountKey].orEmpty().sortedBy { it.displayOrder }
             rows += AccountRow(parent, isChild = false, hasChildren = kids.isNotEmpty(),
                 startsGroup = i == 0 || group != previousGroup)

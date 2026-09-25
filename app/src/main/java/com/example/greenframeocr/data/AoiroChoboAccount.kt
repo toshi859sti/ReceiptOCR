@@ -26,7 +26,14 @@ data class AoiroChoboAccount(
     /** Asset / Liability / Income / Expense / Capital */
     val accountType: String = "",
 
+    /** 決算書内訳の区分（PC の DB の GroupName）。スマホでは使わない */
     val groupName: String? = null,
+
+    /**
+     * PC の科目画面のグループ欄に出る名前（契約 minor（5）・2026-09-25）。**表示専用**。
+     * 値の一覧は固定ではないので、特定の値で分岐しないこと
+     */
+    val displayGroup: String? = null,
     val parentAccountKey: String? = null,
 
     /** 元帳の所属: Cash / Bank / AR / AP / Unpaid / Transfer / Any。未知の値も弾かずそのまま保持する */

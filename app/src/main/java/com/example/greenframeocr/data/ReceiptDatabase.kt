@@ -30,7 +30,7 @@ import com.example.greenframeocr.util.toCanonicalKey
         AoiroChoboMemoTemplate::class,
         AoiroChoboVocabMeta::class
     ],
-    version = 36,
+    version = 37,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -1027,6 +1027,18 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v36 → v37: AoiroChobo 科目に displayGroup（PC の科目画面のグループ欄の名前）を足す。
+         *
+         * 契約 minor（5）（docs/integration/CHANGELOG.md 2026-09-25）。表示専用で、既存の行は null のまま。
+         * vocabulary.json を取り込み直せば埋まる。
+         */
+        private val MIGRATION_36_37 = object : Migration(36, 37) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE aoirochobo_accounts ADD COLUMN displayGroup TEXT")
+            }
+        }
+
         private val MIGRATION_34_35 = object : Migration(34, 35) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE receipt_items ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
@@ -1451,7 +1463,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37)
                     .build()
                 INSTANCE = instance
                 instance

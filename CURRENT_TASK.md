@@ -706,3 +706,17 @@ moto g66j 5G 実機で v36 ビルドを上書きインストールし、実デ�
 - PC 画面と照合した結果、欠けているのは経費だけでなく4種類：**経費**（19件）・**(任意) 経費**（通信費・作業委託料・水利費）・
   **資本**（元入金・青申特別控除前）・**繰入額**の専従者給与（これが無いとスマホで繰入額が3つに割れて見える）
 - `groupName` の意味を広げるか、別キー（`displayGroup` 等）にするかは PC に選んでもらう → **PC の回答待ち**
+
+### 2026-09-25 追記：PC の回答（displayGroup）を受けて DB v37
+
+- PC は `groupName` を変えず、**別キー `accounts[].displayGroup`** で画面のグループ名を出した（契約 minor（5）・
+  `REPLY-pc-2026-09-25.md`）。依頼の表と違う点：育成費用は「経費」、営農口座・直売口座は null
+- スマホ：`aoirochobo_accounts.displayGroup` を追加（**DB v36 → v37**・`MIGRATION_36_37`）。閲覧画面のグループ欄を
+  `displayGroup` に切り替え。本番の新ファイル `docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260925_120800.json`
+  （`contentHash` sha256:05ba6bac…34bb）で支出タブが 経費／(任意) 経費／経費／繰入額／なし になることをテストで確認
+- **既存 DB は displayGroup が null のまま**。新しいファイルを取り込み直せば埋まる
+- CLAUDE.md の「Room DB バージョン（現在 v36）」は v37 に直す必要あり（CLAUDE.md の更新はユーザー確認が要る）
+
+### 次回セッションで最初にやること（更新）
+
+実機で v36 → v37 の起動確認 → 新しい vocabulary.json（20260925_120800）を取り込み直す → 閲覧画面の見た目を確認する。

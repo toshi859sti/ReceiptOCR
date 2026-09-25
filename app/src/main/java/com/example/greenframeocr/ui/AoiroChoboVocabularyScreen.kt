@@ -173,7 +173,7 @@ private fun AccountTable(accounts: List<AoiroChoboAccount>) {
 
         PcTable(columns = columns, headerColor = AccountHeaderColor, rows = rows, rowKey = { it.account.accountKey }) { row ->
             val a = row.account
-            val group = if (row.isChild) null else a.groupName?.takeIf { it.isNotBlank() }
+            val group = if (row.isChild) null else a.displayGroup?.takeIf { it.isNotBlank() }
             // グループ欄は続く間ずっと同じ色で塗り、名前は先頭の行にだけ出す
             val groupColor = if (rowGroupName(row, rows) != null) GroupNamedColor else GroupNoneColor
             Cell(if (row.startsGroup) group.orEmpty() else "", 76.dp, groupColor, align = TextAlign.End,
@@ -211,7 +211,7 @@ private fun rowGroupName(
     } else {
         row.account
     }
-    return owner.groupName?.takeIf { it.isNotBlank() }
+    return owner.displayGroup?.takeIf { it.isNotBlank() }
 }
 
 // ---- 摘要辞書 ----

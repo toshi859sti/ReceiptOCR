@@ -27,7 +27,7 @@ class AoiroChoboAccountRulesTest {
         accountKey = key,
         name = key,
         accountType = type,
-        groupName = group,
+        displayGroup = group,
         parentAccountKey = parent,
         displayOrder = order
     )
@@ -84,7 +84,7 @@ class AoiroChoboAccountRulesTest {
 
     private fun loadProductionAccounts(): List<AoiroChoboAccount> {
         // Gradle のユニットテストは app/ を作業ディレクトリにして走る
-        val file = File("../docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260923_194016.json")
+        val file = File("../docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260925_120800.json")
         val parsed = Gson().fromJson(file.readText(Charsets.UTF_8), AoiroChoboVocabularyFile::class.java)
         return parsed.accounts.orEmpty().mapNotNull { it.toEntityOrNull() }
     }
@@ -99,5 +99,14 @@ class AoiroChoboAccountRulesTest {
         assertTrue(AoiroChoboAccountRules.rowsFor(AccountTab.OTHER, accounts).isEmpty())
         // 支出は経費22件・繰入額2件＋資本から専従者給与・家計費
         assertEquals(26, AoiroChoboAccountRules.rowsFor(AccountTab.EXPENSE, accounts).size)
+    }
+
+    @Test
+    fun `本番データの支出タブは PC と同じグループの塊になる`() {
+        // REPLY-pc-2026-09-25.md §2・§3：経費は (任意) 経費を挟んで 2 つ、繰入額は 1 つにまとまる
+        val rows = AoiroChoboAccountRules.rowsFor(AccountTab.EXPENSE, loadProductionAccounts())
+        val blocks = rows.filter { it.startsGroup }.map { it.account.displayGroup }
+        assertEquals(listOf("経費", "(任意) 経費", "経費", "繰入額", null), blocks)
+        assertEquals("kakei", rows.last().account.accountKey)
     }
 }
