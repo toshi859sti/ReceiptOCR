@@ -36,14 +36,7 @@ fun MenuScreen(
             )
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
+        MenuColumn(paddingValues) {
             // タイトル表示
             Text(
                 text = "JA仕訳変換",

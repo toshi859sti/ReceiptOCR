@@ -38,14 +38,7 @@ fun GeneralPurchaseMenuScreen(
             )
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
+        MenuColumn(paddingValues) {
             Text(
                 text = "レシート・領収書",
                 fontSize = 28.sp,
