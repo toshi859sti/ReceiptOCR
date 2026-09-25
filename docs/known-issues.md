@@ -130,6 +130,13 @@
   **預金の摘要には使えない（常に0件）**。AoiroChobo は預金出納帳の摘要も `ledgerType = "Cash"` で持ち、
   `showInBank` で出し分けている（`"Bank"` の摘要は実在しない）。帳簿ごとの摘要候補は
   `util/AoiroChoboMemoRules.MemoTab` を使うこと。2026-09-24 時点で呼び出し元なし
+- **Gson で読み書きするクラスはフィールド名がそのまま JSON のキー**（`AoiroChoboTransactionsBuilder` の出力・
+  `AoiroChoboVocabularyFile`・バックアップ）。今は release でも `isMinifyEnabled = false` なので無事だが、
+  難読化を有効にするとキーが黙って `a` `b` に変わる。有効にするなら keep ルールか `@SerializedName` が要る。
+  また Android の実行時はフィールドを名前順で返すため、**端末で書いた JSON はキーがアルファベット順**になる
+  （JVM のユニットテストでは宣言順）。JSON としては同じなので契約上は問題ない（2026-09-25 実機で確認）
+- 横向きだと「JA購買伝票」「JA預金」などのメニュー画面と、トップ画面の下側のボタン（設定など）が画面外に出て、
+  スクロールもできない（2026-09-25 実機確認中に発見・未対応）
 - **`java.time` は使えない**（minSdk 24・coreLibraryDesugaring なし。API 26 未満の端末で実行時に落ちる）。
   日付は `java.util.Calendar` / `SimpleDateFormat` で扱う。`util/ValidationUtils.kt` が `LocalDate` を
   使っているが、2026-09-25 時点で呼び出し元が無いので実害はない（2026-09-25 発見）
