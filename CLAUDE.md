@@ -17,7 +17,7 @@
 - **アプリ名**: JA仕訳変換
 - **パッケージ**: `com.example.greenframeocr`
 - **minSdk**: 24 / **targetSdk**: 34 / **Kotlin JVM**: 17
-- **ビルド状態**: BUILD SUCCESSFUL（2026-09-23）
+- **ビルド状態**: BUILD SUCCESSFUL（2026-09-25）
 
 ---
 
@@ -146,7 +146,7 @@ fun process(inputBitmap: Bitmap, debugMode: Boolean = false, sharpness: Double =
 そのまま Gemini に渡す画像なので、下げれば読み取り精度に直接効く。変えるなら実機で
 精度を測り直すこと。
 
-### Room DB バージョン（現在 v36）
+### Room DB バージョン（現在 v37）
 バージョンアップ時は `ReceiptDatabase.kt` にマイグレーションを追加すること。
 `ReceiptDatabase.kt` の `version` / `entities` が一次情報源。docs 側の記載は古くなることがある。
 `fallbackToDestructiveMigration()` は削除済み（2026-07-12）。

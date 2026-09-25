@@ -715,7 +715,7 @@ moto g66j 5G 実機で v36 ビルドを上書きインストールし、実デ�
   `displayGroup` に切り替え。本番の新ファイル `docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260925_120800.json`
   （`contentHash` sha256:05ba6bac…34bb）で支出タブが 経費／(任意) 経費／経費／繰入額／なし になることをテストで確認
 - **既存 DB は displayGroup が null のまま**。新しいファイルを取り込み直せば埋まる
-- CLAUDE.md の「Room DB バージョン（現在 v36）」は v37 に直す必要あり（CLAUDE.md の更新はユーザー確認が要る）
+- CLAUDE.md の DB バージョン表記を v37 に更新済み（ユーザー確認済み）
 
 ### 次回セッションで最初にやること（更新）
 
