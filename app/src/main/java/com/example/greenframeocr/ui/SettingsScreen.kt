@@ -1151,7 +1151,9 @@ data class PurchaseExportData(
 data class DepositExportData(
     val exportDate: String,
     val dataType: String = "deposit",
-    val depositMeisai: List<com.example.greenframeocr.data.DepositMeisai>
+    val depositMeisai: List<com.example.greenframeocr.data.DepositMeisai>,
+    // DB v39 で追加。古いバックアップには無い（null）
+    val passbooks: List<com.example.greenframeocr.data.Passbook>? = null
 )
 
 /**
@@ -1321,7 +1323,9 @@ data class AllExportData(
     val generalReceiptItems: List<com.example.greenframeocr.data.GeneralReceiptItem>? = null,
     val invoiceStores: List<com.example.greenframeocr.data.InvoiceStore>? = null,
     val generalItemMasters: List<com.example.greenframeocr.data.GeneralItemMaster>? = null,
-    val receiptPaymentMethodRules: List<com.example.greenframeocr.data.ReceiptPaymentMethodRule>? = null
+    val receiptPaymentMethodRules: List<com.example.greenframeocr.data.ReceiptPaymentMethodRule>? = null,
+    // DB v39 で追加：通帳（複数口座）
+    val passbooks: List<com.example.greenframeocr.data.Passbook>? = null
 )
 
 /**
@@ -1349,7 +1353,8 @@ private suspend fun exportAllData(
             generalReceiptItems = db.generalReceiptDao().getAllItemsOnce(),
             invoiceStores = db.invoiceStoreDao().getAllOnce(),
             generalItemMasters = db.generalItemMasterDao().getAll(),
-            receiptPaymentMethodRules = db.receiptPaymentMethodRuleDao().getAll()
+            receiptPaymentMethodRules = db.receiptPaymentMethodRuleDao().getAll(),
+            passbooks = db.passbookDao().getAll()
         )
 
         val gson = GsonBuilder().setPrettyPrinting().create()
@@ -1383,6 +1388,30 @@ private fun com.example.greenframeocr.data.GeneralReceipt.withRestoredUuid():
 }
 
 /**
+ * 通帳と預金明細を復元する。
+ *
+ * v39 より前のバックアップには通帳が無く、明細の passbookId も無い（Gson は Int を 0 のまま残す）。
+ * その明細は 1 冊目に入れる。明細が指す通帳がバックアップにも端末にも無ければ「通帳N」を作る
+ * （通帳の無い明細は画面から選べなくなるため）。
+ */
+private suspend fun restoreDeposits(
+    db: ReceiptDatabase,
+    passbooks: List<com.example.greenframeocr.data.Passbook>?,
+    meisai: List<com.example.greenframeocr.data.DepositMeisai>
+) {
+    val passbookDao = db.passbookDao()
+    passbooks?.takeIf { it.isNotEmpty() }?.let { passbookDao.upsertAll(it) }
+    val restored = meisai.map {
+        if (it.passbookId <= 0) it.copy(passbookId = com.example.greenframeocr.data.Passbook.DEFAULT_ID) else it
+    }
+    val existingIds = passbookDao.ensureDefault().map { it.id }.toSet()
+    restored.map { it.passbookId }.distinct().filter { it !in existingIds }.forEach { id ->
+        passbookDao.insert(com.example.greenframeocr.data.Passbook(id = id, name = "通帳$id", displayOrder = id))
+    }
+    db.depositMeisaiDao().insertAll(restored)
+}
+
+/**
  * 全データをインポート
  */
 private suspend fun importAllData(
@@ -1404,7 +1433,7 @@ private suspend fun importAllData(
         importData.monthlyData.forEach { db.receiptDao().insertMonthlyData(it) }
 
         // 通帳データ
-        db.depositMeisaiDao().insertAll(importData.depositMeisai)
+        restoreDeposits(db, importData.passbooks, importData.depositMeisai)
 
         // マスタデータ
         importData.productMasters.forEach { db.productMasterDao().insertIgnore(it.withComputedKey()) }
@@ -1500,7 +1529,8 @@ private suspend fun exportDepositData(
 
         val exportData = DepositExportData(
             exportDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
-            depositMeisai = depositMeisai
+            depositMeisai = depositMeisai,
+            passbooks = db.passbookDao().getAll()
         )
 
         val gson = GsonBuilder().setPrettyPrinting().create()
@@ -1532,7 +1562,7 @@ private suspend fun importDepositData(
         val gson = Gson()
         val importData = gson.fromJson(json, DepositExportData::class.java)
 
-        db.depositMeisaiDao().insertAll(importData.depositMeisai)
+        restoreDeposits(db, importData.passbooks, importData.depositMeisai)
 
         "成功: ${importData.depositMeisai.size}件"
     } catch (e: Exception) {
@@ -1857,6 +1887,7 @@ private suspend fun clearData(
                 db.receiptDao().deleteAllSheetData()
                 // 通帳データ
                 db.depositMeisaiDao().deleteAll()
+                db.passbookDao().deleteAll()
                 // マスタデータ
                 db.ocrVariantDao().deleteAll()
                 db.productMasterDao().deleteAll()

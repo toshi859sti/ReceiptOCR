@@ -26,6 +26,7 @@ interface AoiroChoboLinkDao {
         UNION SELECT DISTINCT accountKey, accountKeyName FROM general_item_master WHERE accountKey IS NOT NULL
         UNION SELECT DISTINCT accountKey, accountKeyName FROM receipt_payment_method_rules WHERE accountKey IS NOT NULL
         UNION SELECT DISTINCT overrideAccountKey, overrideAccountKeyName FROM deposit_meisai WHERE overrideAccountKey IS NOT NULL
+        UNION SELECT DISTINCT aoiroAccountKey, aoiroAccountKeyName FROM passbooks WHERE aoiroAccountKey IS NOT NULL
         """
     )
     suspend fun getLinkedAccountKeys(): List<LinkKeyName>
@@ -73,7 +74,12 @@ interface AoiroChoboLinkDao {
     )
     suspend fun clearAccountKeyInDepositOverrides(accountKey: String)
 
+    /** 通帳のあおいろ口座。学習ではないが、口座科目の作り替えで外す扱いは同じ */
+    @Query("UPDATE passbooks SET aoiroAccountKey = NULL, aoiroAccountKeyName = NULL WHERE aoiroAccountKey = :accountKey")
+    suspend fun clearAccountKeyInPassbooks(accountKey: String)
+
     suspend fun clearAccountKeyEverywhere(accountKey: String) {
+        clearAccountKeyInPassbooks(accountKey)
         clearAccountKeyInProducts(accountKey)
         clearAccountKeyInMatchingRules(accountKey)
         clearAccountKeyInItems(accountKey)
@@ -97,7 +103,11 @@ interface AoiroChoboLinkDao {
     @Query("UPDATE deposit_meisai SET overrideAccountKeyName = :name WHERE overrideAccountKey = :accountKey AND overrideAccountKeyName IS NULL")
     suspend fun fillAccountKeyNameInDepositOverrides(accountKey: String, name: String)
 
+    @Query("UPDATE passbooks SET aoiroAccountKeyName = :name WHERE aoiroAccountKey = :accountKey AND aoiroAccountKeyName IS NULL")
+    suspend fun fillAccountKeyNameInPassbooks(accountKey: String, name: String)
+
     suspend fun fillAccountKeyNameEverywhere(accountKey: String, name: String) {
+        fillAccountKeyNameInPassbooks(accountKey, name)
         fillAccountKeyNameInProducts(accountKey, name)
         fillAccountKeyNameInMatchingRules(accountKey, name)
         fillAccountKeyNameInItems(accountKey, name)

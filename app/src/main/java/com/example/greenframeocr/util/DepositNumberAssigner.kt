@@ -8,7 +8,7 @@ import com.example.greenframeocr.data.DepositMeisaiDao
  *
  * ## なぜ要るか
  *
- * `deposit_meisai` には `UNIQUE(transactionDate, transactionNumber)` があり、CSV取込は
+ * `deposit_meisai` には `UNIQUE(passbookId, transactionDate, transactionNumber)` があり、CSV取込は
  * `insertAllIgnoreDuplicates`（IGNORE）で入れる。そのため**同じ日に通番が空欄の行が複数あると、
  * 2件目以降が無言で落ちていた**（ユーザーは取込件数が合わないことに気づけない）。
  * 空欄を埋めてしまえば、この取りこぼしも AoiroChobo の `externalId`
@@ -48,13 +48,15 @@ object DepositNumberAssigner {
      * 空欄が1件も無ければ DB を引かずにそのまま返す。
      */
     suspend fun assign(dao: DepositMeisaiDao, parsed: List<DepositMeisai>): List<DepositMeisai> {
-        val blankDates = parsed.filter { it.transactionNumber.isBlank() }
-            .map { it.transactionDate }
-            .distinct()
-        if (blankDates.isEmpty()) return parsed
+        val blankDatesByPassbook = parsed.filter { it.transactionNumber.isBlank() }
+            .groupBy({ it.passbookId }, { it.transactionDate })
+            .mapValues { (_, dates) -> dates.distinct() }
+        if (blankDatesByPassbook.isEmpty()) return parsed
 
         // SQLite のバインド変数上限（端末により999）に当たらないよう日付を分割して引く
-        val existing = blankDates.chunked(500).flatMap { dao.getByDates(it) }
+        val existing = blankDatesByPassbook.flatMap { (passbookId, dates) ->
+            dates.chunked(500).flatMap { dao.getByDates(passbookId, it) }
+        }
         return assign(parsed, existing)
     }
 
@@ -64,11 +66,11 @@ object DepositNumberAssigner {
      * @param existing 取込対象の日付にすでに入っている行
      */
     fun assign(parsed: List<DepositMeisai>, existing: List<DepositMeisai>): List<DepositMeisai> {
-        // 日付ごとに「すでに使われている合成番号」
-        val usedByDate = mutableMapOf<String, MutableSet<Int>>()
+        // 通帳・日付ごとに「すでに使われている合成番号」。通番は通帳ごとなので、別の通帳の番号とは衝突しない
+        val usedByDate = mutableMapOf<Pair<Int, String>, MutableSet<Int>>()
         existing.forEach { row ->
             indexOf(row.transactionNumber)?.let {
-                usedByDate.getOrPut(row.transactionDate) { mutableSetOf() }.add(it)
+                usedByDate.getOrPut(row.passbookId to row.transactionDate) { mutableSetOf() }.add(it)
             }
         }
         // 再利用候補（1行につき1回だけ使う）
@@ -78,7 +80,8 @@ object DepositNumberAssigner {
             if (row.transactionNumber.isNotBlank()) return@map row
 
             val sameContent = reusable.firstOrNull {
-                it.transactionDate == row.transactionDate &&
+                it.passbookId == row.passbookId &&
+                    it.transactionDate == row.transactionDate &&
                     it.tekiyou == row.tekiyou &&
                     it.amount == row.amount &&
                     it.memo == row.memo
@@ -88,7 +91,7 @@ object DepositNumberAssigner {
                 reusable.remove(sameContent)
                 row.copy(transactionNumber = sameContent.transactionNumber)
             } else {
-                val used = usedByDate.getOrPut(row.transactionDate) { mutableSetOf() }
+                val used = usedByDate.getOrPut(row.passbookId to row.transactionDate) { mutableSetOf() }
                 var next = 1
                 while (next in used) next++
                 used.add(next)

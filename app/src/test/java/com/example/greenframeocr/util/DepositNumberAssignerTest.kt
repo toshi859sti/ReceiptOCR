@@ -12,8 +12,9 @@ import org.junit.Test
  */
 class DepositNumberAssignerTest {
 
-    private fun row(date: String, number: String, tekiyou: String, amount: Int, memo: String = "") =
+    private fun row(date: String, number: String, tekiyou: String, amount: Int, memo: String = "", passbookId: Int = 1) =
         DepositMeisai(
+            passbookId = passbookId,
             transactionDate = date,
             transactionNumber = number,
             tekiyou = tekiyou,
@@ -117,5 +118,20 @@ class DepositNumberAssignerTest {
             assertTrue(DepositNumberAssigner.isSynthetic(number))
         }
         assertEquals("x12", assigned.last().transactionNumber)
+    }
+
+    @Test
+    fun `通帳が違えば同じ日の合成番号は別々に振り、別の通帳の行は再利用しない`() {
+        val existing = DepositNumberAssigner.assign(listOf(row("2026-02-05", "", "デンキダイ", -8000, passbookId = 1)), emptyList())
+        val parsed = listOf(
+            row("2026-02-05", "", "デンキダイ", -8000, passbookId = 2),
+            row("2026-02-05", "", "スイドウ", -3000, passbookId = 2)
+        )
+
+        val assigned = DepositNumberAssigner.assign(parsed, existing)
+
+        // 通帳1の x01 と同じ内容でも、通帳2では別の取引なので再利用せず、番号も通帳2の中で1から振る
+        assertEquals(listOf("x01", "x02"), assigned.map { it.transactionNumber })
+        assertEquals(listOf(2, 2), assigned.map { it.passbookId })
     }
 }

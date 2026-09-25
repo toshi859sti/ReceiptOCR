@@ -29,9 +29,10 @@ import com.example.greenframeocr.util.toCanonicalKey
         AoiroChoboAccount::class,
         AoiroChoboMemoTemplate::class,
         AoiroChoboVocabMeta::class,
-        AoiroChoboAccountUsage::class
+        AoiroChoboAccountUsage::class,
+        Passbook::class
     ],
-    version = 38,
+    version = 39,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -51,6 +52,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun aoiroChoboVocabDao(): AoiroChoboVocabDao
     abstract fun aoiroChoboLinkDao(): AoiroChoboLinkDao
     abstract fun aoiroChoboAccountUsageDao(): AoiroChoboAccountUsageDao
+    abstract fun passbookDao(): PassbookDao
 
     companion object {
         @Volatile
@@ -1057,6 +1059,33 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v38 → v39: 複数の通帳（預金口座・最大 5 冊）。
+         *
+         * 既存の明細はすべて 1 冊目（id = 1）に入れる。通番は口座ごとに振られるので、
+         * 重複判定の UNIQUE を (日付, 通番) から (通帳, 日付, 通番) に張り替える。
+         * 張り替えないと 2 冊目の CSV のうち 1 冊目と日付・通番が重なる行が IGNORE で黙って落ちる。
+         */
+        private val MIGRATION_38_39 = object : Migration(38, 39) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `passbooks` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`displayOrder` INTEGER NOT NULL, `yayoiSubAccountName` TEXT NOT NULL, " +
+                        "`aoiroAccountKey` TEXT, `aoiroAccountKeyName` TEXT)"
+                )
+                database.execSQL(
+                    "INSERT INTO passbooks (id, name, displayOrder, yayoiSubAccountName) VALUES (1, '通帳1', 0, '')"
+                )
+                database.execSQL("ALTER TABLE deposit_meisai ADD COLUMN passbookId INTEGER NOT NULL DEFAULT 1")
+                database.execSQL("DROP INDEX IF EXISTS index_deposit_meisai_transactionDate_transactionNumber")
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_deposit_meisai_passbookId_transactionDate_transactionNumber " +
+                        "ON deposit_meisai (passbookId, transactionDate, transactionNumber)"
+                )
+            }
+        }
+
         private val MIGRATION_34_35 = object : Migration(34, 35) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE receipt_items ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
@@ -1481,7 +1510,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39)
                     .build()
                 INSTANCE = instance
                 instance

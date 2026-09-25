@@ -53,6 +53,7 @@ class AppPreferences(context: Context) {
 
         // 通帳データ・レシート一覧の年フィルターを作業年に固定するか
         private const val KEY_LOCK_YEAR_TO_WORKING = "lock_year_to_working"
+        private const val KEY_LAST_PASSBOOK_ID = "last_passbook_id"
         private const val DEFAULT_LOCK_YEAR_TO_WORKING = false
 
         // 現在の月設定（OCR撮影時に使用）
@@ -119,6 +120,11 @@ class AppPreferences(context: Context) {
     var lockYearToWorking: Boolean
         get() = prefs.getBoolean(KEY_LOCK_YEAR_TO_WORKING, DEFAULT_LOCK_YEAR_TO_WORKING)
         set(value) = prefs.edit().putBoolean(KEY_LOCK_YEAR_TO_WORKING, value).apply()
+
+    // 通帳CSVを最後に取り込んだ通帳（次の取込で最初から選んでおく・通帳データ画面の表示通帳）
+    var lastPassbookId: Int
+        get() = prefs.getInt(KEY_LAST_PASSBOOK_ID, Passbook.DEFAULT_ID)
+        set(value) = prefs.edit().putInt(KEY_LAST_PASSBOOK_ID, value).apply()
 
     // 現在の月設定（OCR撮影時に使用）
     var currentIssueMonth: Int

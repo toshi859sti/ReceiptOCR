@@ -12,6 +12,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.DepositMeisai
+import com.example.greenframeocr.data.Passbook
 import com.example.greenframeocr.data.ReceiptDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -52,6 +56,13 @@ fun PassbookDataScreen(
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var importResultMessage by remember { mutableStateOf<String?>(null) }
 
+    // 通帳（最大5冊）。表示は1冊ずつ（null＝すべて）。通帳が1冊なら切り替えは出さない
+    var passbooks by remember { mutableStateOf<List<Passbook>>(emptyList()) }
+    var selectedPassbookId by remember { mutableStateOf<Int?>(appPreferences.lastPassbookId) }
+    var showPassbookManage by remember { mutableStateOf(false) }
+    // 取込先の通帳を選ばせている間の CSV
+    var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
+
     val workingCalendarYear = remember { appPreferences.workingCalendarYear.toString() }
     var lockYearToWorking by remember { mutableStateOf(appPreferences.lockYearToWorking) }
     val availableYears = remember(meisaiList) {
@@ -74,9 +85,10 @@ fun PassbookDataScreen(
     LaunchedEffect(lockYearToWorking, workingCalendarYear) {
         if (lockYearToWorking) selectedYear = workingCalendarYear
     }
-    val displayedMeisai = remember(meisaiList, selectedYear) {
-        if (selectedYear == null) meisaiList
-        else meisaiList.filter { it.transactionDate.startsWith(selectedYear!!) }
+    val displayedMeisai = remember(meisaiList, selectedYear, selectedPassbookId) {
+        meisaiList
+            .filter { selectedPassbookId == null || it.passbookId == selectedPassbookId }
+            .filter { selectedYear == null || it.transactionDate.startsWith(selectedYear!!) }
     }
     var yearDropdownExpanded by remember { mutableStateOf(false) }
 
@@ -84,13 +96,22 @@ fun PassbookDataScreen(
     fun loadData() {
         scope.launch {
             isLoading = true
+            passbooks = database.passbookDao().ensureDefault()
+            // 消した通帳を選んだままにしない
+            if (selectedPassbookId != null && passbooks.none { it.id == selectedPassbookId }) {
+                selectedPassbookId = passbooks.first().id
+            }
+            // 1冊しか無いなら「すべて」と同じなので、その1冊を選んだ状態にしておく
+            if (passbooks.size == 1) selectedPassbookId = passbooks.first().id
             meisaiList = database.depositMeisaiDao().getAll()
             isLoading = false
         }
     }
 
-    // CSV取込処理（重複チェック付きマージ）
-    fun importCsv(uri: Uri) {
+    // CSV取込処理（重複チェック付きマージ）。明細はすべて passbookId の通帳に入る
+    fun importCsv(uri: Uri, passbookId: Int) {
+        appPreferences.lastPassbookId = passbookId
+        selectedPassbookId = passbookId
         scope.launch {
             try {
                 val parsedList = withContext(Dispatchers.IO) {
@@ -101,7 +122,7 @@ fun PassbookDataScreen(
 
                     // ヘッダー行をスキップして解析
                     lines.drop(1).mapNotNull { line ->
-                        parseCsvLine(line)
+                        parseCsvLine(line)?.copy(passbookId = passbookId)
                     }
                 }
 
@@ -118,7 +139,8 @@ fun PassbookDataScreen(
                     val newCount = results.count { it != -1L }
                     val skipCount = results.count { it == -1L }
                     val synthesizedNote = if (synthesizedCount > 0) "・通番なし${synthesizedCount}件に番号を付与" else ""
-                    importResultMessage = when {
+                    val passbookName = database.passbookDao().getById(passbookId)?.name ?: ""
+                    importResultMessage = "【$passbookName】" + when {
                         skipCount > 0 -> "${newCount}件追加（${skipCount}件は既存のためスキップ${synthesizedNote}）"
                         synthesizedCount > 0 -> "${newCount}件のデータを取り込みました（通番なし${synthesizedCount}件に番号を付与）"
                         else -> "${newCount}件のデータを取り込みました"
@@ -133,18 +155,47 @@ fun PassbookDataScreen(
         }
     }
 
+    // 取込先の通帳が1冊なら黙ってそこへ、複数なら選ばせる（前回の通帳を選んだ状態で出す）
+    fun requestImport(uri: Uri) {
+        scope.launch {
+            val current = database.passbookDao().ensureDefault()
+            passbooks = current // 共有から起動した直後は一覧の読み込みより先に来る
+            if (current.size == 1) importCsv(uri, current.first().id) else pendingImportUri = uri
+        }
+    }
+
     // ファイル選択ランチャー
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let { importCsv(it) }
+        uri?.let { requestImport(it) }
     }
 
     // 初期URI（共有から起動した場合）
     LaunchedEffect(initialUri) {
         if (initialUri != null) {
-            importCsv(initialUri)
+            requestImport(initialUri)
         }
+    }
+
+    pendingImportUri?.let { uri ->
+        ImportPassbookChooserDialog(
+            passbooks = passbooks,
+            initialId = appPreferences.lastPassbookId,
+            onChoose = { passbookId ->
+                pendingImportUri = null
+                importCsv(uri, passbookId)
+            },
+            onDismiss = { pendingImportUri = null }
+        )
+    }
+
+    if (showPassbookManage) {
+        PassbookManageDialog(
+            database = database,
+            onChanged = { loadData() },
+            onDismiss = { showPassbookManage = false }
+        )
     }
 
     // 初期データ読み込み
@@ -157,7 +208,12 @@ fun PassbookDataScreen(
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = false },
             title = { Text("確認") },
-            text = { Text("すべての通帳データを削除しますか？") },
+            text = {
+                Text(
+                    if (passbooks.size > 1) "すべての通帳（${passbooks.size}冊）の明細を削除しますか？\n1冊だけ消すときは「通帳の管理」から。"
+                    else "すべての通帳データを削除しますか？"
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -200,6 +256,12 @@ fun PassbookDataScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showPassbookManage = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "通帳の管理"
+                        )
+                    }
                     IconButton(onClick = { filePickerLauncher.launch("text/*") }) {
                         Icon(
                             imageVector = Icons.Default.Add,
@@ -252,6 +314,33 @@ fun PassbookDataScreen(
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                     textAlign = TextAlign.Center
                 )
+            }
+
+            // 通帳の切り替え（2冊以上のときだけ）
+            if (passbooks.size > 1) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    passbooks.forEach { passbook ->
+                        FilterChip(
+                            selected = selectedPassbookId == passbook.id,
+                            onClick = {
+                                selectedPassbookId = passbook.id
+                                appPreferences.lastPassbookId = passbook.id
+                            },
+                            label = { Text(passbook.name) }
+                        )
+                    }
+                    FilterChip(
+                        selected = selectedPassbookId == null,
+                        onClick = { selectedPassbookId = null },
+                        label = { Text("すべて") }
+                    )
+                }
             }
 
             // 年フィルター + 件数表示
@@ -361,7 +450,10 @@ fun PassbookDataScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "${selectedYear}年のデータがありません",
+                        text = listOfNotNull(
+                            passbooks.firstOrNull { it.id == selectedPassbookId }?.name,
+                            selectedYear?.let { "${it}年" }
+                        ).joinToString("・") + "のデータがありません",
                         fontSize = 16.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -499,4 +591,42 @@ private fun PassbookGridRow(meisai: DepositMeisai, hideAmount: Boolean = false, 
             color = amountColor
         )
     }
+}
+
+/**
+ * CSV の取込先の通帳を選ぶ。CSV に口座番号が入っていないので、ここで間違えると別の口座の明細として入る。
+ * 取り込んだ後でも「通帳の管理」→「この通帳の明細を削除」で取り直せる
+ */
+@Composable
+private fun ImportPassbookChooserDialog(
+    passbooks: List<Passbook>,
+    initialId: Int,
+    onChoose: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedId by remember {
+        mutableStateOf(passbooks.firstOrNull { it.id == initialId }?.id ?: passbooks.first().id)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("どの通帳のCSVですか？") },
+        text = {
+            Column {
+                passbooks.forEach { passbook ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedId = passbook.id }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        RadioButton(selected = selectedId == passbook.id, onClick = { selectedId = passbook.id })
+                        Text(passbook.name)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onChoose(selectedId) }) { Text("取り込む") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
+    )
 }

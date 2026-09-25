@@ -5,7 +5,8 @@ import androidx.room.*
 @Dao
 interface DepositMeisaiDao {
 
-    @Query("SELECT * FROM deposit_meisai ORDER BY transactionDate ASC, transactionNumber")
+    /** 全通帳の明細。通帳ごとに見せる画面は [DepositMeisai.passbookId] で絞る */
+    @Query("SELECT * FROM deposit_meisai ORDER BY transactionDate ASC, passbookId, transactionNumber")
     suspend fun getAll(): List<DepositMeisai>
 
     @Query("SELECT DISTINCT tekiyou FROM deposit_meisai ORDER BY tekiyou")
@@ -26,7 +27,7 @@ interface DepositMeisaiDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(meisaiList: List<DepositMeisai>)
 
-    /** 重複（transactionDate+transactionNumber）はスキップして一括挿入。戻り値は挿入行IDリスト（スキップは -1L）。 */
+    /** 重複（passbookId+transactionDate+transactionNumber）はスキップして一括挿入。戻り値は挿入行IDリスト（スキップは -1L）。 */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAllIgnoreDuplicates(meisaiList: List<DepositMeisai>): List<Long>
 
@@ -52,12 +53,15 @@ interface DepositMeisaiDao {
     @Query("SELECT COUNT(*) FROM deposit_meisai")
     suspend fun getCount(): Int
 
-    /** 合成番号の再利用判定で使う。取込対象の日付ぶんだけ既存行を引く */
-    @Query("SELECT * FROM deposit_meisai WHERE transactionDate IN (:dates)")
-    suspend fun getByDates(dates: List<String>): List<DepositMeisai>
+    /** 合成番号の再利用判定で使う。取込先の通帳の、取込対象の日付ぶんだけ既存行を引く */
+    @Query("SELECT * FROM deposit_meisai WHERE passbookId = :passbookId AND transactionDate IN (:dates)")
+    suspend fun getByDates(passbookId: Int, dates: List<String>): List<DepositMeisai>
 
-    @Query("SELECT * FROM deposit_meisai WHERE transactionDate = :date AND transactionNumber = :number LIMIT 1")
-    suspend fun findByDateAndNumber(date: String, number: String): DepositMeisai?
+    @Query("SELECT COUNT(*) FROM deposit_meisai WHERE passbookId = :passbookId")
+    suspend fun countByPassbook(passbookId: Int): Int
+
+    @Query("DELETE FROM deposit_meisai WHERE passbookId = :passbookId")
+    suspend fun deleteByPassbook(passbookId: Int)
 
     /** 個別オーバーライドを設定（tekiyouId=nullでクリア） */
     @Query("UPDATE deposit_meisai SET overrideTekiyouId = :tekiyouId WHERE id = :meisaiId")

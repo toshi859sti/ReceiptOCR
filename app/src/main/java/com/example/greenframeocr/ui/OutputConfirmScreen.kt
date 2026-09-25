@@ -8,6 +8,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -96,6 +98,9 @@ data class DepositOutputItem(
     val memo: String,           // メモ（通帳摘要原文）
     val deposit: Int?,          // 入金（正の金額）
     val withdrawal: Int?,       // 出金（負の金額の絶対値）
+    val passbookId: Int = Passbook.DEFAULT_ID,
+    // 預金側（普通預金）の弥生の補助科目。通帳ごとに違う（空欄なら補助科目なし）
+    val bankYayoiSubAccountName: String = "",
     val yayoiSubAccountName: String = "",
     val defaultTaxCategory: String = "対象外",
     val exportedAt: String? = null,  // 直近のCSV出力日時。未出力ならnull
@@ -617,6 +622,9 @@ private fun DepositOutputConfirmContent(
     var selectedYear by remember { mutableStateOf<Int?>(null) }
     var unexportedOnly by remember { mutableStateOf(false) }
     var showUnmatchedBlockDialog by remember { mutableStateOf(false) }
+    // 通帳の絞り込み（null＝すべて）。弥生 CSV は補助科目で口座を分けるので、すべてまとめて出してもよい
+    var passbooks by remember { mutableStateOf<List<Passbook>>(emptyList()) }
+    var selectedPassbookId by remember { mutableStateOf<Int?>(null) }
 
     // 期間選択用のState
     var startDate by remember { mutableStateOf<Calendar?>(null) }
@@ -653,6 +661,7 @@ private fun DepositOutputConfirmContent(
     // データ読み込み
     LaunchedEffect(Unit) {
         isLoading = true
+        passbooks = withContext(Dispatchers.IO) { database.passbookDao().ensureDefault() }
         val loaded = loadDepositOutputItems(database, accountingSoftware)
         // 弥生は厳密なCSVが必要なため科目（摘要）未設定は誤出力防止でデフォルトチェックOFF。
         // 出力済みの明細も二重出力防止でデフォルトチェックOFFにする
@@ -666,8 +675,9 @@ private fun DepositOutputConfirmContent(
     }
 
     // フィルタリング（年・期間）
-    LaunchedEffect(startDate, endDate, allItems, selectedYear, unexportedOnly) {
+    LaunchedEffect(startDate, endDate, allItems, selectedYear, unexportedOnly, selectedPassbookId) {
         var filtered = filterDepositItemsByDateRange(allItems, startDate, endDate)
+        selectedPassbookId?.let { id -> filtered = filtered.filter { it.passbookId == id } }
         if (selectedYear != null) {
             filtered = filtered.filter { it.date.take(4).toIntOrNull() == selectedYear }
         }
@@ -739,6 +749,41 @@ private fun DepositOutputConfirmContent(
                     selectedYear = selectedYear,
                     onYearSelect = { selectedYear = it }
                 )
+
+                // 通帳の絞り込み（2冊以上のときだけ）
+                if (passbooks.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = selectedPassbookId == null,
+                            onClick = { selectedPassbookId = null },
+                            label = { Text("すべての通帳") }
+                        )
+                        passbooks.forEach { passbook ->
+                            FilterChip(
+                                selected = selectedPassbookId == passbook.id,
+                                onClick = { selectedPassbookId = passbook.id },
+                                label = { Text(passbook.name) }
+                            )
+                        }
+                    }
+                    // 補助科目が空の通帳が2冊以上あると、弥生では同じ「普通預金」に混ざる
+                    if (accountingSoftware == AccountingSoftware.YAYOI &&
+                        passbooks.count { it.yayoiSubAccountName.isBlank() } >= 2
+                    ) {
+                        Text(
+                            "弥生の補助科目が未設定の通帳が複数あります。弥生では同じ「普通預金」に入ります（通帳データ画面の「通帳の管理」で設定）",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                    }
+                }
 
                 // 期間選択UI
                 DateRangeSelector(
@@ -1118,6 +1163,7 @@ private suspend fun loadDepositOutputItems(
 ): List<DepositOutputItem> {
     return withContext(Dispatchers.IO) {
         val depositMeisaiList = database.depositMeisaiDao().getAll()
+        val passbooksById = database.passbookDao().getAll().associateBy { it.id }
         val matchingRules = database.tekiyouMatchingRuleDao().getAllWithTekiyou()
         val allYayoiAccounts = if (accountingSoftware == AccountingSoftware.YAYOI)
             database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
@@ -1158,7 +1204,9 @@ private suspend fun loadDepositOutputItems(
                     withdrawal = if (meisai.amount < 0) -meisai.amount else null,
                     yayoiSubAccountName = subName,
                     defaultTaxCategory = account?.defaultTaxCategory ?: "対象外",
-                    exportedAt = meisai.exportedAt
+                    exportedAt = meisai.exportedAt,
+                    passbookId = meisai.passbookId,
+                    bankYayoiSubAccountName = passbooksById[meisai.passbookId]?.yayoiSubAccountName.orEmpty()
                 )
             } else {
                 // 個別オーバーライドを最優先、なければルール一致の摘要名
@@ -1171,7 +1219,8 @@ private suspend fun loadDepositOutputItems(
                     memo = meisai.tekiyou,
                     deposit = if (meisai.amount >= 0) meisai.amount else null,
                     withdrawal = if (meisai.amount < 0) -meisai.amount else null,
-                    exportedAt = meisai.exportedAt
+                    exportedAt = meisai.exportedAt,
+                    passbookId = meisai.passbookId
                 )
             }
         }
@@ -1340,10 +1389,10 @@ private fun buildDepositYayoiRow(item: DepositOutputItem): String {
     val isDeposit = item.deposit != null
     val amount = (item.deposit ?: item.withdrawal ?: 0).toString()
     if (isDeposit) {
-        // 入金: 借方=普通預金、貸方=売上/雑収入など
+        // 入金: 借方=普通預金（補助科目＝通帳）、貸方=売上/雑収入など
         cols[3] = ""
         cols[4] = "普通預金"
-        cols[5] = ""
+        cols[5] = item.bankYayoiSubAccountName
         cols[6] = "対象外"
         cols[7] = amount
         cols[8] = ""
@@ -1354,7 +1403,7 @@ private fun buildDepositYayoiRow(item: DepositOutputItem): String {
         cols[13] = amount
         cols[14] = ""
     } else {
-        // 出金: 借方=費用科目、貸方=普通預金
+        // 出金: 借方=費用科目、貸方=普通預金（補助科目＝通帳）
         cols[3] = ""
         cols[4] = item.tekiyou
         cols[5] = item.yayoiSubAccountName
@@ -1363,7 +1412,7 @@ private fun buildDepositYayoiRow(item: DepositOutputItem): String {
         cols[8] = ""
         cols[9] = ""
         cols[10] = "普通預金"
-        cols[11] = ""
+        cols[11] = item.bankYayoiSubAccountName
         cols[12] = "対象外"
         cols[13] = amount
         cols[14] = ""

@@ -12,12 +12,16 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["transactionDate"]),
         Index(value = ["tekiyou"]),
-        Index(value = ["transactionDate", "transactionNumber"], unique = true)
+        // 通番は口座ごとに振られるので、口座が違えば同じ日・同じ通番があり得る（DB v39）
+        Index(value = ["passbookId", "transactionDate", "transactionNumber"], unique = true)
     ]
 )
 data class DepositMeisai(
     @PrimaryKey(autoGenerate = true)
     val id: Int = 0,
+
+    /** どの通帳の明細か（[Passbook.id]）。外部キーは張らない：通帳を消して明細が道連れになるのを避ける */
+    val passbookId: Int = Passbook.DEFAULT_ID,
 
     /** 取引日 (yyyy-MM-dd) */
     val transactionDate: String,
