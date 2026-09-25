@@ -6,6 +6,22 @@
 
 ---
 
+## schemaVersion 2 — 2026-09-25 minor（6）（事業主貸を JA購買・レシートの借方候補に）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。変わったのは 1 科目の値。
+
+- **`zigyounusikas`（事業主貸）の `ocrRoleExpenseDebit` を `false` → `true`**。JA購買伝票・店舗レシートに
+  家庭用の品物が混ざることがあり、その行の借方は事業主貸になる（ユーザー判断）。
+  `ocrRoleDepositCounter` は従来どおり `true`。借方候補は本番 2026 年分で 24 → **25 件**。
+- [vocabulary-snapshot.md](vocabulary-snapshot.md) §6 の検証「`ocrRoleExpenseDebit == true` なら `accountType` は
+  Expense か Asset」に**事業主貸（Capital）の例外**を足した。契約テストでこの制約を確かめていたら合わせること。
+- PC は起動時に全科目の 2 フラグを規則から計算し直すので、既存の DB も次の起動で切り替わる。
+- **`contentHash` は変わる**。minor（5）と同じ日なので、書き出し直した 1 回分の取り込みで両方入る。
+
+スマホ側への影響：Purchase / Receipt の借方候補に事業主貸が 1 件増える。フラグで絞っているだけなら変更は不要。
+
+---
+
 ## schemaVersion 2 — 2026-09-25 minor（5）（`accounts[].displayGroup` を追加）
 
 `schemaVersion` は据え置き（**2 のまま**）。前方互換のフィールド追加。スマホ側の依頼
@@ -19,7 +35,7 @@
   繰入額（**専従者給与**）、資本（元入金・青申特別控除前の所得金額）。
   逆に `groupName` と違う値になるもの：育成費用（`groupName` `"繰入額"` → `displayGroup` `"経費"`）、
   営農口座・直売口座（`groupName` `"普通預金"` → `displayGroup` null。口座は親の値）。
-- **`contentHash` は一度変わる**（`accounts` が対象なので）。本番 2026 年分は `sha256:05ba6bac…34bb`。
+- **`contentHash` は一度変わる**（`accounts` が対象なので）。本番 2026 年分は `sha256:05ba6bac…34bb`（同日の minor（6）を入れた最終版は `sha256:340bdb4a…850b`）。
   `displayGroup` と `displayOrder`（minor（4））以外の値は 2026-09-23 の書き出しと一致することを確認した。
 
 スマホ側への影響：画面のグループ欄を `groupName` から `displayGroup` に切り替える。`groupName` を他で使っていなければ

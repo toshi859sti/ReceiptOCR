@@ -382,6 +382,9 @@ AoiroChobo は複数の預金口座を「スロット」で管理する。
 - `ocrRoleExpenseDebit` / `ocrRoleDepositCounter` は `Account` の 2 フラグ（PC がシードで科目ごとに
   明示セット。`vocabulary-snapshot` §4.1）。**型では一律に決まらない**（例：`事業主貸`/`専従者給与`/
   `家計費` は資本だが `ocrRoleDepositCounter=true`、`減価償却費` は経費だが両方 `false`）。
+- **`事業主貸` は `ocrRoleExpenseDebit=true`**（2026-09-25 minor（6））。JA購買伝票・レシートに家庭用の品物が
+  混ざることがあり、その行の借方は事業主貸になる（[matching-rules.md](matching-rules.md) の「分割」の家事分も同じ）。
+  資本の科目で借方候補になるのはこれだけ。
 - フラグが両方 `false` の科目（`元入金`・`減価償却費`・棚卸資産・`貸倒引当金繰入`・`家事消費` 等）は
   OCR 取引の相手科目にならない。スマホは候補から外す。
 
@@ -674,7 +677,8 @@ schemaVersion 1 では「摘要は一意キーを持たない・`memoName`（＝
 - `direction` は `enums.direction` のいずれか、または `""`（Transfer）。
 - `businessRatio` は 0〜100 の整数。`creditBusinessRatio` は null か 0〜100。
 - `accounts[].ocrRoleExpenseDebit` / `ocrRoleDepositCounter` は bool（欠落＝false 扱い）。
-  `ocrRoleExpenseDebit == true` の科目は `accountType in ("Expense","Asset")`。
+  `ocrRoleExpenseDebit == true` の科目は `accountType in ("Expense","Asset")`、または `accountKey == "zigyounusikas"`
+  （事業主貸・`Capital`。2026-09-25 minor（6））。
 - `ledgerType != "Transfer"` の行は `debitAccountKey` / `creditAccountKey` / `creditTaxRate` /
   `creditBusinessRatio` が null、`ledgerType == "Transfer"` の行は `direction == ""` かつ
   `counterAccountKey == null`。
