@@ -6,6 +6,21 @@
 
 ---
 
+## schemaVersion 2 — 2026-09-25 minor（7）（`ocrRole*` の決まり方を明文化・農家が作る科目の穴を直した）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の質問
+（[REPLY-phone-2026-09-25b.md](REPLY-phone-2026-09-25b.md) §3）への回答で見つかった規則の穴を直した。
+
+- **農家が作った任意資産・任意負債**（出資金・別枠の借入金など）が `ocrRoleDepositCounter = false` になっていた
+  → **true** に。帳簿の種類（`ledgerAffinity`）を持たないため、棚卸資産を外す条件に巻き込まれていた。
+- **繰戻額・繰入額の枠に農家が作った科目**が `true` になっていた（借方候補・通帳の相手科目とも）→ **両方 false** に。
+  決算整理専用の判定がシード科目の名指しだけだったため。`groupName` が繰戻額・繰入額なら外す。
+- 決まり方の表を [vocabulary-snapshot.md](vocabulary-snapshot.md) §4.5 に足した。PC で農家がフラグを変える手段は無い。
+- **本番 2026 年分の値は変わらない**（該当する科目がまだ無い）。`contentHash` も minor（6）のときと同じ
+  `sha256:340bdb4a…850b`。
+
+---
+
 ## schemaVersion 2 — 2026-09-25 minor（6）（事業主貸を JA購買・レシートの借方候補に）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。変わったのは 1 科目の値。
