@@ -247,7 +247,7 @@ class AppPreferences(context: Context) {
 enum class AccountingSoftware(val displayName: String) {
     RAKURAKU("らくらく青色申告農業版"),
     YAYOI("弥生の青色申告"),
-    BLUE_RETURN_PREP("BlueReturnPrep（自作）")
+    BLUE_RETURN_PREP("あおいろ帳簿")  // PC 会計アプリ AoiroChobo。enum 名の変更はらくらく撤去のときにまとめて行う
 }
 
 /**

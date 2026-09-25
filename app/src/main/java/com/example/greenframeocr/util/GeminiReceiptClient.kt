@@ -148,6 +148,160 @@ $accountsText
         }
     }
 
+    /** 購買品目 → あおいろ帳簿（AoiroChobo）科目の提案 1 件 */
+    data class AoiroAccountMatchSuggestion(
+        val productName: String,
+        val accountKey: String,
+        val reason: String
+    )
+
+    data class MatchAoiroResult(
+        val suggestions: List<AoiroAccountMatchSuggestion>,
+        val usageStats: AiUsageStats?
+    )
+
+    /**
+     * 購買品目にあおいろ帳簿の科目を提案させる。弥生版 [matchProductsToAccounts] のあおいろ版。
+     *
+     * 科目は accountKey（`hiryou` `acct-0007` など）ではなく、プロンプト内の通し番号で答えさせて手元で引き戻す。
+     * キーの綴りを AI に写させると、似たキーへの取り違えや存在しないキーが混ざるため。
+     * 摘要は提案させない。摘要は科目を決めてから候補を絞って選ぶもの（AoiroChoboPurchaseRules）。
+     *
+     * @param accounts 候補の科目（借方に使ってよい科目だけを渡す）
+     * @param memoNamesByAccount 科目ごとの買掛/仕入の摘要名。AI が科目の使い道を掴むためのヒント
+     */
+    suspend fun matchProductsToAoiroAccounts(
+        productNames: List<Pair<String, String>>,  // (productName, category)
+        accounts: List<com.example.greenframeocr.data.AoiroChoboAccount>,
+        memoNamesByAccount: Map<String, List<String>>,
+        apiKey: String
+    ): MatchAoiroResult = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) throw GeminiApiKeyMissingException()
+
+        val productsText = productNames.take(60).joinToString("\n") { (name, cat) ->
+            "- $name（カテゴリ: $cat）"
+        }
+        val numbered = accounts.take(100)
+        val accountsText = numbered.mapIndexed { i, acc ->
+            val group = acc.displayGroup?.let { "（$it）" } ?: ""
+            val memos = memoNamesByAccount[acc.accountKey].orEmpty()
+            val memoText = if (memos.isEmpty()) "" else "  摘要: ${memos.joinToString("、")}"
+            "ID:${i + 1}  ${acc.name}$group$memoText"
+        }.joinToString("\n")
+
+        val prompt = """
+あなたは農業経営の青色申告（青色申告決算書・農業所得用）に詳しい会計専門家です。
+以下の JA（農協）購買品目に対して、提示された勘定科目の中から最も適切なものを1つ割り当ててください。
+
+# 割り当てのヒント
+- カテゴリ「給油所」は燃料（ガソリン・軽油・灯油・重油）→ 動力光熱費。オイル交換・タイヤ等の整備は修繕費
+- カテゴリ「農業機械」は修理・部品 → 修繕費。小型の農機具や工具 → 農具費
+- 「一般購買」は品目名から判断する（肥料 → 肥料費、農薬 → 農薬衛生費、種・苗 → 種苗費、
+  マルチ・ビニール・ひも・資材 → 諸材料費、飼料 → 飼料費）
+- 資産の科目（償却資産のグループ）は、高額な機械・設備を買ったとき以外は使わない
+
+# 購買品目（未割当・${productNames.size}件）
+$productsText
+
+# 勘定科目リスト（${numbered.size}件）
+$accountsText
+
+# 回答形式（JSON）
+- accountId は必ず上記リストの ID（数字）を使用してください
+- 適切な科目が見つからない場合はそのエントリを省略してください
+- reason は30文字以内の日本語で記述してください
+
+{
+  "matches": [
+    {"productName": "品目名", "accountId": 科目ID, "reason": "割り当て理由"}
+  ]
+}
+""".trimIndent()
+
+        val body = postGenerateContent(prompt, apiKey) ?: return@withContext MatchAoiroResult(emptyList(), null)
+        parseAoiroMatchResponse(body, numbered)
+    }
+
+    /**
+     * Gemini に JSON 応答でプロンプトを投げ、レスポンス本文を返す。HTTP エラーは [throwApiError] で例外にする。
+     * それ以外の失敗（通信・解析）は null を返して呼び出し側で「提案なし」にする（弥生版と同じ扱い）。
+     */
+    private fun postGenerateContent(prompt: String, apiKey: String): String? {
+        val requestBody = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply { put("text", prompt) })
+                    })
+                })
+            })
+            put("generationConfig", JSONObject().apply {
+                put("responseMimeType", "application/json")
+                put("temperature", 0)
+            })
+        }
+
+        val client = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .build()
+
+        val request = Request.Builder()
+            .url("$API_URL?key=$apiKey")
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    Log.e("GeminiReceiptClient", "HTTP ${response.code}: $body")
+                    throwApiError(response.code, body)
+                }
+                response.body?.string()
+            }
+        } catch (e: GeminiRateLimitException) { throw e }
+          catch (e: GeminiQuotaExhaustedException) { throw e }
+          catch (e: GeminiApiKeyMissingException) { throw e }
+          catch (e: GeminiApiException) { throw e }
+          catch (e: Exception) {
+            Log.e("GeminiReceiptClient", "postGenerateContent error: ${e.message}")
+            null
+        }
+    }
+
+    /** 応答の accountId（プロンプト内の通し番号）を accountKey に引き戻す。範囲外の番号は捨てる */
+    private fun parseAoiroMatchResponse(
+        responseBody: String,
+        numbered: List<com.example.greenframeocr.data.AoiroChoboAccount>
+    ): MatchAoiroResult {
+        return try {
+            val root = JSONObject(responseBody)
+            val usageStats = parseUsageStats(root)
+            val text = root.getJSONArray("candidates")
+                .getJSONObject(0)
+                .getJSONObject("content")
+                .getJSONArray("parts")
+                .getJSONObject(0)
+                .getString("text")
+
+            val arr = JSONObject(text).getJSONArray("matches")
+            val suggestions = (0 until arr.length()).mapNotNull { i ->
+                val obj = arr.getJSONObject(i)
+                val account = numbered.getOrNull(obj.optInt("accountId", 0) - 1) ?: return@mapNotNull null
+                AoiroAccountMatchSuggestion(
+                    productName = obj.optString("productName"),
+                    accountKey = account.accountKey,
+                    reason = obj.optString("reason", "")
+                )
+            }
+            MatchAoiroResult(suggestions, usageStats)
+        } catch (e: Exception) {
+            Log.e("GeminiReceiptClient", "parseAoiroMatchResponse error: ${e.message}")
+            MatchAoiroResult(emptyList(), null)
+        }
+    }
+
     suspend fun matchTekiyouToAccounts(
         rules: List<com.example.greenframeocr.data.MatchingRuleWithTekiyou>,
         accounts: List<com.example.greenframeocr.data.YayoiAccount>,

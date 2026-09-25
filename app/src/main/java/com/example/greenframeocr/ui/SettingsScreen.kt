@@ -353,7 +353,7 @@ fun SettingsScreen(
                         Text(software.displayName, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                         if (software == AccountingSoftware.BLUE_RETURN_PREP) {
                             Text(
-                                "マッチングはWindows側アプリで実施",
+                                "科目・摘要は PC から取り込んだものを使う",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

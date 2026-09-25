@@ -89,6 +89,7 @@ fun ProductListScreen(
     var recalculateResult by remember { mutableStateOf<String?>(null) }
     var showAiMatchingDialog by remember { mutableStateOf(false) }
     var aiSuggestions by remember { mutableStateOf<List<GeminiReceiptClient.AccountMatchSuggestion>>(emptyList()) }
+    var aoiroSuggestions by remember { mutableStateOf<List<GeminiReceiptClient.AoiroAccountMatchSuggestion>>(emptyList()) }
     var aiUsageStats by remember { mutableStateOf<GeminiReceiptClient.AiUsageStats?>(null) }
     var isAiMatching by remember { mutableStateOf(false) }
     var aiMatchingError by remember { mutableStateOf<String?>(null) }
@@ -257,6 +258,51 @@ fun ProductListScreen(
         database.productMasterDao().deleteById(src.id)
     }
 
+    // AI科目提案（あおいろ帳簿）。弥生版と同じ流れで、提案を承認したものだけ保存する
+    fun startAoiroAiMatching() {
+        val unmatched = allProducts.filter { it.accountKey == null }
+        if (unmatched.isEmpty()) {
+            aiMatchingError = "未マッチングの品目がありません"
+            return
+        }
+        val accounts = AoiroChoboPurchaseRules.accountCandidates(aoiroAccounts)
+        if (accounts.isEmpty()) {
+            aiMatchingError = "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください"
+            return
+        }
+        val memoNames = accounts.associate { a ->
+            a.accountKey to AoiroChoboPurchaseRules.memoCandidates(a.accountKey, aoiroMemos).map { it.name }
+        }
+        isAiMatching = true
+        aiMatchingError = null
+        scope.launch {
+            try {
+                val result = GeminiReceiptClient.matchProductsToAoiroAccounts(
+                    productNames = unmatched.map { it.canonicalName to it.category },
+                    accounts = accounts,
+                    memoNamesByAccount = memoNames,
+                    apiKey = appPreferences.geminiApiKey
+                )
+                aoiroSuggestions = result.suggestions
+                aiUsageStats = result.usageStats
+                result.usageStats?.let { appPreferences.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
+                showAiMatchingDialog = true
+            } catch (e: GeminiApiKeyMissingException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiQuotaExhaustedException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiRateLimitException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiApiException) {
+                aiMatchingError = e.message
+            } catch (e: Exception) {
+                aiMatchingError = "エラー: ${e.message}"
+            } finally {
+                isAiMatching = false
+            }
+        }
+    }
+
     // AI科目提案
     fun startAiMatching() {
         val unmatched = allProducts.filter { it.yayoiAccountId == null }
@@ -400,13 +446,14 @@ fun ProductListScreen(
                 }
             }
 
-            // AI科目提案ボタン（弥生モードのみ、常時表示で見落としを防ぐ）
-            if (accountingSoftware == AccountingSoftware.YAYOI) {
-                val unmatchedForAi = allProducts.count { it.yayoiAccountId == null }
+            // AI科目提案ボタン（弥生・あおいろ。常時表示で見落としを防ぐ）
+            if (accountingSoftware == AccountingSoftware.YAYOI || accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP) {
+                val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+                val unmatchedForAi = allProducts.count { if (isAoiro) it.accountKey == null else it.yayoiAccountId == null }
                 AiSuggestButton(
                     label = if (unmatchedForAi > 0) "未マッチ${unmatchedForAi}件をAIで一括提案" else "AI科目提案",
                     isLoading = isAiMatching,
-                    onClick = { startAiMatching() }
+                    onClick = { if (isAoiro) startAoiroAiMatching() else startAiMatching() }
                 )
             }
 
@@ -707,13 +754,70 @@ fun ProductListScreen(
         )
     }
 
-    // AI提案ダイアログ
-    if (showAiMatchingDialog) {
-        val accountMap = remember(yayoiAccountList) { yayoiAccountList.associateBy { it.id } }
+    // AI提案ダイアログ（あおいろ）。承認した科目に、自動で埋めてよい摘要があれば一緒に保存する
+    if (showAiMatchingDialog && accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP) {
+        val rows = remember(aoiroSuggestions, allProducts, aoiroAccounts, aoiroMemos) {
+            val productByName = allProducts.associateBy { it.canonicalName }
+            val accountByKey = aoiroAccounts.associateBy { it.accountKey }
+            aoiroSuggestions.mapNotNull { s ->
+                val product = productByName[s.productName] ?: return@mapNotNull null
+                val account = accountByKey[s.accountKey] ?: return@mapNotNull null
+                val memo = AoiroChoboPurchaseRules.preselectedMemo(account.accountKey, aoiroMemos)
+                AiSuggestionRow(
+                    productId = product.id,
+                    productName = product.canonicalName,
+                    key = account.accountKey,
+                    label = memo?.let { "${account.name} ／ ${it.name}" } ?: account.name,
+                    reason = s.reason
+                )
+            }
+        }
         AiMatchingDialog(
-            suggestions = aiSuggestions,
-            allProducts = allProducts,
-            accountMap = accountMap,
+            rows = rows,
+            usageStats = aiUsageStats,
+            onDismiss = { showAiMatchingDialog = false },
+            onSave = { acceptedMap ->
+                scope.launch {
+                    acceptedMap.forEach { (productId, accountKey) ->
+                        val product = allProducts.find { it.id == productId } ?: return@forEach
+                        val account = aoiroAccounts.find { it.accountKey == accountKey } ?: return@forEach
+                        val memo = AoiroChoboPurchaseRules.preselectedMemo(accountKey, aoiroMemos)
+                        database.productMasterDao().update(
+                            product.copy(
+                                accountKey = accountKey,
+                                accountKeyName = account.name,
+                                memoKey = memo?.memoKey,
+                                memoKeyName = memo?.name
+                            )
+                        )
+                    }
+                    loadProducts()
+                }
+                showAiMatchingDialog = false
+            }
+        )
+    }
+
+    // AI提案ダイアログ（弥生）
+    if (showAiMatchingDialog && accountingSoftware == AccountingSoftware.YAYOI) {
+        val rows = remember(aiSuggestions, allProducts, yayoiAccountList) {
+            val productByName = allProducts.associateBy { it.canonicalName }
+            val accountMap = yayoiAccountList.associateBy { it.id }
+            aiSuggestions.mapNotNull { s ->
+                val product = productByName[s.productName] ?: return@mapNotNull null
+                val account = accountMap[s.suggestedAccountId] ?: return@mapNotNull null
+                AiSuggestionRow(
+                    productId = product.id,
+                    productName = s.productName,
+                    key = s.suggestedAccountId,
+                    label = account.accountCode?.takeIf { it.isNotEmpty() }
+                        ?.let { "${account.accountName}（$it）" } ?: account.accountName,
+                    reason = s.reason
+                )
+            }
+        }
+        AiMatchingDialog(
+            rows = rows,
             usageStats = aiUsageStats,
             onDismiss = { showAiMatchingDialog = false },
             onSave = { acceptedMap ->
@@ -731,47 +835,39 @@ fun ProductListScreen(
 }
 
 /**
- * AI提案確認ダイアログ
- * onSave: Map<productId, yayoiAccountId> — 承認した提案のみ保存
+ * AI 提案 1 件。[key] は保存に使う科目の識別子（弥生は科目 id、あおいろは accountKey）、
+ * [label] は「→」の右に出す科目の表示
+ */
+private data class AiSuggestionRow<K>(
+    val productId: Long,
+    val productName: String,
+    val key: K,
+    val label: String,
+    val reason: String
+)
+
+/**
+ * AI提案確認ダイアログ（弥生・あおいろ共通）
+ * onSave: Map<productId, key> — 承認した提案のみ保存
  */
 @Composable
-private fun AiMatchingDialog(
-    suggestions: List<GeminiReceiptClient.AccountMatchSuggestion>,
-    allProducts: List<ProductMaster>,
-    accountMap: Map<Long, YayoiAccount>,
+private fun <K> AiMatchingDialog(
+    rows: List<AiSuggestionRow<K>>,
     usageStats: GeminiReceiptClient.AiUsageStats?,
     onDismiss: () -> Unit,
-    onSave: (Map<Long, Long>) -> Unit
+    onSave: (Map<Long, K>) -> Unit
 ) {
     // 提案ごとに「承認するか」のチェック状態を管理
     data class SuggestionState(
-        val productId: Long,
-        val productName: String,
-        val accountId: Long,
-        val accountName: String,
-        val accountCode: String?,
-        val reason: String,
-        var accepted: Boolean = true
-    )
+        val row: AiSuggestionRow<K>,
+        val accepted: Boolean = true
+    ) {
+        val productName get() = row.productName
+        val reason get() = row.reason
+    }
 
-    val productNameToId = remember(allProducts) { allProducts.associateBy { it.canonicalName } }
-
-    val states = remember(suggestions) {
-        suggestions.mapNotNull { s ->
-            val product = productNameToId[s.productName] ?: return@mapNotNull null
-            val account = accountMap[s.suggestedAccountId] ?: return@mapNotNull null
-            androidx.compose.runtime.mutableStateOf(
-                SuggestionState(
-                    productId = product.id,
-                    productName = s.productName,
-                    accountId = s.suggestedAccountId,
-                    accountName = account.accountName,
-                    accountCode = account.accountCode,
-                    reason = s.reason,
-                    accepted = true
-                )
-            )
-        }
+    val states = remember(rows) {
+        rows.map { androidx.compose.runtime.mutableStateOf(SuggestionState(it)) }
     }
 
     val acceptedCount = states.count { it.value.accepted }
@@ -866,10 +962,7 @@ private fun AiMatchingDialog(
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                         Text(
-                                            buildString {
-                                                append(state.accountName)
-                                                state.accountCode?.takeIf { it.isNotEmpty() }?.let { append("（$it）") }
-                                            },
+                                            state.row.label,
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
                                             color = MaterialTheme.colorScheme.primary
@@ -907,7 +1000,7 @@ private fun AiMatchingDialog(
                         onClick = {
                             val accepted = states
                                 .filter { it.value.accepted }
-                                .associate { it.value.productId to it.value.accountId }
+                                .associate { it.value.row.productId to it.value.row.key }
                             onSave(accepted)
                         },
                         enabled = acceptedCount > 0
