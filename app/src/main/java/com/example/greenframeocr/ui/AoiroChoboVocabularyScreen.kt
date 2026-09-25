@@ -1,9 +1,13 @@
 package com.example.greenframeocr.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -14,20 +18,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.data.AoiroChoboVocabMeta
 import com.example.greenframeocr.data.ReceiptDatabase
+import com.example.greenframeocr.util.AoiroChoboAccountRules
+import com.example.greenframeocr.util.AoiroChoboAccountRules.AccountTab
 import com.example.greenframeocr.util.AoiroChoboMemoRules
 import com.example.greenframeocr.util.AoiroChoboMemoRules.MemoTab
 
 /**
  * 取り込んだ AoiroChobo の勘定科目と摘要辞書を見るだけの画面。
  *
- * 中身は PC 側が所有するミラーなので、ここでは編集させない。タブの分け方は PC の科目画面・摘要画面に揃える
- * （docs/integration/examples/AoiroChobo_2024_screens/）。
+ * 中身は PC 側が所有するミラーなので、ここでは編集させない。タブ・列・色は PC の「科目・残高登録」
+ * 「摘要登録」画面に揃える（docs/integration/examples/AoiroChobo_2024_screens/）。
+ * PC にあって JSON に無いもの（期首残高・空き枠）は出せない。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,8 +110,8 @@ fun AoiroChoboVocabularyScreen(
             }
 
             when (selectedTab) {
-                0 -> AccountList(accounts)
-                else -> MemoList(memos, accounts)
+                0 -> AccountTable(accounts)
+                else -> MemoTable(memos, accounts)
             }
         }
     }
@@ -122,117 +131,138 @@ private fun VocabMetaLine(meta: AoiroChoboVocabMeta) {
     )
 }
 
+// ---- PC の画面の色 ----
+// 表は PC の見た目に合わせるので、テーマ（ダークモード）に関係なく固定色で描く
+
+private val AccountHeaderColor = Color(0xFFF08090)   // 科目画面の見出し（ピンク）
+private val MemoHeaderColor = Color(0xFF4472C4)      // 摘要画面の見出し（青）
+private val GroupNamedColor = Color(0xFFD9F7D2)      // グループ名あり（薄緑）
+private val GroupNoneColor = Color(0xFFCCCCCC)       // グループ名なし・入力できない欄（灰）
+private val SystemNameColor = Color(0xFFE2E0FB)      // システム科目の科目名（薄紫）
+private val CellColor = Color.White
+private val CellTextColor = Color(0xFF222222)
+private val GridColor = Color(0xFFB0B0B0)
+
 // ---- 勘定科目 ----
 
-private val ACCOUNT_TYPE_ORDER = listOf(
-    "Asset" to "資産",
-    "Liability" to "負債",
-    "Income" to "収入",
-    "Expense" to "支出",
-    "Capital" to "資本"
-)
-
 @Composable
-private fun AccountList(accounts: List<AoiroChoboAccount>) {
-    val knownTypes = ACCOUNT_TYPE_ORDER.map { it.first }.toSet()
-    // PC が区分を増やしたら「その他」に出す（REPLY-pc-2026-09-23b.md §4）
-    val sections = ACCOUNT_TYPE_ORDER.map { (type, label) ->
-        label to accounts.filter { it.accountType == type }
-    } + ("その他" to accounts.filter { it.accountType !in knownTypes })
+private fun AccountTable(accounts: List<AoiroChoboAccount>) {
+    val tabs = remember(accounts) {
+        AccountTab.entries.filter { tab ->
+            tab != AccountTab.OTHER || accounts.any { AoiroChoboAccountRules.tabOf(it) == AccountTab.OTHER }
+        }
+    }
+    var selected by remember { mutableStateOf(AccountTab.ASSET) }
+    val rows = remember(accounts, selected) { AoiroChoboAccountRules.rowsFor(selected, accounts) }
 
-    val byKey = accounts.associateBy { it.accountKey }
+    Column(modifier = Modifier.fillMaxSize()) {
+        PcTabBar(
+            labels = tabs.map { it.label },
+            selectedIndex = tabs.indexOf(selected),
+            onSelect = { selected = tabs[it] }
+        )
 
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        sections.filter { it.second.isNotEmpty() }.forEach { (label, list) ->
-            item(key = "type:$label") { SectionHeader("$label（${list.size}）") }
-            // 親の直後に内訳科目を並べる。親が一覧に無い内訳はそのまま displayOrder の位置に出す
-            val children = list.filter { it.parentAccountKey != null && it.parentAccountKey in byKey }
-                .groupBy { it.parentAccountKey }
-            val ordered = buildList {
-                list.filter { it.parentAccountKey == null || it.parentAccountKey !in byKey }
-                    .sortedBy { it.displayOrder }
-                    .forEach { parent ->
-                        add(parent)
-                        children[parent.accountKey]?.sortedBy { it.displayOrder }?.let { addAll(it) }
-                    }
-            }
-            items(ordered, key = { "acct:${it.accountKey}" }) { account ->
-                AccountRow(account, isChild = account.parentAccountKey in byKey)
+        // 資産・負債は内訳科目、収入・支出は課税区分を出す（PC と同じ列）
+        val profitAndLoss = selected == AccountTab.INCOME || selected == AccountTab.EXPENSE
+        val columns = if (profitAndLoss) {
+            listOf("グループ" to 76.dp, "科目名" to 150.dp, "検索文字" to 104.dp,
+                "有効な\n課税区分" to 72.dp, "既定の\n課税区分" to 72.dp)
+        } else {
+            listOf("グループ" to 76.dp, "科目名" to 150.dp, "内訳科目名" to 110.dp, "検索文字" to 104.dp)
+        }
+
+        PcTable(columns = columns, headerColor = AccountHeaderColor, rows = rows, rowKey = { it.account.accountKey }) { row ->
+            val a = row.account
+            val group = if (row.isChild) null else a.groupName?.takeIf { it.isNotBlank() }
+            // グループ欄は続く間ずっと同じ色で塗り、名前は先頭の行にだけ出す
+            val groupColor = if (rowGroupName(row, rows) != null) GroupNamedColor else GroupNoneColor
+            Cell(if (row.startsGroup) group.orEmpty() else "", 76.dp, groupColor, align = TextAlign.End,
+                drawGrid = row.startsGroup)
+            val nameColor = if (a.isSystem) SystemNameColor else CellColor
+            if (profitAndLoss) {
+                Cell(if (row.isChild) "└ ${a.name}" else a.name, 150.dp, nameColor)
+                Cell(a.searchKey, 104.dp)
+                val allowed = AoiroChoboAccountRules.allowedTaxLabel(a)
+                Cell(allowed.orEmpty(), 72.dp, if (allowed == null) GroupNoneColor else CellColor, TextAlign.Center)
+                val default = AoiroChoboAccountRules.taxCategoryLabel(a.defaultTaxCategory)
+                Cell(default.orEmpty(), 72.dp, if (default == null) GroupNoneColor else CellColor, TextAlign.Center)
+            } else {
+                // 内訳科目は科目名の欄を空けて内訳欄に名前を出す（PC は親の欄を縦に結合している）
+                Cell(if (row.isChild) "" else a.name, 150.dp, nameColor)
+                val subColor = when {
+                    row.isChild -> CellColor
+                    row.hasChildren -> CellColor
+                    else -> GroupNoneColor
+                }
+                Cell(if (row.isChild) a.name else "", 110.dp, subColor)
+                Cell(a.searchKey, 104.dp)
             }
         }
     }
 }
 
-@Composable
-private fun AccountRow(account: AoiroChoboAccount, isChild: Boolean) {
-    val notes = buildList {
-        if (!isChild) account.groupName?.let { add(it) }
-        account.bankSlotNo?.let { add("預金スロット$it") }
+/** 内訳科目は親のグループに属する。色塗りのために親をさかのぼって引く */
+private fun rowGroupName(
+    row: AoiroChoboAccountRules.AccountRow,
+    rows: List<AoiroChoboAccountRules.AccountRow>
+): String? {
+    val owner = if (row.isChild) {
+        rows.firstOrNull { it.account.accountKey == row.account.parentAccountKey }?.account ?: row.account
+    } else {
+        row.account
     }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = if (isChild) 40.dp else 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = if (isChild) "└ ${account.name}" else account.name,
-                fontSize = 16.sp
-            )
-            if (notes.isNotEmpty()) {
-                Text(
-                    text = notes.joinToString("・"),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        account.defaultTaxCategory?.let(::taxCategoryLabel)?.let { Tag(it) }
-    }
-    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-}
-
-// NA は繰入額など税区分を持たない科目。タグを出しても情報が無いので null
-private fun taxCategoryLabel(value: String): String? = when (value) {
-    "Taxable" -> "課税"
-    "NonTaxable" -> "非課税"
-    "NotApplicable" -> "対象外"
-    "TaxExempt" -> "免税"
-    "NA" -> null
-    else -> value
+    return owner.groupName?.takeIf { it.isNotBlank() }
 }
 
 // ---- 摘要辞書 ----
 
+/** PC の摘要画面の上段タブ（帳簿）と、その中の下段タブ */
+private val MEMO_LEDGERS: List<Pair<String, List<MemoTab>>> = listOf(
+    "現金" to listOf(MemoTab.CASH_IN, MemoTab.CASH_OUT),
+    "預金" to listOf(MemoTab.BANK_IN, MemoTab.BANK_OUT),
+    "売掛" to listOf(MemoTab.AR_IN, MemoTab.AR_OUT),
+    "買掛" to listOf(MemoTab.AP_IN, MemoTab.AP_OUT),
+    "未払" to listOf(MemoTab.UNPAID_IN, MemoTab.UNPAID_OUT),
+    "振替" to listOf(MemoTab.TRANSFER)
+)
+
 @Composable
-private fun MemoList(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroChoboAccount>) {
-    var selected by remember { mutableStateOf(MemoTab.CASH_IN) }
+private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroChoboAccount>) {
+    var ledgerIndex by remember { mutableIntStateOf(0) }
+    var subIndex by remember { mutableIntStateOf(0) }
+    val (_, subTabs) = MEMO_LEDGERS[ledgerIndex]
+    val selected = subTabs[subIndex.coerceAtMost(subTabs.lastIndex)]
+
     val accountNames = remember(accounts) { accounts.associate { it.accountKey to it.name } }
     val ratioSensitive = remember(memos) { AoiroChoboMemoRules.ratioSensitiveMemoKeys(memos) }
-    val counts = remember(memos) { MemoTab.entries.associateWith { tab -> memos.count { tab.contains(it) } } }
     val shown = remember(memos, selected) {
         memos.filter { selected.contains(it) }.sortedBy { it.displayOrder }
     }
+    fun nameOf(key: String?): String = key?.let { accountNames[it] ?: it }.orEmpty()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        ScrollableTabRow(selectedTabIndex = selected.ordinal, edgePadding = 8.dp) {
-            MemoTab.entries.forEach { tab ->
-                Tab(
-                    selected = selected == tab,
-                    onClick = { selected = tab },
-                    text = { Text("${tab.label}（${counts[tab] ?: 0}）", fontSize = 13.sp) }
-                )
-            }
+        PcTabBar(
+            labels = MEMO_LEDGERS.map { it.first },
+            selectedIndex = ledgerIndex,
+            onSelect = { ledgerIndex = it; subIndex = 0 }
+        )
+        if (subTabs.size > 1) {
+            PcTabBar(
+                labels = subTabs.map { tab ->
+                    "${tab.label.substringAfter('/')}（${memos.count { tab.contains(it) }}）"
+                },
+                selectedIndex = subIndex,
+                onSelect = { subIndex = it }
+            )
         }
 
-        if (selected.ordinal <= MemoTab.BANK_OUT.ordinal && shown.any { it.memoKey in ratioSensitive }) {
+        if (shown.any { it.memoKey in ratioSensitive }) {
             Text(
                 text = "「要確定」は相手科目・税率が同じで事業割合だけ違う摘要です。" +
                     "取り違えると経費の額が変わるので、アプリが自動で選ばず、初回はあなたが選びます。",
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -247,10 +277,45 @@ private fun MemoList(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroCh
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            return@Column
+        }
+
+        // 現金タブは「預金と共有」、預金タブは「現金と共有」。売掛・買掛・未払には無い（PC と同じ）
+        val sharedHeader = when (selected) {
+            MemoTab.CASH_IN, MemoTab.CASH_OUT -> "預金と\n共有"
+            MemoTab.BANK_IN, MemoTab.BANK_OUT -> "現金と\n共有"
+            else -> null
+        }
+
+        if (selected == MemoTab.TRANSFER) {
+            val columns = listOf("摘要名" to 170.dp, "検索文字" to 96.dp,
+                "借方科目" to 130.dp, "借方\n税率" to 60.dp, "借方\n事業割合" to 64.dp,
+                "貸方科目" to 130.dp, "貸方\n税率" to 60.dp, "貸方\n事業割合" to 64.dp)
+            PcTable(columns = columns, headerColor = MemoHeaderColor, rows = shown, rowKey = { it.memoKey }) { m ->
+                MemoNameCell(m, m.memoKey in ratioSensitive)
+                Cell(m.searchKey, 96.dp)
+                Cell(nameOf(m.debitAccountKey), 130.dp)
+                OptionalCell(AoiroChoboAccountRules.taxRateLabel(m.taxRate), 60.dp)
+                OptionalCell(m.businessRatio?.toString(), 64.dp)
+                Cell(nameOf(m.creditAccountKey), 130.dp)
+                OptionalCell(AoiroChoboAccountRules.taxRateLabel(m.creditTaxRate), 60.dp)
+                OptionalCell(m.creditBusinessRatio?.toString(), 64.dp)
+            }
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(shown, key = { it.memoKey }) { memo ->
-                    MemoRow(memo, accountNames, isRatioSensitive = memo.memoKey in ratioSensitive)
+            val columns = buildList {
+                add("摘要名" to 170.dp); add("検索文字" to 96.dp); add("科目" to 130.dp)
+                add("税率" to 60.dp); add("事業\n割合(%)" to 64.dp)
+                sharedHeader?.let { add(it to 56.dp) }
+            }
+            PcTable(columns = columns, headerColor = MemoHeaderColor, rows = shown, rowKey = { it.memoKey }) { m ->
+                MemoNameCell(m, m.memoKey in ratioSensitive)
+                Cell(m.searchKey, 96.dp)
+                Cell(nameOf(m.counterAccountKey), 130.dp)
+                OptionalCell(AoiroChoboAccountRules.taxRateLabel(m.taxRate), 60.dp)
+                OptionalCell(m.businessRatio?.toString(), 64.dp)
+                if (sharedHeader != null) {
+                    val shared = if (selected == MemoTab.CASH_IN || selected == MemoTab.CASH_OUT) m.showInBank else m.showInCash
+                    Cell(if (shared) "✓" else "", 56.dp, align = TextAlign.Center)
                 }
             }
         }
@@ -258,89 +323,139 @@ private fun MemoList(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroCh
 }
 
 @Composable
-private fun MemoRow(
-    memo: AoiroChoboMemoTemplate,
-    accountNames: Map<String, String>,
-    isRatioSensitive: Boolean
-) {
-    fun nameOf(key: String?): String = key?.let { accountNames[it] ?: it } ?: "（未設定）"
-
-    val accountLine = if (memo.ledgerType == "Transfer") {
-        "借方 ${nameOf(memo.debitAccountKey)} ／ 貸方 ${nameOf(memo.creditAccountKey)}"
-    } else {
-        "相手科目 ${nameOf(memo.counterAccountKey)}"
+private fun MemoNameCell(memo: AoiroChoboMemoTemplate, isRatioSensitive: Boolean) {
+    Row(
+        modifier = Modifier
+            .width(170.dp)
+            .fillMaxHeight()
+            .background(CellColor)
+            .border(0.5.dp, GridColor)
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = memo.name + (memo.bankSlotNo?.let { "（口座$it）" } ?: ""),
+            modifier = Modifier.weight(1f),
+            fontSize = 13.sp,
+            color = CellTextColor,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (isRatioSensitive) {
+            Text(
+                text = "要確定",
+                modifier = Modifier
+                    .background(Color(0xFFFFE0B2), RoundedCornerShape(3.dp))
+                    .padding(horizontal = 3.dp),
+                fontSize = 10.sp,
+                color = Color(0xFF8A4B00)
+            )
+        }
     }
-    val ratio = memo.businessRatio
+}
 
+// ---- 表の部品 ----
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PcTabBar(labels: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = memo.name, fontSize = 16.sp)
-            Text(
-                text = accountLine + (memo.bankSlotNo?.let { "・預金スロット$it 専用" } ?: ""),
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        labels.forEachIndexed { i, label ->
+            FilterChip(
+                selected = i == selectedIndex,
+                onClick = { onSelect(i) },
+                label = { Text(label, fontSize = 13.sp) }
             )
         }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                memo.taxRate?.let { Tag(taxRateLabel(it)) }
-                if (ratio != null && ratio != 100) Tag("事業$ratio%")
+    }
+}
+
+/**
+ * 横にはみ出す表。列見出しは縦スクロールしても上に残す。
+ * 画面幅に収まらないので、表全体を横スクロールさせる（列幅は固定）。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun <T> PcTable(
+    columns: List<Pair<String, Dp>>,
+    headerColor: Color,
+    rows: List<T>,
+    rowKey: (T) -> String,
+    rowContent: @Composable RowScope.(T) -> Unit
+) {
+    val tableWidth = columns.fold(0.dp) { acc, (_, w) -> acc + w }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .horizontalScroll(rememberScrollState())
+    ) {
+        LazyColumn(modifier = Modifier.width(tableWidth).fillMaxHeight()) {
+            stickyHeader(key = "header") {
+                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                    columns.forEach { (title, width) ->
+                        Text(
+                            text = title,
+                            modifier = Modifier
+                                .width(width)
+                                .fillMaxHeight()
+                                .background(headerColor)
+                                .border(0.5.dp, GridColor)
+                                .padding(vertical = 6.dp),
+                            fontSize = 12.sp,
+                            lineHeight = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (headerColor == MemoHeaderColor) Color.White else CellTextColor,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
             }
-            if (isRatioSensitive) {
-                Tag(
-                    text = "要確定",
-                    container = MaterialTheme.colorScheme.tertiaryContainer,
-                    content = MaterialTheme.colorScheme.onTertiaryContainer
-                )
+            items(rows, key = rowKey) { row ->
+                Row(modifier = Modifier.height(IntrinsicSize.Min).heightIn(min = 36.dp)) {
+                    rowContent(row)
+                }
             }
         }
     }
-    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-}
-
-private fun taxRateLabel(value: String): String = when (value) {
-    "10" -> "10%"
-    "8" -> "軽減8%"
-    "8_old" -> "旧8%"
-    "non" -> "非課税"
-    "na" -> "対象外"
-    "men" -> "免税"
-    else -> value
-}
-
-// ---- 共通 ----
-
-@Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        fontSize = 14.sp,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
 }
 
 @Composable
-private fun Tag(
+private fun Cell(
     text: String,
-    container: Color = MaterialTheme.colorScheme.secondaryContainer,
-    content: Color = MaterialTheme.colorScheme.onSecondaryContainer
+    width: Dp,
+    background: Color = CellColor,
+    align: TextAlign = TextAlign.Start,
+    drawGrid: Boolean = true
 ) {
-    Text(
-        text = text,
+    Box(
         modifier = Modifier
-            .background(container, RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-        fontSize = 12.sp,
-        color = content
-    )
+            .width(width)
+            .fillMaxHeight()
+            .background(background)
+            .then(if (drawGrid) Modifier.border(0.5.dp, GridColor) else Modifier)
+            .padding(horizontal = 4.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.fillMaxWidth(),
+            fontSize = 13.sp,
+            color = CellTextColor,
+            textAlign = align,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** 値が無ければ PC と同じく灰色の空欄 */
+@Composable
+private fun OptionalCell(text: String?, width: Dp) {
+    Cell(text.orEmpty(), width, if (text == null) GroupNoneColor else CellColor, TextAlign.Center)
 }
