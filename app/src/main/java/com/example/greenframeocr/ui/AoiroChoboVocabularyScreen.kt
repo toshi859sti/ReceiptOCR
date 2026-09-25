@@ -49,6 +49,7 @@ fun AoiroChoboVocabularyScreen(
     var memos by remember { mutableStateOf<List<AoiroChoboMemoTemplate>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) }
+    var showUsageDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         val dao = database.aoiroChoboVocabDao()
@@ -65,6 +66,12 @@ fun AoiroChoboVocabularyScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "戻る")
+                    }
+                },
+                actions = {
+                    // 用途（購買・レシート・預金）ごとに候補の科目を減らす。科目の閲覧とは別の、農家が決める設定
+                    if (accounts.isNotEmpty()) {
+                        TextButton(onClick = { showUsageDialog = true }) { Text("用途の絞り込み") }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -114,6 +121,14 @@ fun AoiroChoboVocabularyScreen(
                 else -> MemoTable(memos, accounts)
             }
         }
+    }
+
+    if (showUsageDialog) {
+        AoiroChoboAccountUsageDialog(
+            database = database,
+            accounts = accounts,
+            onDismiss = { showUsageDialog = false }
+        )
     }
 }
 

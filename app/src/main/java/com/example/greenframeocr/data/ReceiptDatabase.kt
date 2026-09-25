@@ -28,9 +28,10 @@ import com.example.greenframeocr.util.toCanonicalKey
         ReceiptPaymentMethodRule::class,
         AoiroChoboAccount::class,
         AoiroChoboMemoTemplate::class,
-        AoiroChoboVocabMeta::class
+        AoiroChoboVocabMeta::class,
+        AoiroChoboAccountUsage::class
     ],
-    version = 37,
+    version = 38,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -49,6 +50,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun receiptPaymentMethodRuleDao(): ReceiptPaymentMethodRuleDao
     abstract fun aoiroChoboVocabDao(): AoiroChoboVocabDao
     abstract fun aoiroChoboLinkDao(): AoiroChoboLinkDao
+    abstract fun aoiroChoboAccountUsageDao(): AoiroChoboAccountUsageDao
 
     companion object {
         @Volatile
@@ -1039,6 +1041,22 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v37 → v38: AoiroChobo 科目の用途ごとの絞り込み（JA 購買・レシート・預金）を持つ表を足す。
+         *
+         * 行が無い科目は PC のフラグどおりに候補になるので、既存データの書き込みは要らない。
+         */
+        private val MIGRATION_37_38 = object : Migration(37, 38) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE TABLE IF NOT EXISTS aoirochobo_account_usage (" +
+                        "accountKey TEXT NOT NULL, accountKeyName TEXT NOT NULL, " +
+                        "forPurchase INTEGER NOT NULL, forReceipt INTEGER NOT NULL, forDeposit INTEGER NOT NULL, " +
+                        "PRIMARY KEY(accountKey))"
+                )
+            }
+        }
+
         private val MIGRATION_34_35 = object : Migration(34, 35) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE receipt_items ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
@@ -1463,7 +1481,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38)
                     .build()
                 INSTANCE = instance
                 instance

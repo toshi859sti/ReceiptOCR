@@ -201,6 +201,17 @@ object AoiroChoboVocabImporter {
                 }
             }
 
+            // 用途の絞り込みも名前で作り替えを見る。変わっていたら設定を消して既定（PC のフラグどおり）に戻す。
+            // 別物になった科目に前の科目の「購買では使わない」が残ると、候補から黙って消えてしまう
+            val usageDao = db.aoiroChoboAccountUsageDao()
+            usageDao.getAll().forEach { setting ->
+                val verdict = verify(setting.accountKey, setting.accountKeyName, accountNames)
+                if (verdict is Verdict.Renamed) {
+                    usageDao.delete(setting.accountKey)
+                    unlinked += "科目「${verdict.before}」の用途の絞り込み（${verdict.after} に変わった）"
+                }
+            }
+
             // ---- 5. 未確定の学習件数 ----
             Result.Imported(
                 accountCount = accounts.size,

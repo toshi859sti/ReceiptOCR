@@ -14,9 +14,12 @@ import com.example.greenframeocr.util.AoiroChoboMemoRules.MemoTab
  */
 object AoiroChoboPurchaseRules {
 
-    /** 借方の候補。契約 vocabulary-snapshot.md §4.5：`Purchase` 借方は `ocrRoleExpenseDebit == true` */
+    /**
+     * PC が許す借方の候補（契約 §4.5：`Purchase` 借方は `ocrRoleExpenseDebit == true`）。農家の絞り込みは通さない。
+     * 絞り込み後の候補は [AoiroChoboUsageRules.candidates]
+     */
     fun accountCandidates(accounts: List<AoiroChoboAccount>): List<AoiroChoboAccount> =
-        accounts.filter { it.ocrRoleExpenseDebit }.sortedBy { it.displayOrder }
+        AoiroChoboUsageRules.pcCandidates(AoiroChoboUsageRules.Usage.PURCHASE, accounts)
 
     /**
      * [accountKey] で絞った摘要の候補。JA 購買は買掛帳の仕入（`AP` × `In`）の摘要だけから選ぶ。

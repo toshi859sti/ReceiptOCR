@@ -30,6 +30,7 @@ import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.util.AoiroChoboAccountRules
 import com.example.greenframeocr.util.AoiroChoboMemoRules
 import com.example.greenframeocr.util.AoiroChoboPurchaseRules
+import com.example.greenframeocr.util.AoiroChoboUsageRules
 import com.example.greenframeocr.util.GeminiApiException
 import com.example.greenframeocr.util.GeminiApiKeyMissingException
 import com.example.greenframeocr.util.GeminiQuotaExhaustedException
@@ -76,6 +77,8 @@ fun ProductListScreen(
     // あおいろ帳簿（BLUE_RETURN_PREP）モードの科目・摘要。PC から取り込んだミラー
     var aoiroAccounts by remember { mutableStateOf<List<AoiroChoboAccount>>(emptyList()) }
     var aoiroMemos by remember { mutableStateOf<List<AoiroChoboMemoTemplate>>(emptyList()) }
+    // 用途の絞り込み（農家がスマホで決める）。JA 購買の候補は PC のフラグ ∩ この設定
+    var aoiroUsage by remember { mutableStateOf<List<AoiroChoboAccountUsage>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var sortOrder by remember { mutableStateOf(SortOrder.FREQUENCY) }
@@ -107,6 +110,7 @@ fun ProductListScreen(
         yayoiFlaggedList = allYayoi.filter { it.usedForPurchase }
         aoiroAccounts = database.aoiroChoboVocabDao().getAllAccounts()
         aoiroMemos = database.aoiroChoboVocabDao().getAllMemoTemplates()
+        aoiroUsage = database.aoiroChoboAccountUsageDao().getAll()
         allProducts = database.productMasterDao().getAll()
     }
 
@@ -265,7 +269,7 @@ fun ProductListScreen(
             aiMatchingError = "未マッチングの品目がありません"
             return
         }
-        val accounts = AoiroChoboPurchaseRules.accountCandidates(aoiroAccounts)
+        val accounts = AoiroChoboUsageRules.candidates(AoiroChoboUsageRules.Usage.PURCHASE, aoiroAccounts, aoiroUsage)
         if (accounts.isEmpty()) {
             aiMatchingError = "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください"
             return
@@ -599,6 +603,7 @@ fun ProductListScreen(
             yayoiFlaggedList = yayoiFlaggedList,
             aoiroAccounts = aoiroAccounts,
             aoiroMemos = aoiroMemos,
+            aoiroUsage = aoiroUsage,
             categories = categories,
             onDismiss = {
                 showEditDialog = false
@@ -634,6 +639,7 @@ fun ProductListScreen(
             yayoiFlaggedList = yayoiFlaggedList,
             aoiroAccounts = aoiroAccounts,
             aoiroMemos = aoiroMemos,
+            aoiroUsage = aoiroUsage,
             categories = categories,
             onDismiss = { showAddDialog = false },
             onSave = { newProduct ->
@@ -1153,6 +1159,7 @@ private fun ProductEditDialog(
     yayoiFlaggedList: List<YayoiAccount>,
     aoiroAccounts: List<AoiroChoboAccount>,
     aoiroMemos: List<AoiroChoboMemoTemplate>,
+    aoiroUsage: List<AoiroChoboAccountUsage>,
     categories: List<String>,
     onDismiss: () -> Unit,
     onSave: (ProductMaster) -> Unit,
@@ -1384,7 +1391,8 @@ private fun ProductEditDialog(
     if (showAoiroAccountPicker) {
         AoiroAccountPickerDialog(
             productName = name,
-            accounts = AoiroChoboPurchaseRules.accountCandidates(aoiroAccounts),
+            accounts = AoiroChoboUsageRules.candidates(AoiroChoboUsageRules.Usage.PURCHASE, aoiroAccounts, aoiroUsage),
+            allAccounts = AoiroChoboPurchaseRules.accountCandidates(aoiroAccounts),
             memos = aoiroMemos,
             selectedKey = selectedAccountKey,
             onSelect = { key ->
@@ -1535,26 +1543,40 @@ private fun memoDetail(memo: AoiroChoboMemoTemplate): String = buildList {
  * あおいろ科目の選択。借方に使ってよい科目（契約 §4.5）だけを枠番号順に出す。
  * 科目ごとに買掛/仕入の摘要の件数を添える（0 件なら摘要なしで送ることになる）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AoiroAccountPickerDialog(
     productName: String,
     accounts: List<AoiroChoboAccount>,
+    allAccounts: List<AoiroChoboAccount>,
     memos: List<AoiroChoboMemoTemplate>,
     selectedKey: String?,
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // 絞り込みで外した科目は既定で隠す。ただし今選ばれている科目が外側にあれば、最初から全部見せる
+    val hidden = allAccounts.size - accounts.size
+    var showAll by remember { mutableStateOf(selectedKey != null && accounts.none { it.accountKey == selectedKey }) }
+    val shown = if (showAll) allAccounts else accounts
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Column {
                 Text(productName.ifEmpty { "新規商品" }, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text("あおいろ科目を選択", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (hidden > 0) {
+                    FilterChip(
+                        selected = showAll,
+                        onClick = { showAll = !showAll },
+                        label = { Text("絞り込み外も表示（${hidden}件）", fontSize = 12.sp) }
+                    )
+                }
             }
         },
         text = {
-            LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
-                items(accounts, key = { it.accountKey }) { account ->
+            // 切り替えたら先頭に戻す。そのままだと表示中の行が基準になり、上に増えた科目が画面外に隠れる
+            key(showAll) { LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
+                items(shown, key = { it.accountKey }) { account ->
                     val memoCount = AoiroChoboPurchaseRules.memoCandidates(account.accountKey, memos).size
                     PickerRow(
                         selected = account.accountKey == selectedKey,
@@ -1566,7 +1588,7 @@ private fun AoiroAccountPickerDialog(
                         onClick = { onSelect(account.accountKey) }
                     )
                 }
-            }
+            } }
         },
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
