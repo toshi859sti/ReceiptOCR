@@ -34,8 +34,6 @@ import com.example.greenframeocr.util.importTekiyouFromCsv
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import kotlin.math.abs
 
 // 摘要ルールの並び替え順。NAMEは既存のDAO取得順（入金/出金→五十音順）をそのまま使う
@@ -158,10 +156,6 @@ fun TekiyouMatchingScreen(
 
     LaunchedEffect(Unit) {
         importTekiyouFromCsv(context, database)
-        val meisaiCount = database.depositMeisaiDao().getCount()
-        if (meisaiCount == 0) {
-            importMeisaiFromCsv(context, database)
-        }
         updateRulesFromMeisai(database)
         loadData()
     }
@@ -213,18 +207,6 @@ fun TekiyouMatchingScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "戻る")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        scope.launch {
-                            database.depositMeisaiDao().deleteAll()
-                            importMeisaiFromCsv(context, database)
-                            updateRulesFromMeisai(database)
-                            loadData()
-                        }
-                    }) {
-                        Icon(Icons.Default.Refresh, "通帳再読込")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -1280,65 +1262,6 @@ private fun IndividualOverrideDialog(
             }
         }
     )
-}
-
-/**
- * 預金明細CSVをインポート
- */
-private suspend fun importMeisaiFromCsv(context: Context, database: ReceiptDatabase) {
-    withContext(Dispatchers.IO) {
-        try {
-            val inputStream = context.assets.open("meisai.csv")
-            val reader = BufferedReader(InputStreamReader(inputStream, "UTF-8"))
-            val meisaiList = mutableListOf<DepositMeisai>()
-
-            var isFirstLine = true
-            reader.forEachLine { line ->
-                if (isFirstLine) {
-                    isFirstLine = false
-                    return@forEachLine
-                }
-
-                val trimmedLine = line.trim()
-                if (trimmedLine.isEmpty()) return@forEachLine
-
-                val cells = trimmedLine.split(",").map { it.trim() }
-                if (cells.size >= 4) {
-                    val date = cells[0]
-                    val number = cells[1]
-                    val tekiyou = cells[2]
-                    val amount = cells[3].toIntOrNull() ?: 0
-                    val memo = cells.getOrNull(4) ?: ""
-
-                    if (date.isNotEmpty() && tekiyou.isNotEmpty()) {
-                        meisaiList.add(
-                            DepositMeisai(
-                                transactionDate = date,
-                                transactionNumber = number,
-                                tekiyou = tekiyou,
-                                amount = amount,
-                                memo = memo
-                            )
-                        )
-                    }
-                }
-            }
-            reader.close()
-
-            if (meisaiList.isNotEmpty()) {
-                // 通番が空欄の行は合成番号を振ってから入れる（PassbookDataScreen の取込と同じ扱い。
-                // REPLACE なので、空欄のままだと同じ日の行が上書きし合って消える）
-                val numbered = com.example.greenframeocr.util.DepositNumberAssigner.assign(
-                    database.depositMeisaiDao(), meisaiList
-                )
-                database.depositMeisaiDao().insertAll(numbered)
-            }
-            Unit
-        } catch (e: Exception) {
-            android.util.Log.e("TekiyouMatchingScreen", "Failed to import meisai CSV", e)
-            Unit
-        }
-    }
 }
 
 /**

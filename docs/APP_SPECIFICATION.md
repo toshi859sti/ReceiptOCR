@@ -462,7 +462,6 @@ Menu (メインメニュー)
 | product_master.csv | 商品マスタ辞書 | 数千 |
 | ocr_variants.csv | OCR誤認識初期パターン | 数千 |
 | rakurakutekiyou.csv | らくらく摘要辞書 | 数百 |
-| meisai.csv | 預金明細サンプル | — |
 | receipts_2025_01-11.csv | 領収書サンプル | — |
 
 **初期化フロー** (DatabaseInitializer):
