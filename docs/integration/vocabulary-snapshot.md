@@ -95,6 +95,7 @@ AoiroChobo の `Account` テーブルのうち **`IsActive = 1` の行**を、�
   "name": "現金",                // 表示名（改名され得る。マッチング/参照のキーにしない）
   "accountType": "Asset",        // enums.accountType
   "groupName": null,             // 決算書内訳のグループ名（"田畑" 等）。null 可
+  "displayGroup": null,          // PC の科目マスタ画面のグループ欄の名前（"経費" "資本" 等）。表示専用。null 可（下の「displayGroup」）
   "parentAccountKey": null,      // 補助科目の親の accountKey。親科目なら null
   "ledgerAffinity": "Cash",      // この科目が属する帳簿（下表）。null 可
   "bankSlotNo": null,            // 預金口座スロット番号。預金科目のみ。§4.3
@@ -119,6 +120,7 @@ AoiroChobo の `Account` テーブルのうち **`IsActive = 1` の行**を、�
 | `ParentId` | `parentAccountKey` | Account.Id → その科目の `accountKey` に解決 |
 | `Name` | `name` | |
 | `GroupName` | `groupName` | |
+| （列なし・PC が導く） | `displayGroup` | 2026-09-25 minor（5）。画面のグループ欄の名前。下の「`displayGroup`」 |
 | `AccountType` | `accountType` | |
 | `LedgerAffinity` | `ledgerAffinity` | |
 | `BankSlotNo` | `bankSlotNo` | |
@@ -131,6 +133,22 @@ AoiroChobo の `Account` テーブルのうち **`IsActive = 1` の行**を、�
 | `OcrRoleDepositCounter`（Phase 4） | `ocrRoleDepositCounter` | 0/1 → bool。§4.5 |
 | `IsActive` | （出さない） | 常に 1（無効行は出力しない） |
 | `CreatedAt` / `UpdatedAt` | （出さない） | 内部管理用 |
+
+**`displayGroup` — 画面のグループ欄の名前（2026-09-25 minor（5））**
+
+- PC の「科目・残高登録」画面でグループ欄に出している名前。PC の画面と**同じ規則**
+  （PC 側 `AccountDisplayGroup`）から作るので、画面とずれない。**表示専用**で、マッチング・候補・参照には使わない。
+- `groupName` とは別物。`groupName` は決算書内訳の区分（作物グループ・繰戻額・繰入額・償却資産・普通預金）で、
+  PC の決算書・e-Tax がこれで判定している。画面の名前はそこに無いもの（経費・資本など）を含み、
+  **同じ科目で値が違うこともある**（育成費用：`groupName` は `"繰入額"`、`displayGroup` は `"経費"`）。
+- 値（本番 2026 年分で出るもの）：`償却資産` `資本` `田畑` `特殊施設` `繰戻額` `経費` `(任意) 経費` `繰入額`。
+  農家が任意科目を作ると `(任意) 資産` `(任意) 負債`、作物を足すと `果樹` `畜産物` も出る。
+  グループ名の無いまとまり（現金〜貸付金・買掛金〜預り金・事業主貸／借・家事消費〜雑収入・農外収入・家計費）は null。
+- **口座（`parentAccountKey` のある科目）は親の値**になる。画面では口座を親と同じまとまりに描き、
+  グループ欄には名前を出していないため（本番では普通預金の口座 → null。`groupName` は `"普通預金"`）。
+- 画面では、同じ値が続く間の**先頭の行にだけ**名前を出す。同じ名前でも間に別のまとまりが挟まれば別の塊
+  （支出タブの「経費」は租税公課〜土地改良費と、(任意) 経費の後の雑費・育成費用の 2 か所）。
+- 値の一覧は固定ではない（将来の様式改正で増え得る）。スマホ側は文字列をそのまま出し、特定の値で分岐しないこと。
 
 **`ledgerAffinity` の値**
 

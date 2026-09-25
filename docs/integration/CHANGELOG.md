@@ -6,6 +6,27 @@
 
 ---
 
+## schemaVersion 2 — 2026-09-25 minor（5）（`accounts[].displayGroup` を追加）
+
+`schemaVersion` は据え置き（**2 のまま**）。前方互換のフィールド追加。スマホ側の依頼
+（[REPLY-phone-2026-09-25.md](REPLY-phone-2026-09-25.md) §2）への対応。
+
+- **`accounts[].displayGroup`**（string・null 可）を追加。PC の「科目・残高登録」画面のグループ欄に出している名前。
+  PC の画面と同じ規則から作る。詳しくは [vocabulary-snapshot.md](vocabulary-snapshot.md) §4.1 の「`displayGroup`」。
+- **`groupName` は変えない**（決算書内訳の区分のまま。PC の決算書・e-Tax がこの値で判定しているため、意味を広げない）。
+  画面の名前は別のキーにした。
+- 本番 2026 年分で新しく名前が付くもの：経費（租税公課〜土地改良費・雑費・**育成費用**）、(任意) 経費（通信費・作業委託料・水利費）、
+  繰入額（**専従者給与**）、資本（元入金・青申特別控除前の所得金額）。
+  逆に `groupName` と違う値になるもの：育成費用（`groupName` `"繰入額"` → `displayGroup` `"経費"`）、
+  営農口座・直売口座（`groupName` `"普通預金"` → `displayGroup` null。口座は親の値）。
+- **`contentHash` は一度変わる**（`accounts` が対象なので）。本番 2026 年分は `sha256:05ba6bac…34bb`。
+  `displayGroup` と `displayOrder`（minor（4））以外の値は 2026-09-23 の書き出しと一致することを確認した。
+
+スマホ側への影響：画面のグループ欄を `groupName` から `displayGroup` に切り替える。`groupName` を他で使っていなければ
+そのまま読み捨ててよい。
+
+---
+
 ## schemaVersion 2 — 2026-09-24 minor（4）（`displayOrder` を科目マスタの枠番号にした）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。変わったのは `accounts[].displayOrder` の**値と意味**。
