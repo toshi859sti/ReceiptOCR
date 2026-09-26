@@ -101,10 +101,8 @@ Jetpack Compose の画面ファイル。1ファイル1画面が原則。
 | `CategoryRecalculator.kt` | カテゴリ再計算 |
 | `ImagePreprocessor.kt` | 画像前処理ユーティリティ |
 | `OcrQualityEvaluator.kt` | OCR 結果品質評価 |
-| `OcrResultEvaluator.kt` | OCR 結果評価 |
-| `OcrResultMerger.kt` | 複数 OCR 結果のマージ |
 | `TekiyouDictImporter.kt` | 摘要辞書インポート |
-| `ValidationUtils.kt` | 入力バリデーション |
+| `Category.kt` | JA購買の区分名（一般購買・給油所・農業機械・未分類） |
 | `YuvToRgbConverter.kt` | CameraX YUV→RGB 変換 |
 
 ### `viewmodel/`

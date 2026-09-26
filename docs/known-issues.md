@@ -139,8 +139,8 @@
   トップ・JA購買伝票・JA預金・レシート領収書の 4 画面を `MenuColumn`（収まれば中央、収まらなければスクロール）に。
   簿記ソフト連携は元からスクロールできた）
 - **`java.time` は使えない**（minSdk 24・coreLibraryDesugaring なし。API 26 未満の端末で実行時に落ちる）。
-  日付は `java.util.Calendar` / `SimpleDateFormat` で扱う。`util/ValidationUtils.kt` が `LocalDate` を
-  使っているが、2026-09-25 時点で呼び出し元が無いので実害はない（2026-09-25 発見）
+  日付は `java.util.Calendar` / `SimpleDateFormat` で扱う。唯一 `LocalDate` を使っていた `util/ValidationUtils.kt` は
+  呼び出し元が無かったので 2026-09-26 に削除した（2026-09-25 発見）
 
 ---
 

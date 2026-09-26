@@ -134,7 +134,6 @@ Add adaptive icon: white icon on dark green background (#0E6C48)
 
 ## セキュリティ考慮事項
 
-- ユーザー入力はすべて `ValidationUtils` でバリデーションする
 - CSV エクスポート先はシステムの `SAF（Storage Access Framework）` 経由で取得する
 - DB ファイルはアプリ内部ストレージに保存（外部公開しない）
 - `WRITE_EXTERNAL_STORAGE` は API 32 以下にのみ要求する（API 33+ は `READ_MEDIA_IMAGES`）

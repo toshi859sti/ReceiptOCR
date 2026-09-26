@@ -169,9 +169,9 @@ Room DB **v39**（2026-09-26 時点）。21 テーブル。
 
 `DatabaseInitializer` がテーブルが空のときに取り込む：`yayoi_accounts.csv` / `rakuraku_accounts.csv` /
 `product_master.csv` / `ocr_variants.csv`。支払方法ルールはコード内の既定値から作る。
-`rakurakutekiyou.csv` も同梱されているが、取り込む `importTekiyouFromCsv`（`TekiyouDictImporter.kt`）は
-削除した預金摘要辞書画面からしか呼ばれていなかったため、今はどこからも呼ばれない
-（摘要辞書はバックアップのインポートか画面での追加で入る）。
+摘要辞書（`rakuraku_tekiyou`）は `rakurakutekiyou.csv` から、「らくらく：摘要辞書」と「通帳摘要別リスト」を
+開くたびに差分で取り込む（`importTekiyouFromCsv`。DB に無い「大分類｜小分類｜摘要名」だけを足す）。
+そのため画面で消した既定の摘要は、次に開いたときに戻ってくる。
 
 ### バックアップ
 
