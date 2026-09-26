@@ -625,6 +625,11 @@ fun ReceiptInputScreen(
                         }
                     },
                     actions = {
+                        FontSizeControl(
+                            fontSize = fontSize,
+                            onDecrease = { fontSize = (fontSize - 1f).coerceAtLeast(10f) },
+                            onIncrease = { fontSize = (fontSize + 1f).coerceAtMost(20f) }
+                        )
                         Text(
                             text = if (viewMode == ViewMode.EDIT) "編集" else "閲覧",
                             fontSize = 18.sp,
@@ -858,7 +863,7 @@ fun ReceiptInputScreen(
                     }
                 }
 
-                // 4行目: 年月固定、フォントサイズ、再計算
+                // 4行目: 年月固定、再計算（文字サイズはタイトルバー）
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -881,40 +886,6 @@ fun ReceiptInputScreen(
                         )
                         Spacer(Modifier.width(4.dp))
                         Text("年月固定", fontSize = 13.sp)
-                    }
-
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    // フォントサイズコントロール
-                    Row(
-                        modifier = Modifier
-                            .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("文字", fontSize = 12.sp)
-                        IconButton(
-                            onClick = { fontSize = (fontSize - 1f).coerceAtLeast(10f) },
-                            enabled = fontSize > 10f,
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Text("-", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Text(
-                            text = "${fontSize.toInt()}",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.width(20.dp),
-                            textAlign = TextAlign.Center
-                        )
-                        IconButton(
-                            onClick = { fontSize = (fontSize + 1f).coerceAtMost(20f) },
-                            enabled = fontSize < 20f,
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Text("+", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
                     }
 
                     Spacer(modifier = Modifier.weight(1f))
