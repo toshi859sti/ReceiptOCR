@@ -100,7 +100,7 @@
 ```
 
 - `CameraScreen` / `CameraScreenForOcr` / `TransformPreviewScreen` は他の画面に埋め込むコンポーザブルなので、ルートを持たない（不具合ではない）
-- `YokinTekiyouScreen`（預金摘要辞書）はルートが登録されているが、どの画面からも遷移しない
+- 摘要辞書（買掛・預金）の専用画面は、どこからも開けなかったので 2026-09-26 に削除した。摘要は「らくらく：摘要辞書」の各タブで扱う
 
 ### 一覧画面の共通 UI
 
@@ -169,7 +169,8 @@ Room DB **v39**（2026-09-26 時点）。21 テーブル。
 
 `DatabaseInitializer` がテーブルが空のときに取り込む：`yayoi_accounts.csv` / `rakuraku_accounts.csv` /
 `product_master.csv` / `ocr_variants.csv`。支払方法ルールはコード内の既定値から作る。
-`rakurakutekiyou.csv` も同梱されているが、取り込む `TekiyouDictImporter` はどこからも呼ばれていない
+`rakurakutekiyou.csv` も同梱されているが、取り込む `importTekiyouFromCsv`（`TekiyouDictImporter.kt`）は
+削除した預金摘要辞書画面からしか呼ばれていなかったため、今はどこからも呼ばれない
 （摘要辞書はバックアップのインポートか画面での追加で入る）。
 
 ### バックアップ

@@ -13,7 +13,6 @@ flowchart TD
     PurchaseOutputConfirm["購買CSV出力\n(OutputConfirmScreen)"]
     PassbookData["通帳データ\n(PassbookDataScreen)"]
     TekiyouMatching["摘要マッチング\n(TekiyouMatchingScreen)"]
-    YokinTekiyou["預金摘要辞書\n(YokinTekiyouScreen)"]
     DepositOutputConfirm["預金CSV出力\n(OutputConfirmScreen)"]
     Settings["設定\n(SettingsScreen)"]
     RakurakuTekiyou["らくらく摘要辞書\n(RakurakuTekiyouScreen)"]
@@ -30,7 +29,6 @@ flowchart TD
 
     DepositMenu --> PassbookData
     DepositMenu --> TekiyouMatching
-    DepositMenu --> YokinTekiyou
     DepositMenu --> DepositOutputConfirm
 
     Settings --> RakurakuTekiyou

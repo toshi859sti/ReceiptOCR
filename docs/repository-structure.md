@@ -84,7 +84,6 @@ Jetpack Compose の画面ファイル。1ファイル1画面が原則。
 | `OutputConfirmScreen.kt` | CSV 出力確認（購買・預金共用） | `purchase_output_confirm` / `deposit_output_confirm` |
 | `PassbookDataScreen.kt` | 通帳データ入力 | `passbook_data` |
 | `TekiyouMatchingScreen.kt` | 摘要マッチング設定 | `tekiyou_matching` |
-| `YokinTekiyouScreen.kt` | 預金摘要辞書 | `yokin_tekiyou` |
 | `RakurakuTekiyouScreen.kt` | らくらく摘要辞書 | `rakuraku_tekiyou` |
 | `SettingsScreen.kt` | 設定・データ管理 | `settings` |
 | `AccountSettingsScreen.kt` | 勘定科目設定 | **Navigation 未接続** |

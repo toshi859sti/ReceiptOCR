@@ -42,7 +42,6 @@ import com.example.greenframeocr.ui.GeneralReceiptOutputScreen
 import com.example.greenframeocr.ui.InvoiceStoreListScreen
 import com.example.greenframeocr.ui.ReceiptPaymentMethodRuleScreen
 import com.example.greenframeocr.ui.YearSummaryScreen
-import com.example.greenframeocr.ui.YokinTekiyouScreen
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 
 /**
@@ -58,7 +57,6 @@ sealed class Screen(val route: String) {
     object PurchaseOutputConfirm : Screen("purchase_output_confirm")
     object PassbookData : Screen("passbook_data")
     object TekiyouMatching : Screen("tekiyou_matching")
-    object YokinTekiyou : Screen("yokin_tekiyou")
     object DepositOutputConfirm : Screen("deposit_output_confirm")
     object RakurakuTekiyou : Screen("rakuraku_tekiyou")
     object YearSummary : Screen("year_summary")
@@ -190,14 +188,6 @@ fun ReceiptNavGraph(
                 appPreferences = appPreferences,
                 onBack = { navController.popBackStack() },
                 initialUri = sharedCsvUri
-            )
-        }
-
-        // 預金摘要辞書画面
-        composable(Screen.YokinTekiyou.route) {
-            YokinTekiyouScreen(
-                database = database,
-                onBack = { navController.popBackStack() }
             )
         }
 
