@@ -327,3 +327,14 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 6. 未マッチの摘要はまとめて Gemini に科目を提案させられる（「AIで一括提案」）
 
 ルールと明細の `accountKey`・`memoKey` 列（あおいろ用）はあるが、預金の `transactions.json` は未着手。
+
+---
+
+## 7. 商品名入力の文字幅変換仕様（ReceiptInputScreen）
+
+伝票データ画面のセル編集ダイアログ（`CellEditDialog`）の商品名フィールド。変換は `util/ProductNameInputUtils.kt`。
+
+- 新しく入力した部分だけを変換する（前後の一致部分を除いた差分を見る `applyConversionToNewInput`）。既にある文字は変えない
+- 数字（0-9）と半角スペースは常に全角にする
+- 英字はトグル（英字：全角 / 半角、既定は全角）の選択に従う
+- 「一括全角」ボタンで、今の文字列の半角英数字・記号・スペースをまとめて全角にする（`convertAllToFullWidth`）
