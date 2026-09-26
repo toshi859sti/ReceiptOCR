@@ -10,7 +10,6 @@ flowchart TD
     ReceiptInput["購買リスト・撮影・編集\n(ReceiptInputScreen)"]
     MonthlySummary["月次サマリー\n(MonthlySummaryScreen)"]
     ProductList["商品リスト\n(ProductListScreen)"]
-    KaikakeTekiyou["買掛摘要辞書\n(KaikakeTekiyouScreen)"]
     PurchaseOutputConfirm["購買CSV出力\n(OutputConfirmScreen)"]
     PassbookData["通帳データ\n(PassbookDataScreen)"]
     TekiyouMatching["摘要マッチング\n(TekiyouMatchingScreen)"]
@@ -25,7 +24,6 @@ flowchart TD
 
     PurchaseMenu --> ReceiptInput
     PurchaseMenu --> ProductList
-    PurchaseMenu --> KaikakeTekiyou
     PurchaseMenu --> PurchaseOutputConfirm
 
     ReceiptInput --> MonthlySummary

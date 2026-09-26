@@ -19,7 +19,6 @@ import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.ReceiptDao
 import com.example.greenframeocr.ui.AoiroChoboVocabularyScreen
 import com.example.greenframeocr.ui.DepositMenuScreen
-import com.example.greenframeocr.ui.KaikakeTekiyouScreen
 import com.example.greenframeocr.ui.MenuScreen
 import com.example.greenframeocr.ui.MonthlySummaryScreen
 import com.example.greenframeocr.ui.OutputConfirmScreen
@@ -56,7 +55,6 @@ sealed class Screen(val route: String) {
     object Settings : Screen("settings")
     object ReceiptInput : Screen("receipt_input")
     object ProductList : Screen("product_list")
-    object KaikakeTekiyou : Screen("kaikake_tekiyou")
     object PurchaseOutputConfirm : Screen("purchase_output_confirm")
     object PassbookData : Screen("passbook_data")
     object TekiyouMatching : Screen("tekiyou_matching")
@@ -172,15 +170,6 @@ fun ReceiptNavGraph(
                 onNavigateToOutputConfirm = {
                     navController.navigate(Screen.DepositOutputConfirm.route)
                 }
-            )
-        }
-
-        // 買掛摘要辞書画面
-        composable(Screen.KaikakeTekiyou.route) {
-            KaikakeTekiyouScreen(
-                database = database,
-                appPreferences = appPreferences,
-                onBack = { navController.popBackStack() }
             )
         }
 

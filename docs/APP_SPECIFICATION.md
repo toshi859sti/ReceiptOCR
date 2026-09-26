@@ -109,7 +109,6 @@
 - TekiyouMatchingScreen - 摘要パターンマッチング
 - OcrLearningStatusScreen - 学習データの可視化
 - ProductListScreen - 商品マスタ表示
-- KaikakeTekiyouScreen - 買掛摘要辞書
 - YokinTekiyouScreen - 預金摘要辞書
 - RakurakuTekiyouScreen - らくらく摘要辞書
 - PassbookDataScreen - 通帳CSV入力
@@ -430,7 +429,6 @@ Menu (メインメニュー)
 │  │  └─ SheetEditor (伝票個別編集)
 │  ├─ ReceiptInput (伝票入力・編集)
 │  ├─ ProductList (商品マスタ表示)
-│  ├─ KaikakeTekiyou (買掛摘要辞書)
 │  └─ PurchaseOutputConfirm (出力確認)
 │
 ├─ DepositMenu (預金部門メニュー)
