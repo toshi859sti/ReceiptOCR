@@ -141,6 +141,10 @@
 - **`java.time` は使えない**（minSdk 24・coreLibraryDesugaring なし。API 26 未満の端末で実行時に落ちる）。
   日付は `java.util.Calendar` / `SimpleDateFormat` で扱う。唯一 `LocalDate` を使っていた `util/ValidationUtils.kt` は
   呼び出し元が無かったので 2026-09-26 に削除した（2026-09-25 発見）
+- **らくらく摘要辞書で消した既定の摘要は戻ってくる**：「らくらく：摘要辞書」と「通帳摘要別リスト」を開くたびに
+  `importTekiyouFromCsv` が `assets/rakurakutekiyou.csv` から DB に無い「大分類｜小分類｜摘要名」を足すため。
+  新規インストール・マスタデータ削除後の初期データ投入もこれが担っているので、ユーザー判断で現状維持
+  （らくらくのサポート終了で撤去するときに一緒に扱う。2026-09-26）
 
 ---
 
