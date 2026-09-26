@@ -37,7 +37,7 @@
 |---|---|---|
 | 弥生の青色申告 | 仕訳 CSV（Shift-JIS・25 列） | 購買・預金・レシートとも対応 |
 | あおいろ帳簿（自作 PC アプリ AoiroChobo） | `transactions.json`（UTF-8） | **購買のみ対応**。預金・レシートはあおいろモードでも今はらくらく CSV が出る |
-| らくらく青色申告農業版 | シンプル CSV（UTF-8） | **サポート終了が決定済み**。コードは撤去前で、まだ既定値（`RAKURAKU`） |
+| らくらく青色申告農業版 | シンプル CSV（UTF-8） | **サポート終了が決定済み**。コードは撤去前。設定画面の選択肢からは外し、保存値が `RAKURAKU` なら読み出し時に `YAYOI` へ移す（2026-09-26） |
 
 出力先は設定の「連携会計ソフト」（`AccountingSoftware`）で切り替える。弥生とあおいろは科目体系が別物なので、
 商品や摘要の学習は両方の科目を別々の列で持つ（1 対 1 に変換しない）。
@@ -187,7 +187,7 @@ Room DB **v39**（2026-09-26 時点）。21 テーブル。
 | 作業年（令和） | `era_year` | 7 |
 | 作業年で固定 | `lock_year_to_working` | false |
 | 撮影時の月 / 年月固定 | `current_issue_month` / `fix_year_month` | 1 / false |
-| 連携会計ソフト | `accounting_software` | `RAKURAKU` |
+| 連携会計ソフト | `accounting_software` | `YAYOI`（`RAKURAKU` は読み出し時に `YAYOI` へ移す） |
 | Gemini API キー | `gemini_api_key` | なし |
 | 累計トークン使用量 | `cumulative_*_tokens` | 0（リセット可） |
 | 一覧の文字サイズ | `list_font_size` | 14 |

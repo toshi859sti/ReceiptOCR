@@ -36,7 +36,7 @@
   - `GeneralReceiptOutputScreen.buildYayoiRow` は先頭に識別フラグ `"2000"` を持つ正式な25列。
     一方 `OutputConfirmScreen.buildPurchaseYayoiRow` / `buildDepositYayoiRow` は先頭が
     取引日付で `"2000"` がなく、列の並びも独自（借方部門・貸方部門の位置等が異なる）
-  - 既定の会計ソフトが「らくらく」のため弥生の購買/預金CSVは実運用での検証が薄いとみられる
+  - 既定の会計ソフトが長く「らくらく」だったため（2026-09-26 に弥生へ変更）弥生の購買/預金CSVは実運用での検証が薄いとみられる
   - 修正方針：`buildYayoiRow`（レシート）と同じ25列レイアウトに購買/預金も揃える。
     共通化して `CsvUtils` か専用 Exporter に寄せる
 

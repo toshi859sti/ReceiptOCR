@@ -331,7 +331,7 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
-            AccountingSoftware.entries.forEach { software ->
+            AccountingSoftware.entries.filter { it != AccountingSoftware.RAKURAKU }.forEach { software ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
