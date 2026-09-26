@@ -14,6 +14,7 @@
 | DI / ビルドツール | KSP (Room コンパイラ用) | — |
 | 非同期処理 | Kotlin Coroutines + Flow | 1.7.3 |
 | JSON | Gson | 2.10.1 |
+| HTTP（Gemini 呼び出し） | OkHttp | 4.12.0 |
 | ビルドシステム | Gradle (Kotlin DSL) | — |
 
 ---
@@ -45,7 +46,7 @@ kotlinCompilerExtensionVersion = "1.5.4"
 |  GreenFrameDetector / GeminiReceiptClient / JaSheetOcrMapper |
 |  UnderlyingBaseProcessor / CategoryRecalculator / Validation |
 +-------------------------------------------------------------+
-|  Data Layer（Room Database v28）                              |
+|  Data Layer（Room Database）                                  |
 |  ReceiptDatabase / DAO                                       |
 +-------------------------------------------------------------+
 |  Hardware / External API Layer                               |
@@ -61,6 +62,7 @@ kotlinCompilerExtensionVersion = "1.5.4"
 | クラス | 役割 |
 |---|---|
 | `CameraViewModel` | カメラ起動・フォーカス判定・GreenFrameDetector 呼び出し |
+| `GeneralReceiptViewModel` | レシート・領収書の撮影〜保存・一覧・商品名グループ・発行者・支払方法ルール・出力 |
 
 JA伝票の撮影・OCR結果確認・編集・保存は`viewmodel`を介さず`ui/ReceiptInputScreen.kt`が
 単体で完結する（独自の`CameraView`・`ReceiptRowData`・`saveMonthData()`）。
@@ -83,7 +85,7 @@ JA伝票の撮影・OCR結果確認・編集・保存は`viewmodel`を介さず`
          | ReceiptInputScreen.saveMonthData()
 [検算バリデーション・要確認バッジ・小計カテゴリ重複ガードを経てRoom DB保存]
          | OutputConfirmScreen
-[らくらく／弥生 CSV 出力（productMasterId経由のFKルックアップ）]
+[弥生 CSV ／ あおいろ transactions.json ／ らくらく CSV（productMasterId で商品マスタを引いて科目・摘要を決める）]
 ```
 
 一般レシート（`GeneralReceiptCaptureScreen.kt`）は本フローとは独立した画面だが、
@@ -145,10 +147,10 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 ## データベース設計
 
 - **DB 名**: `receipt_database`
-- **バージョン**: 35（`ReceiptDatabase.kt`の`entities`/`version`が一次情報源。このドキュメントの
-  値は更新が追いつかず古くなることがあるため、正確なバージョンは実装を確認すること）
-- **マイグレーション**: 1→2→...→35（全ステップ定義済み、`fallbackToDestructiveMigration()`は
-  2026-07-12に削除済み。以後マイグレーション必須）
+- **バージョン**: 39（2026-09-26 時点・21 テーブル。`ReceiptDatabase.kt`の`entities`/`version`が一次情報源。
+  このドキュメントの値は更新が追いつかず古くなることがあるため、正確なバージョンは実装を確認すること）
+- **マイグレーション**: 1→2→...→39（全ステップ定義済み、`fallbackToDestructiveMigration()`は
+  2026-07-12に削除済み。以後マイグレーション必須で、書き忘れると起動時にクラッシュする）
 
 | テーブル | 用途 |
 |---|---|
@@ -173,6 +175,7 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 | `aoirochobo_accounts` | AoiroChobo（PC会計アプリ）の勘定科目スナップショット。`vocabulary.json` のミラー（DB v34〜） |
 | `aoirochobo_memo_templates` | 同・摘要辞書スナップショット（DB v34〜） |
 | `aoirochobo_vocab_meta` | 同・取り込んだファイルのヘッダ1行（年度・contentHash・取込日時。DB v34〜） |
+| `aoirochobo_account_usage` | あおいろの科目をどの用途（購買・レシート・預金）の選択肢に出すか |
 
 （`correction_logs`・`ocr_score_logs`・`ocr_explicit_joins`はPhase6（v27→v28、
 `MIGRATION_27_28`）でDROP済み）
@@ -182,6 +185,8 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 ## 権限要件
 
 ```xml
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 <uses-permission android:name="android.permission.CAMERA" />
 <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
     android:maxSdkVersion="32" />
@@ -218,4 +223,4 @@ adb logcat -s GreenFrameDetector:D GeminiReceiptClient:D CameraViewModel:D Recei
 - `Utils.bitmapToMat` は RGBA 4ch を返すため、OpenCV 処理前に必ず BGR 変換が必要
 - CameraX ImageAnalysis の 4K 解像度はデバイスによってサポート外の場合あり
 - `WARP_PX_PER_MM = 15.0` は変更禁止（20px/mm は Step7 が 2.6 倍遅くなるため不採用済み）
-- Room `fallbackToDestructiveMigration` は本番リリース前に削除すること
+- `java.time` は使えない（minSdk 24・desugaring なし）。日付は `Calendar` / `SimpleDateFormat` で扱う
