@@ -119,6 +119,19 @@ fun GeneralItemMatchingScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
                     }
                 },
+                actions = {
+                    FontSizeControl(
+                        fontSize = listFontSize,
+                        onDecrease = {
+                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                            appPreferences.listFontSize = listFontSize
+                        },
+                        onIncrease = {
+                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                            appPreferences.listFontSize = listFontSize
+                        }
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -131,22 +144,6 @@ fun GeneralItemMatchingScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                FontSizeControl(
-                    fontSize = listFontSize,
-                    onDecrease = {
-                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
-                        appPreferences.listFontSize = listFontSize
-                    },
-                    onIncrease = {
-                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
-                        appPreferences.listFontSize = listFontSize
-                    }
-                )
-            }
 
             // 統計カード
             Card(

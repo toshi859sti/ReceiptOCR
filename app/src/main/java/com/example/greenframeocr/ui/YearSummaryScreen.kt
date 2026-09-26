@@ -87,6 +87,19 @@ fun YearSummaryScreen(
                         Icon(Icons.Filled.ArrowBack, contentDescription = "戻る")
                     }
                 },
+                actions = {
+                    FontSizeControl(
+                        fontSize = listFontSize,
+                        onDecrease = {
+                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                            appPreferences.listFontSize = listFontSize
+                        },
+                        onIncrease = {
+                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                            appPreferences.listFontSize = listFontSize
+                        }
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -96,22 +109,6 @@ fun YearSummaryScreen(
         Column(
             modifier = Modifier.fillMaxSize().padding(padding)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                FontSizeControl(
-                    fontSize = listFontSize,
-                    onDecrease = {
-                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
-                        appPreferences.listFontSize = listFontSize
-                    },
-                    onIncrease = {
-                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
-                        appPreferences.listFontSize = listFontSize
-                    }
-                )
-            }
             when {
                 isLoading -> Box(
                     modifier = Modifier.fillMaxSize(),

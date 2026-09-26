@@ -98,6 +98,17 @@ fun RakurakuTekiyouScreen(
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "戻る") }
                 },
                 actions = {
+                    FontSizeControl(
+                        fontSize = listFontSize,
+                        onDecrease = {
+                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                            appPreferences.listFontSize = listFontSize
+                        },
+                        onIncrease = {
+                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                            appPreferences.listFontSize = listFontSize
+                        }
+                    )
                     IconButton(onClick = { showAddDialog = true }) {
                         Icon(Icons.Default.Add, "追加")
                     }
@@ -109,22 +120,6 @@ fun RakurakuTekiyouScreen(
         }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                FontSizeControl(
-                    fontSize = listFontSize,
-                    onDecrease = {
-                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
-                        appPreferences.listFontSize = listFontSize
-                    },
-                    onIncrease = {
-                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
-                        appPreferences.listFontSize = listFontSize
-                    }
-                )
-            }
             // メインカテゴリ
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),

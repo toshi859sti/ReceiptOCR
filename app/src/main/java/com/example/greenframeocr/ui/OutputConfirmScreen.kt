@@ -227,6 +227,19 @@ private fun PurchaseOutputConfirmContent(
                         Icon(Icons.Default.ArrowBack, "戻る")
                     }
                 },
+                actions = {
+                    FontSizeControl(
+                        fontSize = listFontSize,
+                        onDecrease = {
+                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                            appPreferences.listFontSize = listFontSize
+                        },
+                        onIncrease = {
+                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                            appPreferences.listFontSize = listFontSize
+                        }
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -246,28 +259,8 @@ private fun PurchaseOutputConfirmContent(
                     CircularProgressIndicator()
                 }
             } else {
-                // 出力形式バッジ + フォントサイズコントロール
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        OutputFormatBadge(accountingSoftware)
-                    }
-                    FontSizeControl(
-                        fontSize = listFontSize,
-                        onDecrease = {
-                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
-                            appPreferences.listFontSize = listFontSize
-                        },
-                        onIncrease = {
-                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
-                            appPreferences.listFontSize = listFontSize
-                        }
-                    )
-                }
+                // 出力形式バッジ
+                OutputFormatBadge(accountingSoftware)
 
                 // 年選択UI
                 YearSelector(
@@ -701,6 +694,19 @@ private fun DepositOutputConfirmContent(
                         Icon(Icons.Default.ArrowBack, "戻る")
                     }
                 },
+                actions = {
+                    FontSizeControl(
+                        fontSize = listFontSize,
+                        onDecrease = {
+                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                            appPreferences.listFontSize = listFontSize
+                        },
+                        onIncrease = {
+                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                            appPreferences.listFontSize = listFontSize
+                        }
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -720,28 +726,8 @@ private fun DepositOutputConfirmContent(
                     CircularProgressIndicator()
                 }
             } else {
-                // 出力形式バッジ + フォントサイズコントロール
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        OutputFormatBadge(accountingSoftware)
-                    }
-                    FontSizeControl(
-                        fontSize = listFontSize,
-                        onDecrease = {
-                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
-                            appPreferences.listFontSize = listFontSize
-                        },
-                        onIncrease = {
-                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
-                            appPreferences.listFontSize = listFontSize
-                        }
-                    )
-                }
+                // 出力形式バッジ
+                OutputFormatBadge(accountingSoftware)
 
                 // 年選択UI
                 YearSelector(

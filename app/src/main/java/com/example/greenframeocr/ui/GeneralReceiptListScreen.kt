@@ -57,6 +57,19 @@ fun GeneralReceiptListScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
                     }
                 },
+                actions = {
+                    FontSizeControl(
+                        fontSize = listFontSize,
+                        onDecrease = {
+                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                            appPreferences.listFontSize = listFontSize
+                        },
+                        onIncrease = {
+                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                            appPreferences.listFontSize = listFontSize
+                        }
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -80,14 +93,6 @@ fun GeneralReceiptListScreen(
                 viewModel = viewModel,
                 onDelete = { viewModel.deleteReceipt(it) },
                 fontSize = listFontSize,
-                onDecreaseFontSize = {
-                    listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
-                    appPreferences.listFontSize = listFontSize
-                },
-                onIncreaseFontSize = {
-                    listFontSize = (listFontSize + 1f).coerceAtMost(20f)
-                    appPreferences.listFontSize = listFontSize
-                },
                 appPreferences = appPreferences
             )
         }
@@ -120,9 +125,7 @@ private fun ReceiptListTab(
     viewModel: GeneralReceiptViewModel,
     onDelete: (GeneralReceipt) -> Unit,
     appPreferences: AppPreferences,
-    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
-    onDecreaseFontSize: () -> Unit = {},
-    onIncreaseFontSize: () -> Unit = {}
+    fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE
 ) {
     var deleteTarget by remember { mutableStateOf<GeneralReceipt?>(null) }
     var detailTarget by remember { mutableStateOf<GeneralReceipt?>(null) }
@@ -202,18 +205,6 @@ private fun ReceiptListTab(
     val showFilters = availableYears.isNotEmpty() || availableStores.size >= 2 || availableMonths.size >= 2
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // フォントサイズは絞り込みとは独立して常に表示
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
-            horizontalArrangement = Arrangement.End
-        ) {
-            FontSizeControl(
-                fontSize = fontSize,
-                onDecrease = onDecreaseFontSize,
-                onIncrease = onIncreaseFontSize
-            )
-        }
-
         if (showFilters) {
             CollapsibleFilterPanel(
                 expanded = filterPanelExpanded,

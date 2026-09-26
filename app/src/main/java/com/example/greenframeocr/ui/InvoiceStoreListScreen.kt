@@ -8,12 +8,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AppPreferences
@@ -31,11 +33,20 @@ fun InvoiceStoreListScreen(
     var deleteTarget by remember { mutableStateOf<IssuerEntry?>(null) }
     var editTarget by remember { mutableStateOf<IssuerEntry?>(null) }
     var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
+    var menuExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("登録番号・店舗・発行者一覧") },
+                // 文字サイズのボタンと並べると標準の大きさでは2行に折り返すので、1行に収まる大きさにする
+                title = {
+                    Text(
+                        "登録番号・店舗・発行者一覧",
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
@@ -46,8 +57,34 @@ fun InvoiceStoreListScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
                 actions = {
-                    TextButton(onClick = { viewModel.backfillInvoiceStoresFromReceipts() }) {
-                        Text("レシートから取込", fontSize = 12.sp)
+                    FontSizeControl(
+                        fontSize = listFontSize,
+                        onDecrease = {
+                            listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
+                            appPreferences.listFontSize = listFontSize
+                        },
+                        onIncrease = {
+                            listFontSize = (listFontSize + 1f).coerceAtMost(20f)
+                            appPreferences.listFontSize = listFontSize
+                        }
+                    )
+                    // 文字サイズと並べるとタイトルが入らないのでメニューの中へ
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "その他")
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("レシートから取込") },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.backfillInvoiceStoresFromReceipts()
+                                }
+                            )
+                        }
                     }
                 }
             )
@@ -58,22 +95,6 @@ fun InvoiceStoreListScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                FontSizeControl(
-                    fontSize = listFontSize,
-                    onDecrease = {
-                        listFontSize = (listFontSize - 1f).coerceAtLeast(10f)
-                        appPreferences.listFontSize = listFontSize
-                    },
-                    onIncrease = {
-                        listFontSize = (listFontSize + 1f).coerceAtMost(20f)
-                        appPreferences.listFontSize = listFontSize
-                    }
-                )
-            }
             if (stores.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
