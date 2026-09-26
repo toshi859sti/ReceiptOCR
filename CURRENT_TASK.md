@@ -148,10 +148,10 @@ JA購買の商品には あおいろ帳簿の科目・摘要（`product_master.a
   `APP_SPECIFICATION.md`・`functional-design.md`・`ARCHITECTURE.md`・`MANUAL.md` を現行コードに合わせた（詳細は上の進捗メモ）
 
 ### 未完了・中断した理由
-- PC への返信 25c の回答待ち（回答を受けてから Deposit の transactions.json に進む）
+- PC の回答 25c は受領済み（`REPLY-pc-2026-09-25c.md`・契約 minor（8））。依頼どおり Deposit の externalId に通帳 ID、振替はスマホで除外しない。Deposit の transactions.json は未着手
 
 ### 次回セッションで最初にやること
-PC 側の回答（REPLY-phone-2026-09-25c への返事）を確認し、Deposit の transactions.json（通帳の口座 → bankSlotNo・externalId に通帳）に着手する。回答がまだなら、PC 側で購買 JSON（端末の Download にある ja_shiwake_20260925_195702.json）の取り込みを試してもらう。
+Deposit の transactions.json（通帳の口座 → bankSlotNo・externalId は `ocr:deposit:p{通帳ID}-{日付}-{通番}`・口座未設定の通帳は出さない）に着手する。
 
 ### 新たに発覚した問題・制約
 - `java.time` が minSdk 24 で使えない件（`docs/known-issues.md` 転記済み）
