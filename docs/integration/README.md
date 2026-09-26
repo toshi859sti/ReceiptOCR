@@ -214,7 +214,7 @@ AoiroChobo 側のコード（`debit.taxRate` / `credit.taxRate` に入れる値�
 | A | 行の一意キー `externalId` | グローバル一意・復元耐性のある文字列。スマホ側で採番 | [transaction-import.md](transaction-import.md) §「externalId」 |
 | B | 日付形式 | 西暦 ISO `yyyy-MM-dd` 一本化。和暦変換はスマホ側 | §3-3 |
 | C | 税率コード | AoiroChobo コードを正とし、上記変換表で変換 | §4 |
-| D | 預金スロット識別子 | `bankSlotNo` は **`1`〜`5`**（普通預金の補助口座）。`0`＝親「普通預金」は**使わない**（見出し科目で出納帳が無い）。Android は単一通帳なので取込 UI で選ぶかスマホ設定で固定 | [transaction-import.md](transaction-import.md) §「bankSlotNo」 |
+| D | 預金スロット識別子 | `bankSlotNo` は **`1`〜`5`**（普通預金の補助口座）。`0`＝親「普通預金」は**使わない**（見出し科目で出納帳が無い）。スマホは通帳ごとに口座を 1 つ選んでおく（最大 5 冊・2026-09-25 minor（8）） | [transaction-import.md](transaction-import.md) §「bankSlotNo」 |
 | E | 相手科目 | 解決済み `accountKey` 必須。生の支払方法テキストは `meta.paymentMethodText` に | §1 責務 1 |
 | I | 科目参照キー | `accountKey`（不透明・不変・年度非依存・年度内で一意）。`Account.Code` は使わない。PC 側は `Account.AccountKey` カラムを Phase 4 で追加 | §2「科目の参照キー」・[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.4 |
 | K | 科目の作り替え（意味変更） | **2026-09-13 全面改訂。** `accountKey` は**スロット**に 1 対 1 で、作り替えても**据え置き**（採番し直さない。`keyRevision` も `AccountKeyRegistry` も廃止）。科目・摘要は年度ごとに別の行なので過去年度は物理的に無傷。スマホ側は **`name` が変わったキーの学習を外す**（学習と一緒に「そのとき見た `name`」を保持して比較）のが主機構。「ファイルに無いキーの学習は使わない」は科目の**無効化**用として残る。古いスナップショットからの取込は PC 側が `accountName` / `memoName` のエコーを現在名と突き合わせて「要確認」に回す | [vocabulary-snapshot.md](vocabulary-snapshot.md) §4.6 |

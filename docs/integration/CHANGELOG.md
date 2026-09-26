@@ -6,6 +6,23 @@
 
 ---
 
+## schemaVersion 2 — 2026-09-25 minor（8）（通帳を複数に・Deposit の `externalId` に通帳を入れる）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の依頼
+（[REPLY-phone-2026-09-25c.md](REPLY-phone-2026-09-25c.md)）への対応。
+
+- **Deposit の `externalId` を `ocr:deposit:p{passbookId}-{transactionDate}-{transactionNumber}` に**
+  （[transaction-import.md](transaction-import.md) §4）。通番は口座ごとに振られるので、口座が違えば
+  同じ日・同じ通番があり得る。`passbookId` はスマホ内の通帳の ID で、**`bankSlotNo` ではない**
+  （口座を付け替えても同じ明細の `externalId` は変わらない）。Deposit はまだ 1 件も出ていないので移行は無い。
+  PC は `ocr:deposit:` の形を解釈していないので、コードの変更は無い。サンプル JSON の 3 件を書き換えた。
+- **§6 の「Android は単一通帳前提」を外した**。スマホは通帳を最大 5 冊持ち、通帳ごとに口座を 1 つ選ぶ。
+- **「重複の可能性」を同じファイルの中の行どうしにも広げた**（§10・PC の実装変更）。これまでは DB に入っている
+  行とだけ比べていたので、口座間の振替を 2 冊ぶん 1 ファイルで出すと両方とも素通りして二重計上になった。
+  いまは後の行が「重複の可能性」になる。スマホ側は振替を検出・除外しなくてよい。
+
+---
+
 ## schemaVersion 2 — 2026-09-25 minor（7）（`ocrRole*` の決まり方を明文化・農家が作る科目の穴を直した）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の質問

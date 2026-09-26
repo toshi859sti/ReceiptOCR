@@ -129,7 +129,7 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 | source | 形式 | 例 | 構成要素 |
 |---|---|---|---|
 | Purchase | `ocr:purchase:{rowUuid}` | `ocr:purchase:3f2b9c14-77a1-4a6e-9c02-1d5e8b4a0c71` | 伝票の**行**ごとに採番して Room に永続化した UUID（`receipt_items.uuid`）。行を挿入・削除・並べ替えても値に付いて動く |
-| Deposit | `ocr:deposit:{transactionDate}-{transactionNumber}` | `ocr:deposit:2026-02-05-0012` | `(transactionDate, transactionNumber)` は Android 側で UNIQUE 制約あり＝◎ |
+| Deposit | `ocr:deposit:p{passbookId}-{transactionDate}-{transactionNumber}` | `ocr:deposit:p1-2026-02-05-0012` | `passbookId` はスマホ内の通帳の ID（正の整数・バックアップ／復元で保持）。**`bankSlotNo` ではない**。`(passbookId, transactionDate, transactionNumber)` は Android 側で UNIQUE 制約あり＝◎ |
 | Receipt | `ocr:receipt:{receiptUuid}:{itemIndex}` | `ocr:receipt:9f1c8b0e-4a2d-4f1a-9b3e-7c6d5e4f3a21:2` | レシート単位の UUID をスマホ側が採番して Room に永続化。`itemIndex` は 0 始まりの明細順 |
 
 - Receipt の `receiptUuid` は**レシート行を作った時点で採番して保存**する
@@ -153,7 +153,7 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 **`transactionNumber` は必ず値があること**（Deposit・2026-09-22）
 
 通帳 CSV の取引通番が空欄の行は、スマホ側の取込時に**合成番号**を入れて `deposit_meisai` に
-保存する。PC 側にフォールバック規則は置かない（`ocr:deposit:{日付}-{番号}` の 1 本で覆う）。
+保存する。PC 側にフォールバック規則は置かない（`ocr:deposit:p{通帳}-{日付}-{番号}` の 1 本で覆う）。
 
 - 合成番号も `externalId` の文字種（`[a-z0-9:_-]`）に収めること。**`#` は使えない**
   ——PC が「別の取引として追加」の連番サフィックス（`…#2`）に予約している。
@@ -188,8 +188,12 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 - 値：**`1` 〜 `5`**（「普通預金」の補助口座）。`vocabulary.accounts[].bankSlotNo` と対応。
   **`0` は使わない**：親「普通預金」は見出し科目で、それ自体の預金出納帳が存在しないため
   取込先に指定できない（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.3）。
-- Android は単一通帳前提なので、スマホの設定で「この通帳 → スロット 1」のように固定してよい。
-  ユーザーが AoiroChobo でしか口座を増やしていない場合は取込 UI 側で選ばせる。
+- スマホは通帳を複数（最大 5 冊）持ち、通帳ごとに口座（`bankSlotNo` を持つ科目）を 1 つ選んでおく
+  （2026-09-25 minor（8））。1 つの口座を 2 冊に割り当てない（1 つの出納帳に混ざるため）。
+  口座が未設定の通帳の明細は出力しない。
+- 通帳に割り当てる口座を選び直しても `externalId` は変わらない（§4 の `passbookId` は `bankSlotNo` と別）。
+  PC は同じ取引として受ける（§10）。まだ確定していなければ黙って更新し、確定済みなら預金側の
+  `accountKey` が変わるので、上書き／維持／別の取引として追加の 3 択をユーザーに出す。
 - `source = Purchase` / `Receipt` では `null`。
 
 ---
@@ -283,6 +287,11 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
   スマホが `externalId` を採り直す状況（月をまるごと入力し直した・行の UUID を振り直した）で
   二重計上を防ぐ唯一の手掛かり。取り消し済み（`IsVoided = 1`）の取引とは突き合わせない
   ——消したものを入れ直したのなら、それは重複ではない。
+  - **同じファイルの中の行どうしも突き合わせる**（2026-09-25 minor（8））。口座間の振替
+    （営農口座 → 直売口座）は両方の通帳に載るので、2 冊を 1 ファイルで出すと同じ取引が
+    別の `externalId` で 2 行届く。相手科目にもう一方の口座を選んでいれば、2 行は日付・金額・
+    借方貸方がそろうので、**後の行**が「重複の可能性」になる（先の行は普通に入る）。
+    スマホ側は振替を検出・除外しなくてよい。
 
 ---
 

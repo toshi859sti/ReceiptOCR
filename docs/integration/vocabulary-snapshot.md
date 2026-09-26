@@ -291,7 +291,7 @@ AoiroChobo は複数の預金口座を「スロット」で管理する。
   親「普通預金」は見出し科目で `bankSlotNo = null`、**それ自体の出納帳は存在しない**ので
   取込先に指定できない（`entries[].bankSlotNo` に `0` や `null` を入れると解決不能行になる）。
 - `accounts[]` の預金科目には `bankSlotNo` が入る。スマホ側はどのスロットに取り込むかを
-  ユーザーに選ばせる（Android は単一通帳前提なので、通帳ごとにスロット番号を設定で固定してもよい）。
+  ユーザーに選ばせる（スマホは通帳ごとに口座を 1 つ設定で選んでおく。2026-09-25 minor（8））。
   選択肢として見せてよいのは `ledgerAffinity == "Bank" && bankSlotNo != null` の科目だけ。
 - 取引データ側では `entries[].bankSlotNo` で指定する（[transaction-import.md](transaction-import.md)）。
 

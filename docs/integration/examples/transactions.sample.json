@@ -65,7 +65,7 @@
       }
     },
     {
-      "externalId": "ocr:deposit:2026-02-05-0012",
+      "externalId": "ocr:deposit:p1-2026-02-05-0012",
       "source": "Deposit",
       "ledgerType": "Bank",
       "bankSlotNo": 1,
@@ -86,7 +86,7 @@
       }
     },
     {
-      "externalId": "ocr:deposit:2026-02-10-0013",
+      "externalId": "ocr:deposit:p1-2026-02-10-0013",
       "source": "Deposit",
       "ledgerType": "Bank",
       "bankSlotNo": 1,
@@ -106,7 +106,7 @@
       }
     },
     {
-      "externalId": "ocr:deposit:2026-02-15-0014",
+      "externalId": "ocr:deposit:p1-2026-02-15-0014",
       "source": "Deposit",
       "ledgerType": "Bank",
       "bankSlotNo": 1,
