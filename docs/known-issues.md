@@ -163,11 +163,12 @@
   - adb pull → PC で商品マスタ・ocr_variants を編集 → adb push
   - 技術候補: Python + PySide6
 
-- [ ] あおいろ帳簿（AoiroChobo）対応が JA 購買だけ（2026-09-25 時点）
-  - レシート・預金は科目・摘要の選択も AI 提案もまだ弥生の科目だけ。用途の絞り込み（`aoirochobo_account_usage`）の
-    レシート列・預金列は保存されるがどこにも効かない
-  - 通帳の摘要一覧（`TekiyouMatchingScreen`）はあおいろモードで「Windows側で管理」と出たまま
-  - `transactions.json` の組み立ては未着手
+- [ ] あおいろ帳簿（AoiroChobo）対応が JA 購買・預金だけ（2026-09-26 時点）
+  - レシートは科目・摘要の選択も AI 提案もまだ弥生の科目だけ。用途の絞り込み（`aoirochobo_account_usage`）の
+    レシート列は保存されるがどこにも効かない。`transactions.json` の組み立ても未着手
+  - 預金のあおいろには AI 提案が無い（弥生モードだけ）
+- [ ] あおいろの科目・摘要の選択欄（`AoiroPickers.kt` の `PickerField`）は、欄の本体をタップしても選択画面が開かず、
+  右端の ▼ でしか開かない（2026-09-26 に預金のダイアログで確認。購買の商品編集も同じ部品）
 - [ ] らくらく摘要の検索（`tekiyou.searchKey` の部分一致 3 か所）はかな入力に対応していない。らくらく撤去で消える予定のため未対応
 
 ---

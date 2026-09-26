@@ -79,10 +79,34 @@ interface DepositMeisaiDao {
     @Query("UPDATE deposit_meisai SET overrideYayoiAccountId = NULL WHERE matchingRuleId = :ruleId")
     suspend fun clearYayoiOverridesForRule(ruleId: Int)
 
+    /** 個別オーバーライドのあおいろ科目・摘要を設定（accountKey=null でグループに戻す。摘要も一緒に外す） */
+    @Query("""
+        UPDATE deposit_meisai
+        SET overrideAccountKey = :accountKey, overrideAccountKeyName = :accountKeyName,
+            overrideMemoKey = :memoKey, overrideMemoKeyName = :memoKeyName
+        WHERE id = :meisaiId
+    """)
+    suspend fun updateOverrideAoiro(
+        meisaiId: Int,
+        accountKey: String?,
+        accountKeyName: String?,
+        memoKey: String?,
+        memoKeyName: String?
+    )
+
+    /** グループ全件のあおいろ個別オーバーライドをクリア（グループ全件上書き時に使用） */
+    @Query("""
+        UPDATE deposit_meisai
+        SET overrideAccountKey = NULL, overrideAccountKeyName = NULL, overrideMemoKey = NULL, overrideMemoKeyName = NULL
+        WHERE matchingRuleId = :ruleId
+    """)
+    suspend fun clearAoiroOverridesForRule(ruleId: Int)
+
     /** 指定グループの明細を個別オーバーライド情報付きで取得（らくらく摘要・弥生科目の両方をJOIN） */
     @Query("""
         SELECT dm.id, dm.transactionDate, dm.transactionNumber, dm.tekiyou, dm.amount,
                dm.matchingRuleId, dm.overrideTekiyouId, dm.overrideYayoiAccountId,
+               dm.overrideAccountKey, dm.overrideAccountKeyName, dm.overrideMemoKey, dm.overrideMemoKeyName,
                t.tekiyouName AS overrideTekiyouName, t.kamoku AS overrideKamoku,
                y.accountName AS overrideYayoiAccountName, y.accountCode AS overrideYayoiAccountCode
         FROM deposit_meisai dm
@@ -109,5 +133,10 @@ data class DepositMeisaiWithOverride(
     // 弥生個別オーバーライド
     val overrideYayoiAccountId: Long?,
     val overrideYayoiAccountName: String?,
-    val overrideYayoiAccountCode: String?
+    val overrideYayoiAccountCode: String?,
+    // あおいろ個別オーバーライド（名前は選んだときの PC 側の名前）
+    val overrideAccountKey: String?,
+    val overrideAccountKeyName: String?,
+    val overrideMemoKey: String?,
+    val overrideMemoKeyName: String?
 )

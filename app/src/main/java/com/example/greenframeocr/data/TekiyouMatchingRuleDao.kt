@@ -8,6 +8,7 @@ interface TekiyouMatchingRuleDao {
     @Query("""
         SELECT r.id, r.pattern, r.normalizedTekiyou, r.isRegex, r.rakurakuTekiyouId, r.yayoiAccountId,
                r.sampleText, r.matchCount, r.isDeposit,
+               r.accountKey, r.accountKeyName, r.memoKey, r.memoKeyName,
                t.tekiyouName as rakurakuTekiyouName, t.mainCategory, t.subCategory, t.kamoku,
                y.accountName as yayoiAccountName, y.accountCode as yayoiAccountCode
         FROM tekiyou_matching_rules r
@@ -74,5 +75,10 @@ data class MatchingRuleWithTekiyou(
     val kamoku: String?,
     // 弥生勘定科目の情報
     val yayoiAccountName: String?,
-    val yayoiAccountCode: String?
+    val yayoiAccountCode: String?,
+    // あおいろ（名前は選んだときの PC 側の名前）
+    val accountKey: String?,
+    val accountKeyName: String?,
+    val memoKey: String?,
+    val memoKeyName: String?
 )

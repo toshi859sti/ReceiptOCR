@@ -135,6 +135,36 @@ JA購買の商品には あおいろ帳簿の科目・摘要（`product_master.a
 - 実機：保存値を `RAKURAKU` に書き換えて起動 → 設定を開くと保存値が `YAYOI` に戻り、選択肢は 2 つで弥生が選ばれていた。
   端末は元々弥生だったので元の状態のまま
 
+### 2026-09-26：預金の transactions.json（らくらく撤去 ② の預金分・ユーザー指示・実機確認済み）
+
+PC の回答 25c（`REPLY-pc-2026-09-25c.md`・契約 minor（8））を受けて着手。
+
+- **着手して分かったこと**：あおいろモードの通帳摘要別リストは編集ボタンが消えていて、ルール・明細の `accountKey`/`memoKey` を
+  書く画面がどこにも無かった。JSON だけ作っても全行「科目なし」になるので、選択 UI も合わせて作った
+- ビルダー `buildDeposit`（純粋関数）：Entry の決め方は `docs/functional-design.md` §5 に書いた。要点は
+  口座＝通帳の `aoiroAccountKey`（`bankSlotNo` 1〜5 の科目でなければ出さない）・個別指定が最優先・
+  摘要は 預金/入金・預金/出金 のタブで相手科目一致のものだけ・振替は除外しない・`note` は摘要原文＋メモ
+- 出せない行の理由を 5 つに（金額 0・日付・口座未設定・口座が今の科目に無い・通番に使えない文字）。`Skipped` は購買・預金共通の
+  `label`/`sourceRowId` に変えた
+- 購買と共通部分（ファイル組み立て・年度外の警告）は `finish()` に寄せた
+- 選択 UI：`ProductListScreen` の科目・摘要ピッカーを `ui/AoiroPickers.kt` に移して共用に（摘要の候補を関数で渡す）。
+  預金用のダイアログ `ui/AoiroDepositLinkDialog.kt`。候補の規則は `util/AoiroChoboDepositRules.kt`
+  （相手科目は `ocrRoleDepositCounter`＋農家の預金の絞り込み、事業割合だけ違う組は先に埋めない）
+- 通帳摘要別リスト：あおいろでもグループ編集・個別変更を開ける。カードに 相手科目／摘要、明細行に効いている科目を出す。
+  「マッチ済」はあおいろでは `accountKey` の有無。グループ保存で明細のあおいろ上書きをリセット（弥生と同じ）
+- DAO：ルールの結合ビューと明細の上書きビューにあおいろ列を追加（`MatchingRuleWithTekiyou`・`DepositMeisaiWithOverride`）、
+  `updateOverrideAoiro`・`clearAoiroOverridesForRule`。スキーマは変わらない（DB v39 のまま）
+- 出力確認（預金）：あおいろで「JSON出力」、口座未設定の通帳があれば警告、結果ダイアログは購買と共用
+- テスト：ビルダー 12 件・候補の規則 3 件を追加し全 85 件パス。`assembleDebug` 成功
+
+**実機確認（moto g66j 5G）**：バックアップ `C:\Users\toshiro\GreenFrameOCR-db-backups\v39-before-deposit-json-20260926-221458\`
+（DB 3 ファイル＋設定）を取ってからあおいろモードに切替。通帳1 に営農口座 → し尿処理料（出金 6 件）に 動力光熱費／し尿汲み取り料
+（電気料金 40%/100% の組があるので摘要は先に埋まらず「要確定」付きで出た）→ 1 明細を 事業主貸／事業主分 に個別変更 →
+出力確認で「通帳2 は口座未設定」の警告 → 157 件を JSON 出力（確定 6・科目なし 151）。ファイルは UTF-8・BOM なし・LF で、
+契約 §11 の検査を 157 件すべて通過。入金は 借方＝営農口座、出金は 貸方＝営農口座。
+後片付け：DB 3 ファイルと設定をバックアップから戻し（取り直してバイト一致を確認・integrity ok）、テストの JSON を削除。
+起動して弥生モード・クラッシュなしを確認
+
 ## 作業終了時の記録（セッション終了前に必ず埋めること）
 
 ### 今回完了したこと
@@ -148,14 +178,16 @@ JA購買の商品には あおいろ帳簿の科目・摘要（`product_master.a
   `APP_SPECIFICATION.md`・`functional-design.md`・`ARCHITECTURE.md`・`MANUAL.md` を現行コードに合わせた（詳細は上の進捗メモ）
 
 ### 未完了・中断した理由
-- PC の回答 25c は受領済み（`REPLY-pc-2026-09-25c.md`・契約 minor（8））。依頼どおり Deposit の externalId に通帳 ID、振替はスマホで除外しない。Deposit の transactions.json は未着手
+- らくらく撤去 ② のうちレシートのあおいろ JSON が未着手（預金は 2026-09-26 に完了）
 
 ### 次回セッションで最初にやること
-Deposit の transactions.json（通帳の口座 → bankSlotNo・externalId は `ocr:deposit:p{通帳ID}-{日付}-{通番}`・口座未設定の通帳は出さない）に着手する。
+レシートの transactions.json（`ocr:receipt:{receiptUuid}:{itemIndex}`・契約 §4。`GeneralReceipt.uuid` は採番済み）の設計に着手する。
+品目・支払方法のあおいろ科目を選ぶ UI があるかを先に確かめる（預金は無かった）。
 
 ### 新たに発覚した問題・制約
 - `java.time` が minSdk 24 で使えない件（`docs/known-issues.md` 転記済み）
-- あおいろモードの預金・レシート出力は今もらくらく CSV に落ちる（あおいろ対応が未着手のため。既知）
+- あおいろモードのレシート出力は今もらくらく CSV に落ちる（預金は 2026-09-26 に JSON 対応済み）
+- 2026-09-26：あおいろの科目・摘要の選択欄は本体をタップしても開かず ▼ でしか開かない（`docs/known-issues.md` 転記済み）
 - 「通帳再読込」ボタンが確認なしで全通帳の明細を消していた（同日修正・`docs/known-issues.md` に記録）
 - 端末で書いた JSON はキーが名前順／難読化を有効にすると Gson のキーが変わる（`docs/known-issues.md` 転記済み）
 - 横向きでメニュー画面の下側のボタンに届かない → 同日修正（トップ・購買・預金・レシートの 4 メニューを `ui/MenuColumn.kt` に。

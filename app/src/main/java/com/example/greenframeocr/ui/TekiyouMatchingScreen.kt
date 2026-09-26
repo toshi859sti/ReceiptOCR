@@ -66,6 +66,11 @@ fun TekiyouMatchingScreen(
     var rakurakuTekiyouList by remember { mutableStateOf<List<RakurakuTekiyou>>(emptyList()) }
     var yayoiAccountList by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var activePatterns by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // あおいろ帳簿（相手科目・摘要は PC から取り込んだ辞書から選ぶ）
+    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    var aoiroAccounts by remember { mutableStateOf<List<AoiroChoboAccount>>(emptyList()) }
+    var aoiroMemos by remember { mutableStateOf<List<AoiroChoboMemoTemplate>>(emptyList()) }
+    var aoiroUsage by remember { mutableStateOf<List<AoiroChoboAccountUsage>>(emptyList()) }
 
     // 展開状態・個別アイテム
     var expandedRuleIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
@@ -92,10 +97,14 @@ fun TekiyouMatchingScreen(
 
     val listState = rememberLazyListState()
 
-    fun isRuleMatched(rule: MatchingRuleWithTekiyou) = when (accountingSoftware) {
-        AccountingSoftware.YAYOI -> rule.yayoiAccountId != null
-        AccountingSoftware.BLUE_RETURN_PREP -> false
-        else -> rule.rakurakuTekiyouId != null
+    fun isRuleMatched(rule: MatchingRuleWithTekiyou) = isRuleMatchedFor(rule, accountingSoftware)
+
+    // あおいろの表示名は今の辞書から引く（PC で改名されていればそちら）。辞書から消えたキーは保存時の名前
+    fun aoiroLabel(accountKey: String?, accountKeyName: String?, memoKey: String?, memoKeyName: String?): String? {
+        accountKey ?: return null
+        val account = aoiroAccounts.find { it.accountKey == accountKey }?.name ?: accountKeyName ?: accountKey
+        val memo = memoKey?.let { key -> aoiroMemos.find { it.memoKey == key }?.name ?: memoKeyName ?: key }
+        return if (memo != null) "$account ／ $memo" else account
     }
 
     val filteredRules = remember(matchingRules, filterType, showOnlyWithData, showOnlyUnmatched, activePatterns, searchText, sortOrder) {
@@ -138,6 +147,11 @@ fun TekiyouMatchingScreen(
                                   database.rakurakuTekiyouDao().getEnabledByCategory("預金", "出金")
             val allYayoi = database.yayoiAccountDao().getAll().filter { it.isEnabled }
             yayoiAccountList = allYayoi
+            if (isAoiro) {
+                aoiroAccounts = database.aoiroChoboVocabDao().getAllAccounts()
+                aoiroMemos = database.aoiroChoboVocabDao().getAllMemoTemplates()
+                aoiroUsage = database.aoiroChoboAccountUsageDao().getAll()
+            }
             val allMeisai = database.depositMeisaiDao().getAll()
             activePatterns = allMeisai.map { meisai ->
                 val normalized = normalizeTekiyou(meisai.tekiyou)
@@ -402,17 +416,23 @@ fun TekiyouMatchingScreen(
                                     loadMeisaiForRule(rule.id)
                                 }
                             },
-                            onEditGroup = if (accountingSoftware != AccountingSoftware.BLUE_RETURN_PREP) ({
+                            aoiroGroupLabel = if (isAoiro) aoiroLabel(rule.accountKey, rule.accountKeyName, rule.memoKey, rule.memoKeyName) else null,
+                            aoiroOverrideLabel = { m ->
+                                aoiroLabel(m.overrideAccountKey, m.overrideAccountKeyName, m.overrideMemoKey, m.overrideMemoKeyName)
+                            },
+                            onEditGroup = {
                                 selectedRule = rule
                                 showEditDialog = true
-                            }) else null,
+                            },
                             meisaiItems = meisaiByRuleId[rule.id],
-                            onEditIndividual = if (accountingSoftware != AccountingSoftware.BLUE_RETURN_PREP) ({ meisai ->
+                            onEditIndividual = { meisai ->
                                 selectedMeisai = meisai
                                 selectedMeisaiGroupKamoku = rule.kamoku
-                                selectedMeisaiGroupYayoiAccountName = rule.yayoiAccountName
+                                selectedMeisaiGroupYayoiAccountName = if (isAoiro)
+                                    aoiroLabel(rule.accountKey, rule.accountKeyName, rule.memoKey, rule.memoKeyName)
+                                else rule.yayoiAccountName
                                 showIndividualDialog = true
-                            }) else null
+                            }
                         )
                     }
                 }
@@ -420,8 +440,49 @@ fun TekiyouMatchingScreen(
         }
     }
 
+    // グループ編集ダイアログ（あおいろ・全件上書き）
+    if (showEditDialog && selectedRule != null && isAoiro) {
+        val rule = selectedRule!!
+        AoiroDepositLinkDialog(
+            title = "グループ設定（あおいろ）",
+            subject = "${if (rule.isDeposit) "入金" else "出金"}  ${rule.normalizedTekiyou}",
+            isIncome = rule.isDeposit,
+            accounts = aoiroAccounts,
+            memos = aoiroMemos,
+            usage = aoiroUsage,
+            initialAccountKey = rule.accountKey,
+            initialAccountKeyName = rule.accountKeyName,
+            initialMemoKey = rule.memoKey,
+            initialMemoKeyName = rule.memoKeyName,
+            note = "保存するとこのグループの明細の個別変更はリセットされます",
+            resetHint = "相手科目を外すと、このグループの明細は「科目なし」で PC に送ります",
+            onDismiss = {
+                showEditDialog = false
+                selectedRule = null
+            },
+            onSave = { selection ->
+                scope.launch {
+                    database.depositMeisaiDao().clearAoiroOverridesForRule(rule.id)
+                    database.tekiyouMatchingRuleDao().getById(rule.id)?.let {
+                        database.tekiyouMatchingRuleDao().update(
+                            it.copy(
+                                accountKey = selection.accountKey,
+                                accountKeyName = selection.accountKeyName,
+                                memoKey = selection.memoKey,
+                                memoKeyName = selection.memoKeyName
+                            )
+                        )
+                    }
+                    loadData()
+                }
+                showEditDialog = false
+                selectedRule = null
+            }
+        )
+    }
+
     // グループ編集ダイアログ（全件上書き）
-    if (showEditDialog && selectedRule != null) {
+    if (showEditDialog && selectedRule != null && !isAoiro) {
         MatchingRuleEditDialog(
             rule = selectedRule!!,
             accountingSoftware = accountingSoftware,
@@ -513,6 +574,44 @@ fun TekiyouMatchingScreen(
         )
     }
 
+    // 個別オーバーライドダイアログ（あおいろ）
+    if (showIndividualDialog && selectedMeisai != null && isAoiro) {
+        val meisai = selectedMeisai!!
+        AoiroDepositLinkDialog(
+            title = "個別変更（あおいろ）",
+            subject = "${meisai.transactionDate}  ${meisai.tekiyou}",
+            isIncome = meisai.amount >= 0,
+            accounts = aoiroAccounts,
+            memos = aoiroMemos,
+            usage = aoiroUsage,
+            initialAccountKey = meisai.overrideAccountKey,
+            initialAccountKeyName = meisai.overrideAccountKeyName,
+            initialMemoKey = meisai.overrideMemoKey,
+            initialMemoKeyName = meisai.overrideMemoKeyName,
+            note = "保存するとグループ設定に関わらずこの明細にのみ適用されます",
+            resetHint = "相手科目を外すとグループの設定に戻ります" +
+                (selectedMeisaiGroupYayoiAccountName?.let { "（$it）" } ?: "（グループも未設定）"),
+            onDismiss = {
+                showIndividualDialog = false
+                selectedMeisai = null
+            },
+            onSave = { selection ->
+                val ruleId = meisai.matchingRuleId
+                scope.launch {
+                    database.depositMeisaiDao().updateOverrideAoiro(
+                        meisai.id, selection.accountKey, selection.accountKeyName, selection.memoKey, selection.memoKeyName
+                    )
+                    if (ruleId != null) {
+                        val items = database.depositMeisaiDao().getAllWithOverrideByRuleId(ruleId)
+                        meisaiByRuleId = meisaiByRuleId + (ruleId to items)
+                    }
+                }
+                showIndividualDialog = false
+                selectedMeisai = null
+            }
+        )
+    }
+
     // 個別オーバーライドダイアログ（弥生）
     if (showIndividualDialog && selectedMeisai != null && accountingSoftware == AccountingSoftware.YAYOI) {
         IndividualYayoiOverrideDialog(
@@ -543,6 +642,17 @@ fun TekiyouMatchingScreen(
 /**
  * マッチングルールカード（展開/折りたたみ対応）
  */
+private fun isRuleMatchedFor(rule: MatchingRuleWithTekiyou, accountingSoftware: AccountingSoftware) =
+    when (accountingSoftware) {
+        AccountingSoftware.YAYOI -> rule.yayoiAccountId != null
+        AccountingSoftware.BLUE_RETURN_PREP -> rule.accountKey != null
+        else -> rule.rakurakuTekiyouId != null
+    }
+
+/**
+ * @param aoiroGroupLabel あおいろモードのグループの「相手科目 ／ 摘要」（未設定なら null）
+ * @param aoiroOverrideLabel あおいろモードの明細の個別指定の「相手科目 ／ 摘要」（個別指定なしなら null）
+ */
 @Composable
 private fun MatchingRuleCard(
     rule: MatchingRuleWithTekiyou,
@@ -550,15 +660,13 @@ private fun MatchingRuleCard(
     isExpanded: Boolean,
     fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onToggleExpand: () -> Unit,
+    aoiroGroupLabel: String? = null,
+    aoiroOverrideLabel: (DepositMeisaiWithOverride) -> String? = { null },
     onEditGroup: (() -> Unit)?,
     meisaiItems: List<DepositMeisaiWithOverride>?,
     onEditIndividual: ((DepositMeisaiWithOverride) -> Unit)?
 ) {
-    val isMatched = when (accountingSoftware) {
-        AccountingSoftware.YAYOI -> rule.yayoiAccountId != null
-        AccountingSoftware.BLUE_RETURN_PREP -> false
-        else -> rule.rakurakuTekiyouId != null
-    }
+    val isMatched = isRuleMatchedFor(rule, accountingSoftware)
     val isBrp = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
     val typeColor = if (rule.isDeposit) Color(0xFF4CAF50) else Color(0xFFE53935)
     val typeLabel = if (rule.isDeposit) "入金" else "出金"
@@ -664,12 +772,24 @@ private fun MatchingRuleCard(
                     horizontalAlignment = Alignment.End
                 ) {
                     when {
-                        isBrp -> Text(
-                            "Windows側で管理",
-                            fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2
-                        )
+                        isBrp && aoiroGroupLabel != null -> {
+                            val parts = aoiroGroupLabel.split(" ／ ", limit = 2)
+                            Text(
+                                parts[0],
+                                fontWeight = FontWeight.Medium,
+                                fontSize = (fontSize - 1f).coerceAtLeast(10f).sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                parts.getOrNull(1) ?: "摘要なし",
+                                fontSize = (fontSize - 2f).coerceAtLeast(10f).sp,
+                                color = if (parts.size > 1) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                         isMatched && accountingSoftware == AccountingSoftware.YAYOI -> {
                             Text(
                                 rule.yayoiAccountName ?: "",
@@ -747,13 +867,23 @@ private fun MatchingRuleCard(
                         }
                         else -> {
                             meisaiItems.forEach { meisai ->
-                                DepositMeisaiItemRow(
-                                    meisai = meisai,
-                                    groupLabel = if (accountingSoftware == AccountingSoftware.YAYOI)
-                                        rule.yayoiAccountName else rule.kamoku,
-                                    isYayoi = accountingSoftware == AccountingSoftware.YAYOI,
-                                    onClick = onEditIndividual?.let { { onEditIndividual(meisai) } } ?: {}
-                                )
+                                if (isBrp) {
+                                    val override = aoiroOverrideLabel(meisai)
+                                    DepositMeisaiLabeledRow(
+                                        meisai = meisai,
+                                        effectiveLabel = override ?: aoiroGroupLabel,
+                                        isOverridden = override != null,
+                                        onClick = onEditIndividual?.let { { onEditIndividual(meisai) } } ?: {}
+                                    )
+                                } else {
+                                    DepositMeisaiItemRow(
+                                        meisai = meisai,
+                                        groupLabel = if (accountingSoftware == AccountingSoftware.YAYOI)
+                                            rule.yayoiAccountName else rule.kamoku,
+                                        isYayoi = accountingSoftware == AccountingSoftware.YAYOI,
+                                        onClick = onEditIndividual?.let { { onEditIndividual(meisai) } } ?: {}
+                                    )
+                                }
                             }
                         }
                     }
@@ -782,6 +912,17 @@ private fun DepositMeisaiItemRow(
         !isYayoi && meisai.overrideTekiyouId != null -> meisai.overrideKamoku
         else -> groupLabel
     }
+    DepositMeisaiLabeledRow(meisai, effectiveLabel, isOverridden, onClick)
+}
+
+/** 個別明細行の本体。[effectiveLabel] はこの明細に効いている科目（個別指定があればそちら） */
+@Composable
+private fun DepositMeisaiLabeledRow(
+    meisai: DepositMeisaiWithOverride,
+    effectiveLabel: String?,
+    isOverridden: Boolean,
+    onClick: () -> Unit
+) {
     val amountColor = if (meisai.amount >= 0) Color(0xFF4CAF50) else Color(0xFFE53935)
 
     Row(

@@ -4,9 +4,13 @@ import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.data.AoiroChoboVocabMeta
 import com.example.greenframeocr.data.AoiroChoboVocabularyFile
+import com.example.greenframeocr.data.DepositMeisai
+import com.example.greenframeocr.data.Passbook
+import com.example.greenframeocr.data.TekiyouMatchingRule
 import com.example.greenframeocr.data.ProductMaster
 import com.example.greenframeocr.data.ReceiptItem
 import com.example.greenframeocr.data.toEntityOrNull
+import com.example.greenframeocr.util.AoiroChoboTransactionsBuilder.DepositRow
 import com.example.greenframeocr.util.AoiroChoboTransactionsBuilder.PurchaseRow
 import com.example.greenframeocr.util.AoiroChoboTransactionsBuilder.SkipReason
 import com.google.gson.Gson
@@ -255,5 +259,185 @@ class AoiroChoboTransactionsBuilderTest {
         assertTrue(json.contains("\"memoKey\": null"))
         assertTrue(json.contains("\"generatedAt\": \"2026-09-25T15:00:00+09:00\""))
         assertFalse(json.contains("\\u"))
+    }
+
+    // ---- 預金（Deposit） ----
+
+    private val einou = Passbook(id = 1, name = "通帳1", aoiroAccountKey = "einou", aoiroAccountKeyName = "営農口座")
+    private val tyokubai = Passbook(id = 2, name = "通帳2", aoiroAccountKey = "tyokubai", aoiroAccountKeyName = "直売口座")
+
+    private fun bankMemo(accountKey: String, income: Boolean, name: String? = null): AoiroChoboMemoTemplate {
+        val tab = if (income) AoiroChoboMemoRules.MemoTab.BANK_IN else AoiroChoboMemoRules.MemoTab.BANK_OUT
+        return memos.filter { tab.contains(it) && it.counterAccountKey == accountKey }
+            .single { name == null || it.name == name }
+    }
+
+    private var nextMeisaiId = 1
+
+    private fun meisai(
+        tekiyou: String,
+        amount: Int,
+        date: String = "2026-02-05",
+        number: String = "0012",
+        passbookId: Int = 1,
+        memo: String = ""
+    ) = DepositMeisai(
+        id = nextMeisaiId++, passbookId = passbookId, transactionDate = date,
+        transactionNumber = number, tekiyou = tekiyou, amount = amount, memo = memo
+    )
+
+    private fun rule(accountKey: String?, memo: AoiroChoboMemoTemplate? = null) = TekiyouMatchingRule(
+        pattern = "x", normalizedTekiyou = "x",
+        accountKey = accountKey, accountKeyName = accountKey?.let { account(it).name },
+        memoKey = memo?.memoKey, memoKeyName = memo?.name
+    )
+
+    private fun buildDeposit(vararg rows: DepositRow) = AoiroChoboTransactionsBuilder.buildDeposit(
+        rows.toList(), accounts, memos, meta, appVersion = "1.0"
+    )
+
+    @Test
+    fun `預金の代表的な行の出力が契約 §11 を満たす`() {
+        val result = buildDeposit(
+            DepositRow(meisai("ﾉｳｷﾖｳ ﾋﾘﾖｳ", -11000, number = "0001"), einou, rule("hiryou", bankMemo("hiryou", false))),
+            DepositRow(meisai("ｻﾞﾂｼｭｳﾆｭｳ", 500, number = "0002"), einou, rule("zatu", bankMemo("zatu", true))),
+            DepositRow(meisai("ﾃﾞﾝｷﾀﾞｲ", -3000, number = "0003"), einou, rule("douryoku")),
+            DepositRow(meisai("ﾌﾒｲ", -100, number = "x01"), tyokubai, null),
+            DepositRow(meisai("口座なし", 100, number = "0004"), Passbook(id = 3, name = "通帳3"), null)
+        )
+        assertContract(result.json)
+        assertEquals(4, result.file.entries.size)
+        assertEquals(listOf(SkipReason.NO_BANK_ACCOUNT), result.skipped.map { it.reason })
+    }
+
+    @Test
+    fun `出金は 借方＝相手科目・貸方＝口座 で、返品扱いにしない`() {
+        val memo = bankMemo("hiryou", false)
+        val e = buildDeposit(DepositRow(meisai("ﾋﾘﾖｳ", -11000), einou, rule("hiryou", memo))).file.entries.single()
+        assertEquals("Deposit", e.source)
+        assertEquals("Bank", e.ledgerType)
+        assertEquals(1, e.bankSlotNo)
+        assertEquals(11000, e.amount)
+        assertEquals("hiryou", e.debit.accountKey)
+        assertEquals("einou", e.credit.accountKey)
+        assertEquals("営農口座", e.credit.accountName)
+        assertEquals(memo.taxRate, e.debit.taxRate)
+        assertEquals(null, e.credit.taxRate)
+        assertEquals("Matched", e.matchStatus)
+        assertFalse(e.meta.isReturn)
+    }
+
+    @Test
+    fun `入金は 借方＝口座・貸方＝相手科目`() {
+        val memo = bankMemo("zatu", true)
+        val e = buildDeposit(DepositRow(meisai("ｻﾞﾂ", 500), tyokubai, rule("zatu", memo))).file.entries.single()
+        assertEquals(2, e.bankSlotNo)
+        assertEquals("tyokubai", e.debit.accountKey)
+        assertEquals("zatu", e.credit.accountKey)
+        assertEquals(memo.taxRate, e.credit.taxRate)
+        assertEquals(memo.memoKey, e.memoKey)
+    }
+
+    @Test
+    fun `externalId は 通帳ID・日付・通番 で、口座を付け替えても変わらない`() {
+        val m = meisai("ﾋﾘﾖｳ", -100, date = "2026-02-05", number = "0012", passbookId = 1)
+        val first = buildDeposit(DepositRow(m, einou, null)).file.entries.single()
+        val moved = buildDeposit(DepositRow(m, einou.copy(aoiroAccountKey = "tyokubai", aoiroAccountKeyName = "直売口座"), null))
+            .file.entries.single()
+        assertEquals("ocr:deposit:p1-2026-02-05-0012", first.externalId)
+        assertEquals(first.externalId, moved.externalId)
+        assertEquals(2, moved.bankSlotNo)
+    }
+
+    @Test
+    fun `別の通帳の同じ日・同じ通番は別の externalId になる`() {
+        val result = buildDeposit(
+            DepositRow(meisai("A", -100, passbookId = 1), einou, null),
+            DepositRow(meisai("B", -100, passbookId = 2), tyokubai, null)
+        )
+        assertEquals(
+            listOf("ocr:deposit:p1-2026-02-05-0012", "ocr:deposit:p2-2026-02-05-0012"),
+            result.file.entries.map { it.externalId }
+        )
+    }
+
+    @Test
+    fun `口座間の振替は除外せず両方の通帳から出す`() {
+        // 営農口座 → 直売口座。相手科目にもう一方の口座を選んでいれば 2 行の借方貸方がそろい、PC が重複の可能性で受ける
+        val result = buildDeposit(
+            DepositRow(meisai("ﾌﾘｶｴ", -50000, passbookId = 1), einou, rule("tyokubai")),
+            DepositRow(meisai("ﾌﾘｶｴ", 50000, passbookId = 2), tyokubai, rule("einou"))
+        )
+        val (out, inn) = result.file.entries
+        assertEquals(out.debit.accountKey, inn.debit.accountKey)
+        assertEquals(out.credit.accountKey, inn.credit.accountKey)
+        assertEquals("tyokubai", out.debit.accountKey)
+        assertEquals("einou", out.credit.accountKey)
+    }
+
+    @Test
+    fun `明細の個別指定がルールより優先し、摘要も個別の科目のものを使う`() {
+        val electricity = bankMemo("douryoku", false, "電気料金（事業専用）")
+        val m = meisai("ﾃﾞﾝｷ", -3000).copy(
+            overrideAccountKey = "douryoku", overrideAccountKeyName = "動力光熱費",
+            overrideMemoKey = electricity.memoKey, overrideMemoKeyName = electricity.name
+        )
+        val e = buildDeposit(DepositRow(m, einou, rule("hiryou", bankMemo("hiryou", false)))).file.entries.single()
+        assertEquals("douryoku", e.debit.accountKey)
+        assertEquals(electricity.memoKey, e.memoKey)
+        assertEquals("Matched", e.matchStatus)
+    }
+
+    @Test
+    fun `個別に科目だけ指定した明細はルールの摘要を持ち込まない`() {
+        val m = meisai("ﾃﾞﾝｷ", -3000).copy(overrideAccountKey = "douryoku", overrideAccountKeyName = "動力光熱費")
+        val e = buildDeposit(DepositRow(m, einou, rule("hiryou", bankMemo("hiryou", false)))).file.entries.single()
+        assertEquals("UnmatchedMemo", e.matchStatus)
+        assertEquals(null, e.memoKey)
+    }
+
+    @Test
+    fun `入出金の向きと合わない摘要は外す`() {
+        // 出金ルールの摘要が、入金の明細（返金など）に当たったケース
+        val e = buildDeposit(DepositRow(meisai("ﾋﾘﾖｳ ﾍﾝｷﾝ", 1100), einou, rule("hiryou", bankMemo("hiryou", false))))
+            .file.entries.single()
+        assertEquals("UnmatchedMemo", e.matchStatus)
+        assertEquals(null, e.memoKey)
+        assertEquals("einou", e.debit.accountKey)
+        assertEquals("hiryou", e.credit.accountKey)
+    }
+
+    @Test
+    fun `ルールの無い明細は UnmatchedAccount で出し、口座側は埋める`() {
+        val e = buildDeposit(DepositRow(meisai("ﾌﾒｲ", -100), einou, null)).file.entries.single()
+        assertEquals("UnmatchedAccount", e.matchStatus)
+        assertEquals(null, e.debit.accountKey)
+        assertEquals("einou", e.credit.accountKey)
+    }
+
+    @Test
+    fun `口座が決まらない・通番が使えない・金額0の明細は出さずに理由を返す`() {
+        val result = buildDeposit(
+            DepositRow(meisai("口座なし", 100, number = "0001"), Passbook(id = 3, name = "通帳3"), null),
+            DepositRow(meisai("消えた口座", 100, number = "0002"), einou.copy(aoiroAccountKey = "acct-deleted"), null),
+            DepositRow(meisai("普通預金（親）", 100, number = "0003"), einou.copy(aoiroAccountKey = "hutuu"), null),
+            DepositRow(meisai("記号入り", 100, number = "12#3"), einou, null),
+            DepositRow(meisai("ゼロ", 0, number = "0005"), einou, null),
+            DepositRow(meisai("日付", 100, date = "2026-02-30"), einou, null)
+        )
+        assertEquals(0, result.file.entries.size)
+        assertEquals(
+            listOf(
+                SkipReason.NO_BANK_ACCOUNT, SkipReason.BANK_ACCOUNT_NOT_FOUND, SkipReason.BANK_ACCOUNT_NOT_FOUND,
+                SkipReason.INVALID_NUMBER, SkipReason.ZERO_AMOUNT, SkipReason.INVALID_DATE
+            ),
+            result.skipped.map { it.reason }
+        )
+    }
+
+    @Test
+    fun `note は通帳の摘要と農家のメモ`() {
+        val e = buildDeposit(DepositRow(meisai("ﾃﾞﾝｷ", -3000, memo = "6月分"), einou, null)).file.entries.single()
+        assertEquals("ﾃﾞﾝｷ　6月分", e.note)
     }
 }

@@ -282,7 +282,7 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 | 部門 | 弥生の青色申告 | あおいろ帳簿 | らくらく青色申告 |
 |---|---|---|---|
 | JA 購買 | 仕訳 CSV | `transactions.json` | シンプル CSV |
-| JA 預金 | 仕訳 CSV | 未対応（らくらく CSV が出る） | シンプル CSV |
+| JA 預金 | 仕訳 CSV | `transactions.json` | シンプル CSV |
 | レシート | 仕訳 CSV | 未対応（らくらく CSV が出る） | シンプル CSV |
 
 どの出力も、書き出した行に出力日時（`exportedAt`）を記録し、出力確認画面で「未出力のみ表示」に絞り込める。
@@ -297,12 +297,20 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 - 預金：入金は 借方＝普通預金・貸方＝摘要の科目、出金は その逆。普通預金の補助科目に通帳の `yayoiSubAccountName` を入れる
 - レシート：借方＝品目の科目、貸方＝支払方法の科目（`receipt_payment_method_rules`）
 
-### あおいろ帳簿 `transactions.json`（購買のみ）
+### あおいろ帳簿 `transactions.json`（購買・預金）
 
 - 契約は `docs/integration/transaction-import.md`（schemaVersion 2）。UTF-8・BOM なし
-- 組み立ては `util/AoiroChoboTransactionsBuilder.kt`。借方＝商品の `accountKey`、貸方＝`ledgerAffinity == "AP"` の科目（買掛金）、
+- 組み立ては `util/AoiroChoboTransactionsBuilder.kt`（`buildPurchase` / `buildDeposit`）
+- 購買：借方＝商品の `accountKey`、貸方＝`ledgerAffinity == "AP"` の科目（買掛金）、
   摘要＝商品の `memoKey`。`externalId` は `ocr:purchase:{receipt_items.uuid}`
+- 預金：`ledgerType = Bank`。入金は 借方＝口座・貸方＝相手科目、出金は その逆（出金は返品扱いにしない）。
+  口座は通帳の `aoiroAccountKey`（`bankSlotNo` 1〜5 の科目）で、`bankSlotNo` にその番号を入れる。
+  相手科目・摘要は明細の個別指定（`override*`）を最優先、無ければルールのもの。摘要は「預金/入金」「預金/出金」のタブで
+  相手科目が一致するものだけ送る。`externalId` は `ocr:deposit:p{通帳ID}-{日付}-{通番}`。
+  `note` は通帳の摘要原文と明細のメモ。口座間の振替は除外しない（PC が「重複の可能性」で受ける）
 - 科目や摘要が決まっていない行も止めずに出す（PC 側が「要確認」として受ける）。出力後に 確定／摘要なし／科目なし の件数を表示する
+- 出せない行（金額 0・実在しない日付、預金は口座が未設定の通帳・口座が今の科目に無い・通番に使えない文字）は
+  出力済みにせず、理由を結果ダイアログに出す
 
 ### らくらく シンプル CSV（UTF-8・ヘッダあり）
 
@@ -326,7 +334,9 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 5. グループの科目を保存し直すと、そのルールの明細の上書きはリセットされる（`clearOverridesForRule()` / `clearYayoiOverridesForRule()`）
 6. 未マッチの摘要はまとめて Gemini に科目を提案させられる（「AIで一括提案」）
 
-ルールと明細の `accountKey`・`memoKey` 列（あおいろ用）はあるが、預金の `transactions.json` は未着手。
+あおいろモードでは 3〜5 の列が `accountKey`/`memoKey`（ルール）・`overrideAccountKey`/`overrideMemoKey`（明細）になり、
+`AoiroDepositLinkDialog` で相手科目 → 摘要の順に選ぶ（候補は `util/AoiroChoboDepositRules.kt`）。
+グループを保存し直すと明細のあおいろ上書きもリセットされる（`clearAoiroOverridesForRule()`）。AI 提案は弥生モードだけ。
 
 ---
 

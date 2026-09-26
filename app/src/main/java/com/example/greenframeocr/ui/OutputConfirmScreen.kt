@@ -104,6 +104,8 @@ data class DepositOutputItem(
     val yayoiSubAccountName: String = "",
     val defaultTaxCategory: String = "対象外",
     val exportedAt: String? = null,  // 直近のCSV出力日時。未出力ならnull
+    /** あおいろ帳簿モードだけ。transactions.json を組み立てる元（明細・通帳・ルール） */
+    val aoiroRow: AoiroChoboTransactionsBuilder.DepositRow? = null,
     var isSelected: Boolean = true
 )
 
@@ -429,7 +431,7 @@ private fun AoiroExportResultDialog(
                         color = MaterialTheme.colorScheme.error
                     )
                     result.skipped.take(10).forEach { skipped ->
-                        Text("・${skipped.item.productName.ifBlank { "（商品名なし）" }}：${skipped.reason.label}", fontSize = 13.sp)
+                        Text("・${skipped.label}：${skipped.reason.label}", fontSize = 13.sp)
                     }
                     if (result.skipped.size > 10) Text("ほか ${result.skipped.size - 10} 件", fontSize = 13.sp)
                 }
@@ -651,6 +653,32 @@ private fun DepositOutputConfirmContent(
         }
     }
 
+    // あおいろ帳簿（transactions.json）
+    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    var aoiroResult by remember { mutableStateOf<AoiroChoboTransactionsBuilder.Result?>(null) }
+    val jsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                val selected = outputItems.filter { item -> item.isSelected }
+                val result = exportDepositAoiroJsonToUri(context, it, database, selected) ?: return@launch
+                // 出せなかった行（口座が未設定の通帳など）は出力済みにしない
+                val exportedIds = result.file.entries.map { entry -> entry.meta.sourceRowId.toInt() }.toSet()
+                val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date())
+                database.depositMeisaiDao().markExported(exportedIds.toList(), timestamp)
+                val currentSelection = outputItems.associateBy { item -> item.id }
+                allItems = allItems.map { item ->
+                    when {
+                        item.id in exportedIds -> item.copy(exportedAt = timestamp, isSelected = false)
+                        else -> currentSelection[item.id]?.let { item.copy(isSelected = it.isSelected) } ?: item
+                    }
+                }
+                aoiroResult = result
+            }
+        }
+    }
+
     // データ読み込み
     LaunchedEffect(Unit) {
         isLoading = true
@@ -771,6 +799,20 @@ private fun DepositOutputConfirmContent(
                     }
                 }
 
+                // あおいろは口座（bankSlotNo）が決まらない通帳の明細を出せない（契約 §6）
+                if (isAoiro) {
+                    val noAccount = passbooks.filter { it.aoiroAccountKey == null }
+                    if (noAccount.isNotEmpty()) {
+                        Text(
+                            "あおいろの口座が未設定の通帳（${noAccount.joinToString("・") { it.name }}）の明細は出力されません" +
+                                "（通帳データ画面の「通帳の管理」で設定）",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                    }
+                }
+
                 // 期間選択UI
                 DateRangeSelector(
                     context = context,
@@ -866,18 +908,21 @@ private fun DepositOutputConfirmContent(
                             onClick = {
                                 val hasUnmatched = accountingSoftware == AccountingSoftware.YAYOI &&
                                     outputItems.any { it.isSelected && it.tekiyou.isBlank() }
+                                val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                                val timestamp = dateFormat.format(Date())
                                 if (hasUnmatched) {
                                     showUnmatchedBlockDialog = true
+                                } else if (isAoiro) {
+                                    // 相手科目・摘要が未確定の行も止めない。PC が「要確認」で受ける（契約 §9）
+                                    jsonLauncher.launch("ja_shiwake_$timestamp.json")
                                 } else {
-                                    val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-                                    val timestamp = dateFormat.format(Date())
                                     val fileName = "預金_$timestamp.csv"
                                     csvLauncher.launch(fileName)
                                 }
                             },
                             enabled = selectedCount > 0
                         ) {
-                            Text("CSV出力")
+                            Text(if (isAoiro) "JSON出力" else "CSV出力")
                         }
                     }
                 }
@@ -893,6 +938,10 @@ private fun DepositOutputConfirmContent(
                 onDismiss = { showUnmatchedBlockDialog = false }
             )
         }
+
+        aoiroResult?.let { result ->
+            AoiroExportResultDialog(result = result, onDismiss = { aoiroResult = null })
+        }
     }
 }
 
@@ -901,7 +950,11 @@ private fun DepositOutputConfirmContent(
  */
 @Composable
 private fun DepositGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU) {
-    val tekiyouLabel = if (accountingSoftware == AccountingSoftware.YAYOI) "科目/メモ" else "摘要/メモ"
+    val tekiyouLabel = when (accountingSoftware) {
+        AccountingSoftware.YAYOI -> "科目/メモ"
+        AccountingSoftware.BLUE_RETURN_PREP -> "科目 ／ 摘要/メモ"
+        else -> "摘要/メモ"
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1155,8 +1208,16 @@ private suspend fun loadDepositOutputItems(
             database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
         // 行単位の個別オーバーライド（TekiyouMatchingScreen の個別変更ダイアログで設定）を
         // 解決するためのマスタ。らくらくは overrideTekiyouId、弥生は overrideYayoiAccountId。
-        val allRakurakuTekiyou = if (accountingSoftware != AccountingSoftware.YAYOI)
+        val allRakurakuTekiyou = if (accountingSoftware == AccountingSoftware.RAKURAKU)
             database.rakurakuTekiyouDao().getAll().associateBy { it.id } else emptyMap()
+        // あおいろはルールの accountKey / memoKey を使う（結合ビューには無いのでエンティティを読む）
+        val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+        val aoiroRulesByPattern = if (isAoiro)
+            database.tekiyouMatchingRuleDao().getAll().associateBy { it.pattern } else emptyMap()
+        val aoiroAccountNames = if (isAoiro)
+            database.aoiroChoboVocabDao().getAllAccounts().associate { it.accountKey to it.name } else emptyMap()
+        val aoiroMemoNames = if (isAoiro)
+            database.aoiroChoboVocabDao().getAllMemoTemplates().associate { it.memoKey to it.name } else emptyMap()
 
         val ruleMap = mutableMapOf<String, MatchingRuleWithTekiyou>()
         for (rule in matchingRules) {
@@ -1193,6 +1254,28 @@ private suspend fun loadDepositOutputItems(
                     exportedAt = meisai.exportedAt,
                     passbookId = meisai.passbookId,
                     bankYayoiSubAccountName = passbooksById[meisai.passbookId]?.yayoiSubAccountName.orEmpty()
+                )
+            } else if (isAoiro) {
+                val aoiroRule = aoiroRulesByPattern[patternKey]
+                // 表示は今の vocabulary の名前。個別指定があれば科目・摘要ともそちら（ビルダーと同じ優先順）
+                val overridden = meisai.overrideAccountKey != null
+                val accountKey = if (overridden) meisai.overrideAccountKey else aoiroRule?.accountKey
+                val memoKey = if (overridden) meisai.overrideMemoKey else aoiroRule?.memoKey
+                DepositOutputItem(
+                    id = meisai.id,
+                    date = meisai.transactionDate,
+                    tekiyou = listOfNotNull(
+                        accountKey?.let { aoiroAccountNames[it] },
+                        memoKey?.let { aoiroMemoNames[it] }
+                    ).joinToString(" ／ "),
+                    memo = meisai.tekiyou,
+                    deposit = if (meisai.amount >= 0) meisai.amount else null,
+                    withdrawal = if (meisai.amount < 0) -meisai.amount else null,
+                    exportedAt = meisai.exportedAt,
+                    passbookId = meisai.passbookId,
+                    aoiroRow = AoiroChoboTransactionsBuilder.DepositRow(
+                        meisai, passbooksById[meisai.passbookId], aoiroRule
+                    )
                 )
             } else {
                 // 個別オーバーライドを最優先、なければルール一致の摘要名
@@ -1244,6 +1327,40 @@ private suspend fun exportPurchaseAoiroJsonToUri(
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull() ?: ""
         val result = AoiroChoboTransactionsBuilder.buildPurchase(
+            rows = items.mapNotNull { it.aoiroRow },
+            accounts = vocabDao.getAllAccounts(),
+            memos = vocabDao.getAllMemoTemplates(),
+            vocabMeta = meta,
+            appVersion = appVersion
+        )
+        // UTF-8・BOM なし（契約 §1）
+        context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+            writer.write(result.json)
+            writer.write("\n")
+        } ?: error("ファイルを開けませんでした")
+        result
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "JSON出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+        null
+    }
+}
+
+/** 預金の transactions.json を書き出す。購買の [exportPurchaseAoiroJsonToUri] と同じ流れ */
+private suspend fun exportDepositAoiroJsonToUri(
+    context: Context,
+    uri: Uri,
+    database: ReceiptDatabase,
+    items: List<DepositOutputItem>
+): AoiroChoboTransactionsBuilder.Result? = withContext(Dispatchers.IO) {
+    try {
+        val vocabDao = database.aoiroChoboVocabDao()
+        val meta = vocabDao.getMeta() ?: error("あおいろ帳簿の科目・摘要がまだ取り込まれていません")
+        val appVersion = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: ""
+        val result = AoiroChoboTransactionsBuilder.buildDeposit(
             rows = items.mapNotNull { it.aoiroRow },
             accounts = vocabDao.getAllAccounts(),
             memos = vocabDao.getAllMemoTemplates(),
