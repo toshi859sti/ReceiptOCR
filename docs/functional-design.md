@@ -283,7 +283,7 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 |---|---|---|---|
 | JA 購買 | 仕訳 CSV | `transactions.json` | シンプル CSV |
 | JA 預金 | 仕訳 CSV | `transactions.json` | シンプル CSV |
-| レシート | 仕訳 CSV | 未対応（らくらく CSV が出る） | シンプル CSV |
+| レシート | 仕訳 CSV | `transactions.json` | シンプル CSV |
 
 どの出力も、書き出した行に出力日時（`exportedAt`）を記録し、出力確認画面で「未出力のみ表示」に絞り込める。
 弥生 CSV は、科目が決まっていない行が選ばれていると出力せず、科目を設定するかチェックを外すよう求める。
@@ -297,10 +297,10 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 - 預金：入金は 借方＝普通預金・貸方＝摘要の科目、出金は その逆。普通預金の補助科目に通帳の `yayoiSubAccountName` を入れる
 - レシート：借方＝品目の科目、貸方＝支払方法の科目（`receipt_payment_method_rules`）
 
-### あおいろ帳簿 `transactions.json`（購買・預金）
+### あおいろ帳簿 `transactions.json`（購買・預金・レシート）
 
 - 契約は `docs/integration/transaction-import.md`（schemaVersion 2）。UTF-8・BOM なし
-- 組み立ては `util/AoiroChoboTransactionsBuilder.kt`（`buildPurchase` / `buildDeposit`）
+- 組み立ては `util/AoiroChoboTransactionsBuilder.kt`（`buildPurchase` / `buildDeposit` / `buildReceipt`）
 - 購買：借方＝商品の `accountKey`、貸方＝`ledgerAffinity == "AP"` の科目（買掛金）、
   摘要＝商品の `memoKey`。`externalId` は `ocr:purchase:{receipt_items.uuid}`
 - 預金：`ledgerType = Bank`。入金は 借方＝口座・貸方＝相手科目、出金は その逆（出金は返品扱いにしない）。
@@ -308,6 +308,14 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
   相手科目・摘要は明細の個別指定（`override*`）を最優先、無ければルールのもの。摘要は「預金/入金」「預金/出金」のタブで
   相手科目が一致するものだけ送る。`externalId` は `ocr:deposit:p{通帳ID}-{日付}-{通番}`。
   `note` は通帳の摘要原文と明細のメモ。口座間の振替は除外しない（PC が「重複の可能性」で受ける）
+- レシート：借方＝品目グループ（`general_item_master`）の `accountKey`・`memoKey`。貸方＝支払方法の印字に最初に部分一致した
+  ルールの `accountKey`、どれにも当たらなければ現金（`ledgerAffinity == "Cash"` の科目。弥生と同じ既定）。
+  当たったルールにあおいろの科目が無ければ貸方は未設定（`UnmatchedAccount`・現金にはしない）。
+  `ledgerType` は貸方が現金なら `Cash`、それ以外は `Unpaid`。摘要はグループに「現金/出金」のものを持ち、
+  現金以外の支払いでは「未払/発生」の同じ名前・税率・事業割合の摘要に置き換える（無ければ摘要なし）。
+  値引き（金額が負）は借方/貸方を入れ替える。経費対象外の品目は出さない。
+  `externalId` は `ocr:receipt:{general_receipts.uuid}:{itemIndex}`（itemIndex はレシートの全品目を id 順に並べた位置で、
+  経費対象外の品目も数える）。`meta` に店名・登録番号・支払方法の印字を入れる。弥生の明細・レシートごとの個別上書きは使わない
 - 科目や摘要が決まっていない行も止めずに出す（PC 側が「要確認」として受ける）。出力後に 確定／摘要なし／科目なし の件数を表示する
 - 出せない行（金額 0・実在しない日付、預金は口座が未設定の通帳・口座が今の科目に無い・通番に使えない文字）は
   出力済みにせず、理由を結果ダイアログに出す

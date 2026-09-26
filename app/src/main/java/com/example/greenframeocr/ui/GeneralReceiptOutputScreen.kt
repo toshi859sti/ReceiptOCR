@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.util.AoiroChoboTransactionsBuilder
 import com.example.greenframeocr.util.CsvUtils
 import com.example.greenframeocr.viewmodel.GeneralReceiptOutputItem
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
@@ -83,8 +84,52 @@ fun GeneralReceiptOutputScreen(
         }
     }
 
+    // あおいろ帳簿（transactions.json）
+    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    var aoiroLabels by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    var aoiroResult by remember { mutableStateOf<AoiroChoboTransactionsBuilder.Result?>(null) }
+    val jsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                val selected = outputItems.filter { item -> item.isSelected }
+                val result = try {
+                    val appVersion = runCatching {
+                        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                    }.getOrNull() ?: ""
+                    val built = viewModel.buildAoiroReceiptJson(selected.map { item -> item.itemId }, appVersion)
+                    // UTF-8・BOM なし（契約 §1）
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(it)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+                            writer.write(built.json)
+                            writer.write("\n")
+                        } ?: error("ファイルを開けませんでした")
+                    }
+                    built
+                } catch (e: Exception) {
+                    Toast.makeText(context, "JSON出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                // 出せなかった品目（金額 0・不正な日付）は出力済みにしない
+                val exportedIds = result.file.entries.map { entry -> entry.meta.sourceRowId }.toSet()
+                val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date())
+                viewModel.markItemsExported(exportedIds.toList(), timestamp)
+                val currentSelection = outputItems.associateBy { item -> item.itemId }
+                allItems = allItems.map { item ->
+                    when {
+                        item.itemId in exportedIds -> item.copy(exportedAt = timestamp, isSelected = false)
+                        else -> currentSelection[item.itemId]?.let { item.copy(isSelected = it.isSelected) } ?: item
+                    }
+                }
+                aoiroResult = result
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         isLoading = true
+        if (isAoiro) aoiroLabels = viewModel.loadAoiroReceiptLabels()
         val loaded = viewModel.loadOutputItems()
         // 弥生は厳密なCSVが必要なため、科目未設定の品目は誤出力防止でデフォルトチェックOFFにする。
         // 出力済み品目も二重出力防止でデフォルトチェックOFFにする（ソフト共通）
@@ -160,6 +205,8 @@ fun GeneralReceiptOutputScreen(
                                 "弥生の青色申告",
                                 "仕訳CSV（Shift-JIS・25列）"
                             )
+                        AccountingSoftware.BLUE_RETURN_PREP ->
+                            Triple(Color(0xFF00695C), "あおいろ帳簿", "transactions.json（UTF-8）")
                         else ->
                             Triple(
                                 Color(0xFF2E7D32),
@@ -229,13 +276,17 @@ fun GeneralReceiptOutputScreen(
                     )
                 }
 
-                GeneralReceiptGridHeader()
+                GeneralReceiptGridHeader(if (isAoiro) "科目 ／ 摘要" else "勘定科目")
                 Divider()
 
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(outputItems, key = { it.itemId }) { item ->
                         GeneralReceiptGridRow(
-                            item = item,
+                            // あおいろはグループのあおいろ科目・摘要を出す（弥生の科目の列を差し替える）
+                            item = if (isAoiro) item.copy(
+                                accountName = aoiroLabels[item.itemId].orEmpty(),
+                                debitSubAccountName = ""
+                            ) else item,
                             accountingSoftware = accountingSoftware,
                             onToggleSelect = {
                                 outputItems = outputItems.map {
@@ -269,16 +320,19 @@ fun GeneralReceiptOutputScreen(
                             onClick = {
                                 val hasUnmatched = accountingSoftware == AccountingSoftware.YAYOI &&
                                     outputItems.any { it.isSelected && it.accountName.isBlank() }
+                                val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                                    .format(Date())
                                 if (hasUnmatched) {
                                     showUnmatchedBlockDialog = true
+                                } else if (isAoiro) {
+                                    // 科目・摘要が未確定の品目も止めない。PC が「要確認」で受ける（契約 §9）
+                                    jsonLauncher.launch("ja_shiwake_$timestamp.json")
                                 } else {
-                                    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-                                        .format(Date())
                                     csvLauncher.launch("レシート_$timestamp.csv")
                                 }
                             },
                             enabled = selectedCount > 0
-                        ) { Text("CSV出力") }
+                        ) { Text(if (isAoiro) "JSON出力" else "CSV出力") }
                     }
                 }
             }
@@ -312,11 +366,15 @@ fun GeneralReceiptOutputScreen(
                 }
             )
         }
+
+        aoiroResult?.let { result ->
+            AoiroExportResultDialog(result = result, onDismiss = { aoiroResult = null })
+        }
     }
 }
 
 @Composable
-private fun GeneralReceiptGridHeader() {
+private fun GeneralReceiptGridHeader(accountLabel: String = "勘定科目") {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -346,7 +404,7 @@ private fun GeneralReceiptGridHeader() {
             modifier = Modifier.weight(1f).padding(end = 4.dp)
         )
         Text(
-            text = "勘定科目",
+            text = accountLabel,
             fontSize = 11.sp, fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
             modifier = Modifier.weight(1.5f)

@@ -20,9 +20,10 @@ import com.example.greenframeocr.data.AoiroChoboAccountUsage
 import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.util.AoiroChoboDepositRules
 import com.example.greenframeocr.util.AoiroChoboMemoRules
+import com.example.greenframeocr.util.AoiroChoboReceiptRules
 import com.example.greenframeocr.util.AoiroChoboUsageRules
 
-/** あおいろの相手科目・摘要の選択結果。名前は選んだときの PC 側の名前（改名の検知に使う・契約 §4.6） */
+/** あおいろの科目・摘要の選択結果。名前は選んだときの PC 側の名前（改名の検知に使う・契約 §4.6） */
 data class AoiroLinkSelection(
     val accountKey: String?,
     val accountKeyName: String?,
@@ -31,18 +32,58 @@ data class AoiroLinkSelection(
 )
 
 /**
- * 通帳の摘要パターン（グループ）または 1 明細に、あおいろの相手科目・摘要を付けるダイアログ。
+ * 用途ごとに違う「どの科目・摘要を候補にするか」。
  *
- * 預金口座の側は通帳ごとに決まっている（通帳の管理）ので、ここで選ぶのは相手科目だけ。
- * 摘要は入金なら「預金/入金」、出金なら「預金/出金」のタブから、選んだ科目のものだけを出す。
+ * @param usage 農家の絞り込み（[AoiroChoboUsageRules]）の列
+ * @param allAccounts PC が許す科目（「絞り込み外も表示」で出す全体）
+ * @param memoCandidates 科目キー → その用途の摘要候補
+ * @param preselect 科目を選んだ直後に先に埋めてよい摘要
+ * @param memoTabLabel 摘要のタブ名。候補が無いときの説明に使う
+ * @param accountLabel 科目欄のラベル
+ */
+class AoiroLinkKind(
+    val usage: AoiroChoboUsageRules.Usage,
+    val allAccounts: (List<AoiroChoboAccount>) -> List<AoiroChoboAccount>,
+    val memoCandidates: (String, List<AoiroChoboMemoTemplate>) -> List<AoiroChoboMemoTemplate>,
+    val preselect: (String, List<AoiroChoboMemoTemplate>) -> AoiroChoboMemoTemplate?,
+    val memoTabLabel: String,
+    val accountLabel: String
+) {
+    companion object {
+        /** 通帳の摘要パターン・明細の相手科目。[isIncome] は入金か */
+        fun deposit(isIncome: Boolean) = AoiroLinkKind(
+            usage = AoiroChoboUsageRules.Usage.DEPOSIT,
+            allAccounts = AoiroChoboDepositRules::accountCandidates,
+            memoCandidates = { key, memos -> AoiroChoboDepositRules.memoCandidates(key, isIncome, memos) },
+            preselect = { key, memos -> AoiroChoboDepositRules.preselectedMemo(key, isIncome, memos) },
+            memoTabLabel = if (isIncome) "預金/入金" else "預金/出金",
+            accountLabel = "相手科目（あおいろ）"
+        )
+
+        /** レシートの品目グループの借方 */
+        val receiptItem = AoiroLinkKind(
+            usage = AoiroChoboUsageRules.Usage.RECEIPT,
+            allAccounts = AoiroChoboReceiptRules::accountCandidates,
+            memoCandidates = AoiroChoboReceiptRules::memoCandidates,
+            preselect = AoiroChoboReceiptRules::preselectedMemo,
+            memoTabLabel = "現金/出金",
+            accountLabel = "あおいろ科目"
+        )
+    }
+}
+
+/**
+ * 通帳の摘要パターン・明細、レシートの品目グループに、あおいろの科目・摘要を付けるダイアログ。
+ * 科目 → その科目で絞った摘要 の順に選ぶ（摘要は科目に属する）。
  *
- * @param resetHint 科目を外したときの意味。グループなら「未設定」、明細なら「グループの設定に戻す」
+ * @param resetHint 科目を外したときの意味（グループなら「未設定」、明細なら「グループの設定に戻す」）
+ * @param extraNote 摘要欄の下に出す補足（なければ null）
  */
 @Composable
-fun AoiroDepositLinkDialog(
+fun AoiroLinkDialog(
     title: String,
     subject: String,
-    isIncome: Boolean,
+    kind: AoiroLinkKind,
     accounts: List<AoiroChoboAccount>,
     memos: List<AoiroChoboMemoTemplate>,
     usage: List<AoiroChoboAccountUsage>,
@@ -52,6 +93,7 @@ fun AoiroDepositLinkDialog(
     initialMemoKeyName: String?,
     note: String,
     resetHint: String,
+    extraNote: String? = null,
     onDismiss: () -> Unit,
     onSave: (AoiroLinkSelection) -> Unit
 ) {
@@ -59,7 +101,7 @@ fun AoiroDepositLinkDialog(
     var memoKey by remember { mutableStateOf(initialMemoKey) }
     var showAccountPicker by remember { mutableStateOf(false) }
     var showMemoPicker by remember { mutableStateOf(false) }
-    val memoCandidates = { key: String -> AoiroChoboDepositRules.memoCandidates(key, isIncome, memos) }
+    val memoCandidates = { key: String -> kind.memoCandidates(key, memos) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -82,8 +124,8 @@ fun AoiroDepositLinkDialog(
                     accounts = accounts,
                     memos = memos,
                     memoCandidates = memoCandidates,
-                    memoTabLabel = if (isIncome) "預金/入金" else "預金/出金",
-                    accountLabel = "相手科目（あおいろ）",
+                    memoTabLabel = kind.memoTabLabel,
+                    accountLabel = kind.accountLabel,
                     accountKey = accountKey,
                     memoKey = memoKey,
                     fallbackAccountName = initialAccountKeyName.takeIf { accountKey == initialAccountKey },
@@ -95,6 +137,9 @@ fun AoiroDepositLinkDialog(
                 )
                 if (accountKey == null && accounts.isNotEmpty()) {
                     Text(resetHint, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (extraNote != null && accountKey != null) {
+                    Text(extraNote, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
@@ -122,14 +167,14 @@ fun AoiroDepositLinkDialog(
     if (showAccountPicker) {
         AoiroAccountPickerDialog(
             subject = subject,
-            accounts = AoiroChoboUsageRules.candidates(AoiroChoboUsageRules.Usage.DEPOSIT, accounts, usage),
-            allAccounts = AoiroChoboDepositRules.accountCandidates(accounts),
+            accounts = AoiroChoboUsageRules.candidates(kind.usage, accounts, usage),
+            allAccounts = kind.allAccounts(accounts),
             memoCandidates = memoCandidates,
             selectedKey = accountKey,
             onSelect = { key ->
                 if (key != accountKey) {
                     accountKey = key
-                    memoKey = AoiroChoboDepositRules.preselectedMemo(key, isIncome, memos)?.memoKey
+                    memoKey = kind.preselect(key, memos)?.memoKey
                 }
                 showAccountPicker = false
             },

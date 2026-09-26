@@ -406,7 +406,7 @@ private fun PurchaseOutputConfirmContent(
  * transactions.json を書き出した結果。PC で「要確認」になる行の数と、出せなかった行を知らせる
  */
 @Composable
-private fun AoiroExportResultDialog(
+internal fun AoiroExportResultDialog(
     result: AoiroChoboTransactionsBuilder.Result,
     onDismiss: () -> Unit
 ) {

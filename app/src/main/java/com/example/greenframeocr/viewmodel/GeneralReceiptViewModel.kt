@@ -7,6 +7,9 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.greenframeocr.data.AoiroChoboAccount
+import com.example.greenframeocr.data.AoiroChoboAccountUsage
+import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralItemGroup
 import com.example.greenframeocr.data.GeneralItemMaster
@@ -17,6 +20,7 @@ import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.data.ReceiptItemPreview
 import com.example.greenframeocr.data.ReceiptPaymentMethodRule
 import com.example.greenframeocr.data.YayoiAccount
+import com.example.greenframeocr.util.AoiroChoboTransactionsBuilder
 import com.example.greenframeocr.util.CsvUtils
 import com.example.greenframeocr.util.GeminiApiException
 import com.example.greenframeocr.util.GeminiApiKeyMissingException
@@ -222,6 +226,90 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                     ?: GeneralItemMaster(canonicalKey, accountId)
             )
             dao.clearOverridesForGroup(canonicalKey)
+        }
+    }
+
+    /**
+     * グループのあおいろの科目・摘要を変更する。弥生の科目とは独立なので弥生側（科目・個別上書き）には触らない。
+     * あおいろには明細ごとの個別上書きが無い（列が無い）ので、全件リセットも無い
+     */
+    fun updateGroupAoiro(
+        canonicalKey: String,
+        accountKey: String?,
+        accountKeyName: String?,
+        memoKey: String?,
+        memoKeyName: String?
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val existing = db.generalItemMasterDao().getByKey(canonicalKey) ?: GeneralItemMaster(canonicalKey)
+            db.generalItemMasterDao().upsert(
+                existing.copy(
+                    accountKey = accountKey,
+                    accountKeyName = accountKeyName,
+                    memoKey = memoKey,
+                    memoKeyName = memoKeyName
+                )
+            )
+        }
+    }
+
+    /** あおいろの科目・摘要・用途の絞り込み（あおいろモードの画面用） */
+    data class AoiroVocab(
+        val accounts: List<AoiroChoboAccount>,
+        val memos: List<AoiroChoboMemoTemplate>,
+        val usage: List<AoiroChoboAccountUsage>
+    )
+
+    suspend fun loadAoiroVocab(): AoiroVocab = withContext(Dispatchers.IO) {
+        AoiroVocab(
+            accounts = db.aoiroChoboVocabDao().getAllAccounts(),
+            memos = db.aoiroChoboVocabDao().getAllMemoTemplates(),
+            usage = db.aoiroChoboAccountUsageDao().getAll()
+        )
+    }
+
+    /**
+     * 選んだ品目からあおいろの transactions.json を組み立てる。vocabulary 未取込なら例外。
+     * itemIndex はレシートの全品目（経費対象外も含む）を id 順に並べた位置（契約 §4）
+     */
+    suspend fun buildAoiroReceiptJson(itemIds: List<Long>, appVersion: String): AoiroChoboTransactionsBuilder.Result =
+        withContext(Dispatchers.IO) {
+            val vocabDao = db.aoiroChoboVocabDao()
+            val meta = vocabDao.getMeta() ?: error("あおいろ帳簿の科目・摘要がまだ取り込まれていません")
+            val wanted = itemIds.toSet()
+            val allItems = dao.getAllItemsOnce()
+            val itemsByReceipt = allItems.groupBy { it.receiptId }
+            val receiptsById = dao.getAllReceiptsOnce().associateBy { it.id }
+            val groups = db.generalItemMasterDao().getAll().associateBy { it.canonicalKey }
+            // 出力確認画面と同じ並び（日付 → 品目 id）
+            val rows = allItems.filter { it.id in wanted }
+                .mapNotNull { item ->
+                    val receipt = receiptsById[item.receiptId] ?: return@mapNotNull null
+                    val index = itemsByReceipt[item.receiptId].orEmpty().sortedBy { it.id }.indexOfFirst { it.id == item.id }
+                    AoiroChoboTransactionsBuilder.ReceiptRow(receipt, item, index, groups[item.canonicalKey])
+                }
+                .sortedWith(compareBy({ it.receipt.date }, { it.item.id }))
+            AoiroChoboTransactionsBuilder.buildReceipt(
+                rows = rows,
+                paymentRules = db.receiptPaymentMethodRuleDao().getAll(),
+                accounts = vocabDao.getAllAccounts(),
+                memos = vocabDao.getAllMemoTemplates(),
+                vocabMeta = meta,
+                appVersion = appVersion
+            )
+        }
+
+    /** あおいろモードの出力確認に出す「科目 ／ 摘要」（品目 id → 表示。今の辞書の名前） */
+    suspend fun loadAoiroReceiptLabels(): Map<Long, String> = withContext(Dispatchers.IO) {
+        val accountNames = db.aoiroChoboVocabDao().getAllAccounts().associate { it.accountKey to it.name }
+        val memoNames = db.aoiroChoboVocabDao().getAllMemoTemplates().associate { it.memoKey to it.name }
+        val groups = db.generalItemMasterDao().getAll().associateBy { it.canonicalKey }
+        dao.getAllItemsOnce().associate { item ->
+            val group = groups[item.canonicalKey]
+            item.id to listOfNotNull(
+                group?.accountKey?.let { accountNames[it] },
+                group?.memoKey?.let { memoNames[it] }
+            ).joinToString(" ／ ")
         }
     }
 

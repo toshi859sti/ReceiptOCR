@@ -443,10 +443,10 @@ fun TekiyouMatchingScreen(
     // グループ編集ダイアログ（あおいろ・全件上書き）
     if (showEditDialog && selectedRule != null && isAoiro) {
         val rule = selectedRule!!
-        AoiroDepositLinkDialog(
+        AoiroLinkDialog(
             title = "グループ設定（あおいろ）",
             subject = "${if (rule.isDeposit) "入金" else "出金"}  ${rule.normalizedTekiyou}",
-            isIncome = rule.isDeposit,
+            kind = AoiroLinkKind.deposit(isIncome = rule.isDeposit),
             accounts = aoiroAccounts,
             memos = aoiroMemos,
             usage = aoiroUsage,
@@ -577,10 +577,10 @@ fun TekiyouMatchingScreen(
     // 個別オーバーライドダイアログ（あおいろ）
     if (showIndividualDialog && selectedMeisai != null && isAoiro) {
         val meisai = selectedMeisai!!
-        AoiroDepositLinkDialog(
+        AoiroLinkDialog(
             title = "個別変更（あおいろ）",
             subject = "${meisai.transactionDate}  ${meisai.tekiyou}",
-            isIncome = meisai.amount >= 0,
+            kind = AoiroLinkKind.deposit(isIncome = meisai.amount >= 0),
             accounts = aoiroAccounts,
             memos = aoiroMemos,
             usage = aoiroUsage,

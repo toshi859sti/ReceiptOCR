@@ -9,7 +9,12 @@ data class GeneralItemGroup(
     val count: Int,
     val totalPrice: Int,
     // グループのデフォルト科目（general_item_masterから）。個別上書きの有無はここには出ない
-    val yayoiAccountId: Long?
+    val yayoiAccountId: Long?,
+    // あおいろのグループ設定（general_item_masterから。名前は選んだときの PC 側の名前）
+    val accountKey: String? = null,
+    val accountKeyName: String? = null,
+    val memoKey: String? = null,
+    val memoKeyName: String? = null
 )
 
 data class ReceiptItemPreview(
@@ -78,7 +83,9 @@ interface GeneralReceiptDao {
                 ORDER BY i2.id DESC LIMIT 1) as itemName,
                COUNT(*) as count,
                SUM(g.price) as totalPrice,
-               m.yayoiAccountId as yayoiAccountId
+               m.yayoiAccountId as yayoiAccountId,
+               m.accountKey as accountKey, m.accountKeyName as accountKeyName,
+               m.memoKey as memoKey, m.memoKeyName as memoKeyName
         FROM general_receipt_items g
         LEFT JOIN general_item_master m ON m.canonicalKey = g.canonicalKey
         WHERE g.itemName != '' AND g.isExcluded = 0

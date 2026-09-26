@@ -5,6 +5,10 @@ import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.data.AoiroChoboVocabMeta
 import com.example.greenframeocr.data.AoiroChoboVocabularyFile
 import com.example.greenframeocr.data.DepositMeisai
+import com.example.greenframeocr.data.GeneralItemMaster
+import com.example.greenframeocr.data.GeneralReceipt
+import com.example.greenframeocr.data.GeneralReceiptItem
+import com.example.greenframeocr.data.ReceiptPaymentMethodRule
 import com.example.greenframeocr.data.Passbook
 import com.example.greenframeocr.data.TekiyouMatchingRule
 import com.example.greenframeocr.data.ProductMaster
@@ -433,6 +437,145 @@ class AoiroChoboTransactionsBuilderTest {
             ),
             result.skipped.map { it.reason }
         )
+    }
+
+    // ---- レシート（Receipt） ----
+
+    private fun receipt(
+        paymentText: String? = null,
+        date: String = "2026-03-10",
+        uuid: String = "9F1C8B0E-4A2D-4F1A-9B3E-7C6D5E4F3A21",
+        registrationNumber: String = ""
+    ) = GeneralReceipt(
+        id = 1, date = date, storeName = "ホームセンター", paymentMethodText = paymentText,
+        registrationNumber = registrationNumber, uuid = uuid
+    )
+
+    private var nextItemId = 1L
+
+    private fun receiptItem(name: String, price: Int) =
+        GeneralReceiptItem(id = nextItemId++, receiptId = 1, itemName = name, price = price, category = "資材")
+
+    private fun group(accountKey: String?, memo: AoiroChoboMemoTemplate? = null) = GeneralItemMaster(
+        canonicalKey = "x",
+        accountKey = accountKey, accountKeyName = accountKey?.let { account(it).name },
+        memoKey = memo?.memoKey, memoKeyName = memo?.name
+    )
+
+    private fun cashMemo(accountKey: String, name: String? = null) =
+        AoiroChoboReceiptRules.memoCandidates(accountKey, memos).single { name == null || it.name == name }
+
+    /** 端末の既定のルール（DatabaseInitializer）にあおいろの科目を付けたもの */
+    private val paymentRules = listOf(
+        ReceiptPaymentMethodRule(id = 1, keyword = "現金", yayoiAccountId = 1, sortOrder = 0, accountKey = "genkin", accountKeyName = "現金"),
+        ReceiptPaymentMethodRule(id = 2, keyword = "クレジット", yayoiAccountId = 2, sortOrder = 1, accountKey = "mibarai", accountKeyName = "未払金"),
+        ReceiptPaymentMethodRule(id = 3, keyword = "PayPay", yayoiAccountId = 2, sortOrder = 2)
+    )
+
+    private fun buildReceipt(vararg rows: AoiroChoboTransactionsBuilder.ReceiptRow) =
+        AoiroChoboTransactionsBuilder.buildReceipt(rows.toList(), paymentRules, accounts, memos, meta, appVersion = "1.0")
+
+    private fun row(r: GeneralReceipt, item: GeneralReceiptItem, index: Int, g: GeneralItemMaster?) =
+        AoiroChoboTransactionsBuilder.ReceiptRow(r, item, index, g)
+
+    @Test
+    fun `レシートの代表的な行の出力が契約 §11 を満たす`() {
+        val r = receipt()
+        val result = buildReceipt(
+            row(r, receiptItem("結束バンド", 330), 0, group("syozairyou", cashMemo("syozairyou"))),
+            row(r, receiptItem("軍手", 220), 1, group("sagyouitaku")),
+            row(r, receiptItem("謎", 100), 2, null),
+            row(r, receiptItem("値引", -50), 3, group("syozairyou", cashMemo("syozairyou"))),
+            row(receipt("クレジット", uuid = "11111111-2222-3333-4444-555555555555"), receiptItem("修理", 5500), 0, group("syuuzen", cashMemo("syuuzen"))),
+            row(receipt("PayPay", uuid = "66666666-2222-3333-4444-555555555555"), receiptItem("肥料", 1000), 0, group("hiryou"))
+        )
+        assertContract(result.json)
+        assertEquals(6, result.file.entries.size)
+    }
+
+    @Test
+    fun `支払方法の記載が無いレシートは現金払いで、摘要は現金出金のもの`() {
+        val memo = cashMemo("syozairyou")
+        val e = buildReceipt(row(receipt(), receiptItem("結束バンド", 330), 0, group("syozairyou", memo))).file.entries.single()
+        assertEquals("Receipt", e.source)
+        assertEquals("Cash", e.ledgerType)
+        assertEquals("syozairyou", e.debit.accountKey)
+        assertEquals("genkin", e.credit.accountKey)
+        assertEquals(memo.memoKey, e.memoKey)
+        assertEquals(memo.taxRate, e.debit.taxRate)
+        assertEquals("Matched", e.matchStatus)
+        assertEquals("ocr:receipt:9f1c8b0e-4a2d-4f1a-9b3e-7c6d5e4f3a21:0", e.externalId)
+        assertEquals(null, e.bankSlotNo)
+        assertEquals("結束バンド", e.note)
+        assertEquals("ホームセンター", e.meta.storeName)
+    }
+
+    @Test
+    fun `クレジット払いは未払金で、同じ摘要が未払にあれば置き換える・無ければ摘要なし`() {
+        val r = receipt("クレジット払い")
+        val repair = buildReceipt(row(r, receiptItem("修理", 5500), 0, group("syuuzen", cashMemo("syuuzen")))).file.entries.single()
+        assertEquals("Unpaid", repair.ledgerType)
+        assertEquals("mibarai", repair.credit.accountKey)
+        val unpaidRepair = memos.single {
+            AoiroChoboMemoRules.MemoTab.UNPAID_IN.contains(it) && it.counterAccountKey == "syuuzen"
+        }
+        assertEquals(unpaidRepair.memoKey, repair.memoKey)
+        assertEquals("Matched", repair.matchStatus)
+
+        val material = buildReceipt(row(r, receiptItem("結束バンド", 330), 0, group("syozairyou", cashMemo("syozairyou"))))
+            .file.entries.single()
+        assertEquals("UnmatchedMemo", material.matchStatus)
+        assertEquals(null, material.memoKey)
+    }
+
+    @Test
+    fun `当たったルールにあおいろの科目が無ければ現金にせず科目なし`() {
+        val e = buildReceipt(row(receipt("PayPay"), receiptItem("肥料", 1000), 0, group("hiryou"))).file.entries.single()
+        assertEquals("UnmatchedAccount", e.matchStatus)
+        assertEquals(null, e.credit.accountKey)
+        assertEquals(null, e.ledgerType)
+        assertEquals("hiryou", e.debit.accountKey)
+    }
+
+    @Test
+    fun `値引きは借方貸方を入れ替えて正数、isReturn を立てる`() {
+        val memo = cashMemo("syozairyou")
+        val e = buildReceipt(row(receipt(), receiptItem("値引", -50), 3, group("syozairyou", memo))).file.entries.single()
+        assertEquals(50, e.amount)
+        assertEquals("genkin", e.debit.accountKey)
+        assertEquals("syozairyou", e.credit.accountKey)
+        assertEquals(memo.taxRate, e.credit.taxRate)
+        assertTrue(e.meta.isReturn)
+        assertEquals("ocr:receipt:9f1c8b0e-4a2d-4f1a-9b3e-7c6d5e4f3a21:3", e.externalId)
+    }
+
+    @Test
+    fun `品目グループが無い・辞書に無い科目は UnmatchedAccount`() {
+        val r = receipt()
+        val result = buildReceipt(
+            row(r, receiptItem("謎", 100), 0, null),
+            row(r, receiptItem("古い", 100), 1, GeneralItemMaster("x", accountKey = "acct-deleted", accountKeyName = "消えた"))
+        )
+        assertEquals(listOf("UnmatchedAccount", "UnmatchedAccount"), result.file.entries.map { it.matchStatus })
+        assertEquals(listOf("genkin", "genkin"), result.file.entries.map { it.credit.accountKey })
+    }
+
+    @Test
+    fun `金額0と不正な日付の品目は出さずに理由を返す`() {
+        val result = buildReceipt(
+            row(receipt(), receiptItem("ゼロ", 0), 0, null),
+            row(receipt(date = "2026-02-30"), receiptItem("日付", 100), 1, null)
+        )
+        assertEquals(0, result.file.entries.size)
+        assertEquals(listOf(SkipReason.ZERO_AMOUNT, SkipReason.INVALID_DATE), result.skipped.map { it.reason })
+    }
+
+    @Test
+    fun `登録番号があれば meta に載せる`() {
+        val e = buildReceipt(row(receipt(registrationNumber = "T1234567890123"), receiptItem("A", 100), 0, null))
+            .file.entries.single()
+        assertEquals("T1234567890123", e.meta.registrationNumber)
+        assertEquals(null, buildReceipt(row(receipt(), receiptItem("A", 100), 0, null)).file.entries.single().meta.registrationNumber)
     }
 
     @Test

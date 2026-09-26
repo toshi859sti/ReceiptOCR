@@ -15,6 +15,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
+import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.ReceiptDao
 import com.example.greenframeocr.ui.AoiroChoboVocabularyScreen
@@ -327,6 +328,7 @@ fun ReceiptNavGraph(
         composable(Screen.ReceiptPaymentMethodRules.route) {
             ReceiptPaymentMethodRuleScreen(
                 viewModel = generalReceiptViewModel,
+                isAoiro = appPreferences.accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP,
                 onBack = { navController.popBackStack() }
             )
         }

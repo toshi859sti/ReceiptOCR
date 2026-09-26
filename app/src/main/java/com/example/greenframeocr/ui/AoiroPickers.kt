@@ -106,7 +106,7 @@ internal fun AoiroAccountAndMemoFields(
 }
 
 @Composable
-private fun PickerField(
+internal fun PickerField(
     label: String,
     value: String,
     hasValue: Boolean,
@@ -149,7 +149,7 @@ internal fun AoiroAccountPickerDialog(
     emptySubject: String = "新規商品",
     accounts: List<AoiroChoboAccount>,
     allAccounts: List<AoiroChoboAccount>,
-    memoCandidates: (String) -> List<AoiroChoboMemoTemplate>,
+    memoCandidates: ((String) -> List<AoiroChoboMemoTemplate>)?,
     selectedKey: String?,
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit
@@ -199,14 +199,14 @@ internal fun AoiroAccountPickerDialog(
             // 切り替え・検索のたびに先頭に戻す。そのままだと表示中の行が基準になり、上に増えた科目が画面外に隠れる
             key(showAll, searchQuery) { LazyColumn {
                 items(filtered, key = { it.accountKey }) { account ->
-                    val memoCount = memoCandidates(account.accountKey).size
+                    val memoCount = memoCandidates?.invoke(account.accountKey)?.size
                     PickerRow(
                         selected = account.accountKey == selectedKey,
                         title = account.name,
                         subtitle = listOfNotNull(
                             account.searchKey.ifBlank { null },
                             account.displayGroup,
-                            if (memoCount == 0) "摘要なし" else "摘要 $memoCount 件"
+                            memoCount?.let { if (it == 0) "摘要なし" else "摘要 $it 件" }
                         ).joinToString("・"),
                         onClick = { onSelect(account.accountKey) }
                     )

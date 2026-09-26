@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralItemGroup
 import com.example.greenframeocr.data.GeneralReceiptItem
@@ -89,24 +90,41 @@ fun GeneralItemMatchingScreen(
     var hasSearchedSimilarGroups by remember { mutableStateOf(false) }
     var hasSearchedNumericPrefixes by remember { mutableStateOf(false) }
 
+    // あおいろ帳簿：グループに あおいろ科目・摘要 を付ける。明細ごとの個別上書きはあおいろには無い（列が無い）
+    val isAoiro = appPreferences.accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    var aoiroVocab by remember { mutableStateOf<GeneralReceiptViewModel.AoiroVocab?>(null) }
+    var aoiroEditTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
+
     LaunchedEffect(Unit) {
         val accounts = viewModel.loadYayoiAccounts()
         yayoiAccounts = accounts
         yayoiFlaggedAccounts = accounts.filter { it.usedForReceipt }
+        if (isAoiro) aoiroVocab = viewModel.loadAoiroVocab()
     }
 
-    val matchedCount = itemGroups.count { it.yayoiAccountId != null }
+    fun isMatched(group: GeneralItemGroup) = if (isAoiro) group.accountKey != null else group.yayoiAccountId != null
+
+    // 表示名は今の辞書から引く（PC で改名されていればそちら）。辞書から消えたキーは保存時の名前
+    fun aoiroLabel(group: GeneralItemGroup): String? {
+        val key = group.accountKey ?: return null
+        val vocab = aoiroVocab
+        val account = vocab?.accounts?.find { it.accountKey == key }?.name ?: group.accountKeyName ?: key
+        val memo = group.memoKey?.let { m -> vocab?.memos?.find { it.memoKey == m }?.name ?: group.memoKeyName ?: m }
+        return if (memo != null) "$account ／ $memo" else account
+    }
+
+    val matchedCount = itemGroups.count { isMatched(it) }
     val totalCount = itemGroups.size
     val unmatchedCount = totalCount - matchedCount
 
     val filteredGroups = remember(itemGroups, searchText, sortOrder, unmatchedOnly) {
         var list = itemGroups
-        if (unmatchedOnly) list = list.filter { it.yayoiAccountId == null }
+        if (unmatchedOnly) list = list.filter { !isMatched(it) }
         if (searchText.isNotBlank()) list = list.filter { it.itemName.contains(searchText, ignoreCase = true) }
         when (sortOrder) {
             ItemSortOrder.COUNT -> list
             ItemSortOrder.NAME -> list.sortedBy { it.itemName }
-            ItemSortOrder.UNMATCHED_FIRST -> list.sortedWith(compareBy({ it.yayoiAccountId != null }, { -it.count }))
+            ItemSortOrder.UNMATCHED_FIRST -> list.sortedWith(compareBy({ isMatched(it) }, { -it.count }))
         }
     }
 
@@ -168,8 +186,8 @@ fun GeneralItemMatchingScreen(
             }
 
             // AI一括割り当てボタン（既マッチ済みグループも対象に含めて再提案できる）
-            // 常時表示にして見落としを防ぐ（折りたたみパネルの中は展開しないと見えないため）
-            if (itemGroups.isNotEmpty()) {
+            // 常時表示にして見落としを防ぐ（折りたたみパネルの中は展開しないと見えないため）。弥生の科目を提案するのであおいろでは出さない
+            if (itemGroups.isNotEmpty() && !isAoiro) {
                 AiSuggestButton(
                     label = if (unmatchedCount > 0) "未マッチ${unmatchedCount}件を含む全${totalCount}件をAIで一括提案"
                         else "全${totalCount}件をAIで一括再提案",
@@ -296,13 +314,15 @@ fun GeneralItemMatchingScreen(
                             isExpanded = isExpanded,
                             fontSize = listFontSize,
                             viewModel = viewModel,
+                            isAoiro = isAoiro,
+                            aoiroLabel = if (isAoiro) aoiroLabel(group) else null,
                             onToggleExpand = {
                                 expandedKeys = if (isExpanded) expandedKeys - group.canonicalKey
                                                else expandedKeys + group.canonicalKey
                             },
-                            onEditGroup = { groupEditTarget = group },
+                            onEditGroup = { if (isAoiro) aoiroEditTarget = group else groupEditTarget = group },
                             onRenameGroup = { groupRenameTarget = group },
-                            onEditIndividual = { item ->
+                            onEditIndividual = if (isAoiro) null else { item ->
                                 itemEditTarget = item
                                 itemEditGroupDefaultName = yayoiAccounts.find { it.id == group.yayoiAccountId }?.accountName
                             }
@@ -392,6 +412,31 @@ fun GeneralItemMatchingScreen(
                 yayoiFlaggedAccounts = accounts.filter { it.usedForReceipt }
             },
             viewModel = viewModel
+        )
+    }
+
+    // グループのあおいろ科目・摘要ダイアログ
+    aoiroEditTarget?.let { group ->
+        val vocab = aoiroVocab
+        AoiroLinkDialog(
+            title = "あおいろ科目・摘要",
+            subject = "${group.itemName}（${group.count}件）",
+            kind = AoiroLinkKind.receiptItem,
+            accounts = vocab?.accounts.orEmpty(),
+            memos = vocab?.memos.orEmpty(),
+            usage = vocab?.usage.orEmpty(),
+            initialAccountKey = group.accountKey,
+            initialAccountKeyName = group.accountKeyName,
+            initialMemoKey = group.memoKey,
+            initialMemoKeyName = group.memoKeyName,
+            note = "この品目名のレシート明細すべてに使います（弥生の科目とは別）",
+            resetHint = "科目を外すと、この品目は「科目なし」で PC に送ります",
+            extraNote = "クレジット等の支払いでは、同じ名前の「未払/発生」の摘要に置き換えて送ります（無ければ摘要なし）",
+            onDismiss = { aoiroEditTarget = null },
+            onSave = { s ->
+                viewModel.updateGroupAoiro(group.canonicalKey, s.accountKey, s.accountKeyName, s.memoKey, s.memoKeyName)
+                aoiroEditTarget = null
+            }
         )
     }
 
@@ -733,12 +778,14 @@ private fun ItemGroupCard(
     isExpanded: Boolean,
     fontSize: Float,
     viewModel: GeneralReceiptViewModel,
+    isAoiro: Boolean = false,
+    aoiroLabel: String? = null,   // あおいろモードのグループの「科目 ／ 摘要」（未設定なら null）
     onToggleExpand: () -> Unit,
     onEditGroup: () -> Unit,
     onRenameGroup: () -> Unit,
-    onEditIndividual: (GeneralReceiptItem) -> Unit
+    onEditIndividual: ((GeneralReceiptItem) -> Unit)?   // null = 明細の個別変更なし（あおいろ）
 ) {
-    val isMatched = group.yayoiAccountId != null
+    val isMatched = if (isAoiro) aoiroLabel != null else group.yayoiAccountId != null
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -791,7 +838,24 @@ private fun ItemGroupCard(
                     modifier = Modifier.widthIn(max = 110.dp),
                     horizontalAlignment = Alignment.End
                 ) {
-                    if (matchedAccount != null) {
+                    if (isAoiro && aoiroLabel != null) {
+                        val parts = aoiroLabel.split(" ／ ", limit = 2)
+                        Text(
+                            text = parts[0],
+                            fontWeight = FontWeight.Medium,
+                            fontSize = (fontSize - 1f).coerceAtLeast(10f).sp,
+                            color = MatchedAccountColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = parts.getOrNull(1) ?: "摘要なし",
+                            fontSize = (fontSize - 3f).coerceAtLeast(9f).sp,
+                            color = if (parts.size > 1) MatchedAccountColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    } else if (!isAoiro && matchedAccount != null) {
                         Text(
                             text = matchedAccount.accountName,
                             fontWeight = FontWeight.Medium,
@@ -850,13 +914,24 @@ private fun ItemGroupCard(
                         }
                         else -> {
                             items!!.forEach { item ->
-                                GeneralItemRow(
-                                    item = item,
-                                    groupDefaultAccount = matchedAccount,
-                                    overrideAccount = yayoiAccounts.find { it.id == item.yayoiAccountId },
-                                    fontSize = fontSize,
-                                    onClick = { onEditIndividual(item) }
-                                )
+                                if (onEditIndividual == null) {
+                                    // あおいろ：明細はグループの設定に従う（個別変更なし）
+                                    GeneralItemLabelRow(
+                                        itemName = item.itemName,
+                                        label = aoiroLabel,
+                                        isOverridden = false,
+                                        fontSize = fontSize,
+                                        onClick = null
+                                    )
+                                } else {
+                                    GeneralItemRow(
+                                        item = item,
+                                        groupDefaultAccount = matchedAccount,
+                                        overrideAccount = yayoiAccounts.find { it.id == item.yayoiAccountId },
+                                        fontSize = fontSize,
+                                        onClick = { onEditIndividual(item) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -876,16 +951,27 @@ private fun GeneralItemRow(
 ) {
     val isOverridden = item.yayoiAccountId != null
     val effectiveAccount = if (isOverridden) overrideAccount else groupDefaultAccount
+    GeneralItemLabelRow(item.itemName, effectiveAccount?.accountName, isOverridden, fontSize, onClick)
+}
 
+/** 明細行の本体。[label] はこの明細に効いている科目（未設定なら null）。[onClick] が null なら押せない */
+@Composable
+private fun GeneralItemLabelRow(
+    itemName: String,
+    label: String?,
+    isOverridden: Boolean,
+    fontSize: Float,
+    onClick: (() -> Unit)?
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = item.itemName,
+            text = itemName,
             fontSize = (fontSize - 2f).coerceAtLeast(11f).sp,
             modifier = Modifier.weight(1f),
             maxLines = 1,
@@ -894,14 +980,14 @@ private fun GeneralItemRow(
         Spacer(Modifier.width(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = effectiveAccount?.accountName ?: "未設定",
+                text = label ?: "未設定",
                 fontSize = 11.sp,
                 color = if (isOverridden) OverriddenAccountColor
-                        else if (effectiveAccount != null) MatchedAccountColor
+                        else if (label != null) MatchedAccountColor
                         else MaterialTheme.colorScheme.error,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 80.dp)
+                modifier = Modifier.widthIn(max = 120.dp)
             )
             if (isOverridden) {
                 Spacer(Modifier.width(4.dp))

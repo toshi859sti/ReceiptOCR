@@ -20,8 +20,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.ReceiptPaymentMethodRule
 import com.example.greenframeocr.data.YayoiAccount
+import com.example.greenframeocr.util.AoiroChoboReceiptRules
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 import kotlinx.coroutines.launch
 
@@ -35,11 +37,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun ReceiptPaymentMethodRuleScreen(
     viewModel: GeneralReceiptViewModel,
+    isAoiro: Boolean = false,
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var rules by remember { mutableStateOf<List<ReceiptPaymentMethodRule>>(emptyList()) }
     var accounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
+    var aoiroAccounts by remember { mutableStateOf<List<AoiroChoboAccount>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var editTarget by remember { mutableStateOf<ReceiptPaymentMethodRule?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -49,9 +53,17 @@ fun ReceiptPaymentMethodRuleScreen(
         scope.launch {
             rules = viewModel.loadPaymentMethodRules()
             accounts = viewModel.loadYayoiAccounts()
+            if (isAoiro) aoiroAccounts = viewModel.loadAoiroVocab().accounts
             isLoading = false
         }
     }
+
+    /** あおいろの科目名。今の辞書の名前 → 保存時の名前 の順 */
+    fun aoiroName(rule: ReceiptPaymentMethodRule): String? =
+        rule.accountKey?.let { key -> aoiroAccounts.find { it.accountKey == key }?.name ?: rule.accountKeyName ?: key }
+
+    /** あおいろモードで足したルールの弥生の科目。弥生の出力ではどのルールにも当たらないときと同じ「現金」になる */
+    fun yayoiCashId(): Long = accounts.firstOrNull { it.accountName == "現金" }?.id ?: 0L
     LaunchedEffect(Unit) { reload() }
 
     val accountsById = remember(accounts) { accounts.associateBy { it.id } }
@@ -79,9 +91,16 @@ fun ReceiptPaymentMethodRuleScreen(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Text(
-                text = "レシートに印字された支払方法（例:「クレジット」「PayPay」）に含まれる" +
-                    "キーワードと、弥生CSV出力時の支払方法の科目（貸方勘定科目）を対応付けます。" +
-                    "どれにも一致しない場合や記載がない場合（手書き領収書等）は「現金」になります。",
+                text = if (isAoiro) {
+                    "レシートに印字された支払方法（例:「クレジット」「PayPay」）に含まれる" +
+                        "キーワードと、あおいろ帳簿に送る支払方法の科目（貸方）を対応付けます。" +
+                        "どれにも一致しない場合や記載がない場合（手書き領収書等）は「現金」になります。" +
+                        "一致したルールにあおいろの科目が無いと、そのレシートは「科目なし」で PC に送ります。"
+                } else {
+                    "レシートに印字された支払方法（例:「クレジット」「PayPay」）に含まれる" +
+                        "キーワードと、弥生CSV出力時の支払方法の科目（貸方勘定科目）を対応付けます。" +
+                        "どれにも一致しない場合や記載がない場合（手書き領収書等）は「現金」になります。"
+                },
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(12.dp)
@@ -104,6 +123,7 @@ fun ReceiptPaymentMethodRuleScreen(
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(rules, key = { it.id }) { rule ->
                         val account = accountsById[rule.yayoiAccountId]
+                        val targetName = if (isAoiro) aoiroName(rule) else account?.accountName
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -118,9 +138,9 @@ fun ReceiptPaymentMethodRuleScreen(
                                     fontSize = 15.sp
                                 )
                                 Text(
-                                    text = "→ ${account?.accountName ?: "（科目未登録）"}",
+                                    text = "→ ${targetName ?: if (isAoiro) "（あおいろ未設定）" else "（科目未登録）"}",
                                     fontSize = 13.sp,
-                                    color = if (account != null) MaterialTheme.colorScheme.primary
+                                    color = if (targetName != null) MaterialTheme.colorScheme.primary
                                             else MaterialTheme.colorScheme.error
                                 )
                             }
@@ -135,8 +155,39 @@ fun ReceiptPaymentMethodRuleScreen(
         }
     }
 
+    // あおいろモード：キーワードとあおいろの科目だけを編集する（弥生の科目はそのまま）
+    if (isAoiro && showAddDialog) {
+        AoiroRuleEditDialog(
+            rule = null,
+            accounts = aoiroAccounts,
+            onDismiss = { showAddDialog = false },
+            onSave = { keyword, key, name ->
+                viewModel.savePaymentMethodRule(
+                    ReceiptPaymentMethodRule(
+                        keyword = keyword, yayoiAccountId = yayoiCashId(), sortOrder = rules.size,
+                        accountKey = key, accountKeyName = name
+                    )
+                )
+                showAddDialog = false
+                reload()
+            }
+        )
+    }
+    if (isAoiro) editTarget?.let { rule ->
+        AoiroRuleEditDialog(
+            rule = rule,
+            accounts = aoiroAccounts,
+            onDismiss = { editTarget = null },
+            onSave = { keyword, key, name ->
+                viewModel.savePaymentMethodRule(rule.copy(keyword = keyword, accountKey = key, accountKeyName = name))
+                editTarget = null
+                reload()
+            }
+        )
+    }
+
     // ルール追加ダイアログ
-    if (showAddDialog) {
+    if (!isAoiro && showAddDialog) {
         RuleEditDialog(
             rule = null,
             accounts = accounts,
@@ -152,7 +203,7 @@ fun ReceiptPaymentMethodRuleScreen(
     }
 
     // ルール編集ダイアログ
-    editTarget?.let { rule ->
+    if (!isAoiro) editTarget?.let { rule ->
         RuleEditDialog(
             rule = rule,
             accounts = accounts,
@@ -184,6 +235,92 @@ fun ReceiptPaymentMethodRuleScreen(
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) { Text("キャンセル") }
             }
+        )
+    }
+}
+
+/**
+ * あおいろモードのルール編集。科目は契約が挙げる 現金・未払金・事業主借 を既定の候補にし、
+ * 「絞り込み外も表示」で口座・借入金などの資産・負債も選べる（[AoiroChoboReceiptRules]）。
+ * 科目は外してもよい（そのルールに当たるレシートは「科目なし」で送る）。
+ */
+@Composable
+private fun AoiroRuleEditDialog(
+    rule: ReceiptPaymentMethodRule?,
+    accounts: List<AoiroChoboAccount>,
+    onDismiss: () -> Unit,
+    onSave: (keyword: String, accountKey: String?, accountKeyName: String?) -> Unit
+) {
+    var keyword by remember { mutableStateOf(rule?.keyword ?: "") }
+    var accountKey by remember { mutableStateOf(rule?.accountKey) }
+    var showPicker by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (rule == null) "ルール追加（あおいろ）" else "ルール編集（あおいろ）") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = keyword,
+                    onValueChange = { keyword = it },
+                    label = { Text("キーワード（例: クレジット、PayPay）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                if (accounts.isEmpty()) {
+                    Text(
+                        "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください。",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    PickerField(
+                        label = "支払方法の科目（あおいろ）",
+                        value = accountKey?.let { key ->
+                            accounts.find { it.accountKey == key }?.name
+                                ?: rule?.accountKeyName.takeIf { key == rule?.accountKey } ?: key
+                        } ?: "未設定",
+                        hasValue = accountKey != null,
+                        onPick = { showPicker = true },
+                        onClear = { accountKey = null }
+                    )
+                }
+                if (rule != null) {
+                    Text(
+                        "弥生の科目は変わりません（弥生モードで設定）",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val name = accountKey?.let { key ->
+                        accounts.find { it.accountKey == key }?.name ?: rule?.accountKeyName.takeIf { key == rule?.accountKey }
+                    }
+                    onSave(keyword.trim(), accountKey, name)
+                },
+                enabled = keyword.isNotBlank()
+            ) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
+    )
+
+    if (showPicker) {
+        AoiroAccountPickerDialog(
+            subject = keyword,
+            emptySubject = "支払方法",
+            accounts = AoiroChoboReceiptRules.paymentCandidates(accounts),
+            allAccounts = AoiroChoboReceiptRules.allPaymentCandidates(accounts),
+            memoCandidates = null,
+            selectedKey = accountKey,
+            onSelect = { key ->
+                accountKey = key
+                showPicker = false
+            },
+            onDismiss = { showPicker = false }
         )
     }
 }
