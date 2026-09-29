@@ -10,14 +10,14 @@
 - **弥生の青色申告** — 仕訳 CSV
 - **あおいろ帳簿**（PC会計アプリ `AoiroChobo`・同時進行で自作中） — `transactions.json`
 
-**らくらく青色申告農業版のサポートは終了**（2026-09-23 決定・撤去作業は未着手）。
+**らくらく青色申告農業版のサポートは終了**（2026-09-23 決定・2026-09-29 に撤去済み。DB v40 で表と列も削除）。
 弥生とあおいろは**科目体系が別物で1対1に対応しない**。同じ商品でも弥生でA・あおいろでBになるため、
 学習テーブルは両方の紐付けを独立した列で持つ。詳細は `docs/integration/REPLY-phone-2026-09-23.md`。
 
 - **アプリ名**: JA仕訳変換
 - **パッケージ**: `com.example.greenframeocr`
 - **minSdk**: 24 / **targetSdk**: 34 / **Kotlin JVM**: 17
-- **ビルド状態**: BUILD SUCCESSFUL（2026-09-25）
+- **ビルド状態**: BUILD SUCCESSFUL（2026-09-29）
 
 ---
 
@@ -146,7 +146,7 @@ fun process(inputBitmap: Bitmap, debugMode: Boolean = false, sharpness: Double =
 そのまま Gemini に渡す画像なので、下げれば読み取り精度に直接効く。変えるなら実機で
 精度を測り直すこと。
 
-### Room DB バージョン（現在 v39）
+### Room DB バージョン（現在 v40）
 バージョンアップ時は `ReceiptDatabase.kt` にマイグレーションを追加すること。
 `ReceiptDatabase.kt` の `version` / `entities` が一次情報源。docs 側の記載は古くなることがある。
 `fallbackToDestructiveMigration()` は削除済み（2026-07-12）。
