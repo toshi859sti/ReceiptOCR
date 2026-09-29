@@ -51,7 +51,7 @@ enum class SortOrder(val label: String) {
 /** フィルタ種別 */
 enum class TekiyouFilter(val label: String) {
     ALL("全て"),
-    MISSING("摘要未設定"),
+    MISSING("科目未設定"),
     CERTIFIED("確定済み")
 }
 
@@ -72,7 +72,6 @@ fun ProductListScreen(
     // State
     var allProducts by remember { mutableStateOf<List<ProductMaster>>(emptyList()) }
     var displayProducts by remember { mutableStateOf<List<ProductMaster>>(emptyList()) }
-    var kaikakeTekiyouList by remember { mutableStateOf<List<RakurakuTekiyou>>(emptyList()) }
     var yayoiAccountList by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var yayoiFlaggedList by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     // あおいろ帳簿（BLUE_RETURN_PREP）モードの科目・摘要。PC から取り込んだミラー
@@ -105,7 +104,6 @@ fun ProductListScreen(
 
     // 初期データ読み込み
     LaunchedEffect(Unit) {
-        kaikakeTekiyouList = database.rakurakuTekiyouDao().getEnabledByCategory("買掛", "購入")
         val allYayoi = database.yayoiAccountDao().getAll().filter { it.isEnabled }
         yayoiAccountList = allYayoi
         yayoiFlaggedList = allYayoi.filter { it.usedForPurchase }
@@ -137,7 +135,6 @@ fun ProductListScreen(
             TekiyouFilter.MISSING -> when (accountingSoftware) {
                 AccountingSoftware.YAYOI -> filtered.filter { it.yayoiAccountId == null }
                 AccountingSoftware.BLUE_RETURN_PREP -> filtered.filter { it.accountKey == null }
-                else -> filtered.filter { it.kaikakeTekiyouId == null }
             }
             TekiyouFilter.CERTIFIED -> filtered.filter { it.isCertified }
         }
@@ -152,7 +149,6 @@ fun ProductListScreen(
     // データ再読み込み
     fun loadProducts() {
         scope.launch {
-            kaikakeTekiyouList = database.rakurakuTekiyouDao().getEnabledByCategory("買掛", "購入")
             yayoiAccountList = database.yayoiAccountDao().getAll().filter { it.isEnabled }
             allProducts = database.productMasterDao().getAll()
             applyFiltersAndSort()
@@ -406,7 +402,6 @@ fun ProductListScreen(
             val matchedProductCount = when (accountingSoftware) {
                 AccountingSoftware.YAYOI -> allProducts.count { it.yayoiAccountId != null }
                 AccountingSoftware.BLUE_RETURN_PREP -> allProducts.count { it.accountKey != null }
-                else -> allProducts.count { it.kaikakeTekiyouId != null }
             }
             val unmatchedProductCount = allProducts.size - matchedProductCount
             Card(
@@ -447,15 +442,12 @@ fun ProductListScreen(
             }
 
             // AI科目提案ボタン（弥生・あおいろ。常時表示で見落としを防ぐ）
-            if (accountingSoftware == AccountingSoftware.YAYOI || accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP) {
-                val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
-                val unmatchedForAi = allProducts.count { if (isAoiro) it.accountKey == null else it.yayoiAccountId == null }
-                AiSuggestButton(
-                    label = if (unmatchedForAi > 0) "未マッチ${unmatchedForAi}件をAIで一括提案" else "AI科目提案",
-                    isLoading = isAiMatching,
-                    onClick = { if (isAoiro) startAoiroAiMatching() else startAiMatching() }
-                )
-            }
+            val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+            AiSuggestButton(
+                label = if (unmatchedProductCount > 0) "未マッチ${unmatchedProductCount}件をAIで一括提案" else "AI科目提案",
+                isLoading = isAiMatching,
+                onClick = { if (isAoiro) startAoiroAiMatching() else startAiMatching() }
+            )
 
             CollapsibleFilterPanel(
                 expanded = filterPanelExpanded,
@@ -533,12 +525,10 @@ fun ProductListScreen(
                     // 摘要フィルタ
                     Text("絞込:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     TekiyouFilter.values().forEach { filter ->
-                        val chipLabel = if (filter == TekiyouFilter.MISSING && accountingSoftware != AccountingSoftware.RAKURAKU)
-                            "科目未設定" else filter.label
                         FilterChip(
                             selected = tekiyouFilter == filter,
                             onClick = { tekiyouFilter = filter },
-                            label = { Text(chipLabel, fontSize = 12.sp) }
+                            label = { Text(filter.label, fontSize = 12.sp) }
                         )
                     }
                 }
@@ -568,12 +558,10 @@ fun ProductListScreen(
                                     else "${acc.accountName}（${acc.accountCode}）"
                                 }
                         AccountingSoftware.BLUE_RETURN_PREP -> aoiroLabel(product, aoiroAccounts, aoiroMemos)
-                        else -> kaikakeTekiyouList.find { it.id == product.kaikakeTekiyouId }?.tekiyouName
                     }
                     ProductListItem(
                         product = product,
                         matchLabel = matchLabel,
-                        accountingSoftware = accountingSoftware,
                         fontSize = listFontSize,
                         onClick = {
                             selectedProduct = product
@@ -594,7 +582,6 @@ fun ProductListScreen(
         ProductEditDialog(
             product = selectedProduct!!,
             accountingSoftware = accountingSoftware,
-            kaikakeTekiyouList = kaikakeTekiyouList,
             yayoiAccountList = yayoiAccountList,
             yayoiFlaggedList = yayoiFlaggedList,
             aoiroAccounts = aoiroAccounts,
@@ -630,7 +617,6 @@ fun ProductListScreen(
         ProductEditDialog(
             product = null,
             accountingSoftware = accountingSoftware,
-            kaikakeTekiyouList = kaikakeTekiyouList,
             yayoiAccountList = yayoiAccountList,
             yayoiFlaggedList = yayoiFlaggedList,
             aoiroAccounts = aoiroAccounts,
@@ -1042,7 +1028,6 @@ private fun aoiroLabel(
 private fun ProductListItem(
     product: ProductMaster,
     matchLabel: String?,
-    accountingSoftware: AccountingSoftware,
     fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onClick: () -> Unit,
     onMerge: () -> Unit
@@ -1093,10 +1078,7 @@ private fun ProductListItem(
             Spacer(modifier = Modifier.height(4.dp))
 
             // マッチング科目/摘要
-            val labelPrefix = when (accountingSoftware) {
-                AccountingSoftware.YAYOI, AccountingSoftware.BLUE_RETURN_PREP -> "科目: "
-                else -> "摘要: "
-            }
+            val labelPrefix = "科目: "
             val labelText = matchLabel ?: "未設定"
             val isUnset = matchLabel == null
             Text(
@@ -1150,7 +1132,6 @@ private fun CategoryChip(category: String) {
 private fun ProductEditDialog(
     product: ProductMaster?,
     accountingSoftware: AccountingSoftware,
-    kaikakeTekiyouList: List<RakurakuTekiyou>,
     yayoiAccountList: List<YayoiAccount>,
     yayoiFlaggedList: List<YayoiAccount>,
     aoiroAccounts: List<AoiroChoboAccount>,
@@ -1163,9 +1144,7 @@ private fun ProductEditDialog(
 ) {
     var name by remember { mutableStateOf(product?.canonicalName ?: "") }
     var category by remember { mutableStateOf(product?.category ?: categories.first()) }
-    var selectedTekiyouId by remember { mutableStateOf(product?.kaikakeTekiyouId) }
     var selectedYayoiAccountId by remember { mutableStateOf(product?.yayoiAccountId) }
-    var showTekiyouPicker by remember { mutableStateOf(false) }
     var showYayoiPicker by remember { mutableStateOf(false) }
     var categoryExpanded by remember { mutableStateOf(false) }
     var selectedAccountKey by remember { mutableStateOf(product?.accountKey) }
@@ -1251,7 +1230,7 @@ private fun ProductEditDialog(
                     }
                 }
 
-                // 買掛摘要 / 弥生勘定科目 / BRP
+                // 弥生勘定科目 / あおいろ
                 when (accountingSoftware) {
                     AccountingSoftware.BLUE_RETURN_PREP -> {
                         AoiroAccountAndMemoFields(
@@ -1295,27 +1274,6 @@ private fun ProductEditDialog(
                             modifier = Modifier.fillMaxWidth().clickable { showYayoiPicker = true }
                         )
                     }
-                    else -> {
-                        OutlinedTextField(
-                            value = kaikakeTekiyouList.find { it.id == selectedTekiyouId }?.tekiyouName ?: "未設定",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("買掛摘要") },
-                            trailingIcon = {
-                                Row {
-                                    if (selectedTekiyouId != null) {
-                                        IconButton(onClick = { selectedTekiyouId = null }) {
-                                            Icon(Icons.Default.Clear, "クリア")
-                                        }
-                                    }
-                                    IconButton(onClick = { showTekiyouPicker = true }) {
-                                        Icon(Icons.Default.ArrowDropDown, "選択")
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth().clickable { showTekiyouPicker = true }
-                        )
-                    }
                 }
             }
         },
@@ -1328,7 +1286,7 @@ private fun ProductEditDialog(
                             canonicalName = name.trim(),
                             category = category,
                             frequencyCount = product?.frequencyCount ?: 0,
-                            kaikakeTekiyouId = if (accountingSoftware == AccountingSoftware.YAYOI) product?.kaikakeTekiyouId else selectedTekiyouId,
+                            kaikakeTekiyouId = product?.kaikakeTekiyouId,
                             yayoiAccountId = if (accountingSoftware == AccountingSoftware.YAYOI) selectedYayoiAccountId else product?.yayoiAccountId,
                             isCertified = true,
                             // フィールド列挙で組み直しているので、あおいろ側は明示的に書かないと
@@ -1417,136 +1375,6 @@ private fun ProductEditDialog(
             onDismiss = { showAoiroMemoPicker = false }
         )
     }
-
-    // 買掛摘要選択ダイアログ
-    if (showTekiyouPicker) {
-        TekiyouPickerDialog(
-            productName = name,
-            tekiyouList = kaikakeTekiyouList,
-            selectedId = selectedTekiyouId,
-            onSelect = { id ->
-                selectedTekiyouId = id
-                showTekiyouPicker = false
-            },
-            onDismiss = { showTekiyouPicker = false }
-        )
-    }
-}
-
-/**
- * 買掛摘要選択ダイアログ
- */
-@Composable
-private fun TekiyouPickerDialog(
-    productName: String,
-    tekiyouList: List<RakurakuTekiyou>,
-    selectedId: Int?,
-    onSelect: (Int?) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var searchQuery by remember { mutableStateOf("") }
-
-    val filteredList = remember(searchQuery, tekiyouList) {
-        if (searchQuery.isEmpty()) {
-            tekiyouList
-        } else {
-            tekiyouList.filter {
-                it.tekiyouName.contains(searchQuery, ignoreCase = true) ||
-                        it.searchKey.contains(searchQuery, ignoreCase = true) ||
-                        it.kamoku.contains(searchQuery, ignoreCase = true)
-            }
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Column {
-                Text(
-                    text = productName.ifEmpty { "新規商品" },
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
-                )
-                Text(
-                    text = "買掛摘要を選択",
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.heightIn(max = 400.dp)
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("検索") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Default.Search, null) }
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                LazyColumn {
-                    items(filteredList) { tekiyou ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSelect(tekiyou.id) }
-                                .padding(vertical = 12.dp, horizontal = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedId == tekiyou.id,
-                                onClick = { onSelect(tekiyou.id) }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = tekiyou.tekiyouName,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Row {
-                                    Text(
-                                        text = tekiyou.kamoku,
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    tekiyou.businessRatio?.let { ratio ->
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "(${ratio}%)",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                            if (tekiyou.searchKey.isNotEmpty()) {
-                                Text(
-                                    text = tekiyou.searchKey,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("閉じる")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { onSelect(null) }) {
-                Text("クリア")
-            }
-        }
-    )
 }
 
 /**

@@ -4,7 +4,7 @@ import java.nio.charset.Charset
 
 /**
  * CSV出力の共有ユーティリティ。
- * 弥生仕訳CSV（25列・windows-31j・CRLF）とらくらくシンプルCSV（UTF-8）の両方から使用する。
+ * 弥生仕訳CSV（25列・windows-31j・CRLF）と、レシート明細のシンプルCSV（UTF-8）から使用する。
  */
 object CsvUtils {
 

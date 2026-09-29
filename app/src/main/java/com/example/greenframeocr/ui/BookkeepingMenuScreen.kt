@@ -17,8 +17,6 @@ import androidx.compose.ui.unit.sp
 fun BookkeepingMenuScreen(
     onBack: () -> Unit,
     onNavigateToYayoiAccounts: () -> Unit,
-    onNavigateToRakurakuAccounts: () -> Unit,
-    onNavigateToRakurakuTekiyou: () -> Unit,
     onNavigateToAoiroChoboVocabulary: () -> Unit
 ) {
     Scaffold(
@@ -55,14 +53,6 @@ fun BookkeepingMenuScreen(
             SoftwareSection(
                 title = "あおいろ帳簿",
                 items = listOf("勘定科目・摘要辞書" to onNavigateToAoiroChoboVocabulary)
-            )
-
-            SoftwareSection(
-                title = "らくらく青色申告農業版",
-                items = listOf(
-                    "勘定科目" to onNavigateToRakurakuAccounts,
-                    "摘要辞書" to onNavigateToRakurakuTekiyou
-                )
             )
 
             Spacer(Modifier.height(16.dp))

@@ -331,7 +331,7 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
-            AccountingSoftware.entries.filter { it != AccountingSoftware.RAKURAKU }.forEach { software ->
+            AccountingSoftware.entries.forEach { software ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -1165,11 +1165,9 @@ data class MasterExportData(
     val version: Int = 3,
     val productMasters: List<com.example.greenframeocr.data.ProductMaster>,
     val ocrVariants: List<com.example.greenframeocr.data.OcrVariant>,
-    val rakurakuTekiyou: List<com.example.greenframeocr.data.RakurakuTekiyou>? = null,
     val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>? = null,
     // v3で追加：簿記ソフトの勘定科目マスタ
-    val yayoiAccounts: List<com.example.greenframeocr.data.YayoiAccount>? = null,
-    val rakurakuAccounts: List<com.example.greenframeocr.data.RakurakuAccount>? = null
+    val yayoiAccounts: List<com.example.greenframeocr.data.YayoiAccount>? = null
 )
 
 /**
@@ -1314,11 +1312,9 @@ data class AllExportData(
     // マスタデータ
     val productMasters: List<com.example.greenframeocr.data.ProductMaster>,
     val ocrVariants: List<com.example.greenframeocr.data.OcrVariant>,
-    val rakurakuTekiyou: List<com.example.greenframeocr.data.RakurakuTekiyou>,
     val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>,
     // v2で追加：簿記ソフトの勘定科目マスタ・レシート領収書
     val yayoiAccounts: List<com.example.greenframeocr.data.YayoiAccount>? = null,
-    val rakurakuAccounts: List<com.example.greenframeocr.data.RakurakuAccount>? = null,
     val generalReceipts: List<com.example.greenframeocr.data.GeneralReceipt>? = null,
     val generalReceiptItems: List<com.example.greenframeocr.data.GeneralReceiptItem>? = null,
     val invoiceStores: List<com.example.greenframeocr.data.InvoiceStore>? = null,
@@ -1345,10 +1341,8 @@ private suspend fun exportAllData(
             depositMeisai = db.depositMeisaiDao().getAll(),
             productMasters = db.productMasterDao().getAll(),
             ocrVariants = db.ocrVariantDao().getAll(),
-            rakurakuTekiyou = db.rakurakuTekiyouDao().getAll(),
             tekiyouMatchingRules = db.tekiyouMatchingRuleDao().getAll(),
             yayoiAccounts = db.yayoiAccountDao().getAll(),
-            rakurakuAccounts = db.rakurakuAccountDao().getAll(),
             generalReceipts = db.generalReceiptDao().getAllReceiptsOnce(),
             generalReceiptItems = db.generalReceiptDao().getAllItemsOnce(),
             invoiceStores = db.invoiceStoreDao().getAllOnce(),
@@ -1436,12 +1430,10 @@ private suspend fun importAllData(
         restoreDeposits(db, importData.passbooks, importData.depositMeisai)
 
         // マスタデータ
-        importData.productMasters.forEach { db.productMasterDao().insertIgnore(it.withComputedKey()) }
+        importData.productMasters.forEach { db.productMasterDao().insertIgnore(it.withComputedKey().withoutRakuraku()) }
         importData.ocrVariants.forEach { db.ocrVariantDao().insertIgnore(it) }
-        importData.rakurakuTekiyou.forEach { db.rakurakuTekiyouDao().insertIgnore(it) }
-        importData.tekiyouMatchingRules.forEach { db.tekiyouMatchingRuleDao().insertIgnore(it) }
+        importData.tekiyouMatchingRules.forEach { db.tekiyouMatchingRuleDao().insertIgnore(it.withoutRakuraku()) }
         importData.yayoiAccounts?.let { mergeYayoiAccounts(db, it) }
-        importData.rakurakuAccounts?.let { mergeRakurakuAccounts(db, it) }
 
         // レシート・領収書（IDを保持したまま復元。general_receipt_itemsはreceiptId経由でFK参照するため
         // 先にgeneral_receiptsを復元する）
@@ -1582,20 +1574,16 @@ private suspend fun exportMasterData(
         // データベースから全データを取得
         val productMasters = db.productMasterDao().getAll()
         val ocrVariants = db.ocrVariantDao().getAll()
-        val rakurakuTekiyou = db.rakurakuTekiyouDao().getAll()
         val tekiyouMatchingRules = db.tekiyouMatchingRuleDao().getAll()
         val yayoiAccounts = db.yayoiAccountDao().getAll()
-        val rakurakuAccounts = db.rakurakuAccountDao().getAll()
 
         // エクスポート用データを作成
         val exportData = MasterExportData(
             exportDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
             productMasters = productMasters,
             ocrVariants = ocrVariants,
-            rakurakuTekiyou = rakurakuTekiyou,
             tekiyouMatchingRules = tekiyouMatchingRules,
-            yayoiAccounts = yayoiAccounts,
-            rakurakuAccounts = rakurakuAccounts
+            yayoiAccounts = yayoiAccounts
         )
 
         // JSONに変換
@@ -1607,7 +1595,7 @@ private suspend fun exportMasterData(
             outputStream.write(json.toByteArray())
         }
 
-        "成功: 商品${productMasters.size}件, 学習${ocrVariants.size}件, 摘要${rakurakuTekiyou.size}件, ルール${tekiyouMatchingRules.size}件, 弥生科目${yayoiAccounts.size}件, らくらく科目${rakurakuAccounts.size}件"
+        "成功: 商品${productMasters.size}件, 学習${ocrVariants.size}件, ルール${tekiyouMatchingRules.size}件, 弥生科目${yayoiAccounts.size}件"
     } catch (e: Exception) {
         "エクスポート失敗: ${e.message}"
     }
@@ -1651,7 +1639,7 @@ private suspend fun importMasterData(
                 productSkipped++
             } else {
                 // 新規追加（IDは自動採番されるため、新しいIDを記録）
-                val newId = db.productMasterDao().insert(product.copy(id = 0).withComputedKey())
+                val newId = db.productMasterDao().insert(product.copy(id = 0).withComputedKey().withoutRakuraku())
                 productIdMap[product.id] = newId
                 productAdded++
             }
@@ -1681,26 +1669,18 @@ private suspend fun importMasterData(
             }
         }
 
-        // 摘要辞書のインポート
-        var tekiyouAdded = 0
-        importData.rakurakuTekiyou?.forEach { tekiyou ->
-            val result = db.rakurakuTekiyouDao().insertIgnore(tekiyou.copy(id = 0))
-            if (result > 0) tekiyouAdded++
-        }
-
         // マッチングルールのインポート
         var ruleAdded = 0
         importData.tekiyouMatchingRules?.forEach { rule ->
-            val result = db.tekiyouMatchingRuleDao().insertIgnore(rule.copy(id = 0))
+            val result = db.tekiyouMatchingRuleDao().insertIgnore(rule.copy(id = 0).withoutRakuraku())
             if (result > 0) ruleAdded++
         }
 
         // 簿記ソフト勘定科目のインポート（accountCodeで既存科目を更新／なければ新規追加）
         val (yayoiAdded, yayoiUpdated) = importData.yayoiAccounts?.let { mergeYayoiAccounts(db, it) } ?: (0 to 0)
-        val (rakurakuAdded, rakurakuUpdated) = importData.rakurakuAccounts?.let { mergeRakurakuAccounts(db, it) } ?: (0 to 0)
 
-        "成功: 商品+${productAdded}, 学習+${variantAdded}, 摘要+${tekiyouAdded}, ルール+${ruleAdded}, " +
-            "弥生科目+${yayoiAdded}/更新${yayoiUpdated}, らくらく科目+${rakurakuAdded}/更新${rakurakuUpdated}"
+        "成功: 商品+${productAdded}, 学習+${variantAdded}, ルール+${ruleAdded}, " +
+            "弥生科目+${yayoiAdded}/更新${yayoiUpdated}"
     } catch (e: Exception) {
         "インポート失敗: ${e.message}"
     }
@@ -1736,34 +1716,9 @@ private suspend fun mergeYayoiAccounts(
     return added to updated
 }
 
-/**
- * らくらく青色申告勘定科目マスタのマージインポート（accountCodeが既存科目と一致すれば更新、
- * なければ新規追加）。accountCodeにDB側でunique制約があるため、必ずgetByCode経由で既存判定する
- */
-private suspend fun mergeRakurakuAccounts(
-    db: ReceiptDatabase,
-    accounts: List<com.example.greenframeocr.data.RakurakuAccount>
-): Pair<Int, Int> {
-    val dao = db.rakurakuAccountDao()
-    var added = 0
-    var updated = 0
-    accounts.forEach { account ->
-        val existing = dao.getByCode(account.accountCode)
-        if (existing != null) {
-            dao.update(
-                account.copy(
-                    id = existing.id,
-                    parentId = existing.parentId
-                )
-            )
-            updated++
-        } else {
-            dao.insert(account.copy(id = 0, parentId = null))
-            added++
-        }
-    }
-    return added to updated
-}
+// 古いバックアップのらくらく摘要 ID は捨てる（らくらくの表はもう復元しないので、残すと外部キー違反になる）
+private fun com.example.greenframeocr.data.ProductMaster.withoutRakuraku() = copy(kaikakeTekiyouId = null)
+private fun com.example.greenframeocr.data.TekiyouMatchingRule.withoutRakuraku() = copy(rakurakuTekiyouId = null)
 
 /**
  * レシート・領収書データをエクスポート
@@ -1891,10 +1846,8 @@ private suspend fun clearData(
                 // マスタデータ
                 db.ocrVariantDao().deleteAll()
                 db.productMasterDao().deleteAll()
-                db.rakurakuTekiyouDao().deleteAll()
                 db.tekiyouMatchingRuleDao().deleteAll()
                 db.yayoiAccountDao().deleteAll()
-                db.rakurakuAccountDao().deleteAll()
                 // レシート・領収書
                 db.generalReceiptDao().deleteAllReceipts()
                 db.invoiceStoreDao().deleteAll()
@@ -1915,10 +1868,8 @@ private suspend fun clearData(
             DataType.MASTER -> {
                 db.ocrVariantDao().deleteAll()
                 db.productMasterDao().deleteAll()
-                db.rakurakuTekiyouDao().deleteAll()
                 db.tekiyouMatchingRuleDao().deleteAll()
                 db.yayoiAccountDao().deleteAll()
-                db.rakurakuAccountDao().deleteAll()
                 "マスタデータ（簿記ソフト勘定科目を含む）を削除しました"
             }
             DataType.RECEIPT -> {

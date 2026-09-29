@@ -77,7 +77,7 @@ fun OutputConfirmScreen(
 data class PurchaseOutputItem(
     val id: Long,
     val date: String,           // 日付 (YYYY/MM/DD)
-    val tekiyou: String,        // 摘要（らくらく=買掛摘要名 / 弥生=勘定科目名）
+    val tekiyou: String,        // 摘要（弥生=勘定科目名 / あおいろ=科目 ／ 摘要）
     val memo: String,           // メモ（商品名）
     val amount: Int,            // 購入金額
     val yayoiSubAccountName: String = "",
@@ -94,7 +94,7 @@ data class PurchaseOutputItem(
 data class DepositOutputItem(
     val id: Int,
     val date: String,           // 日付
-    val tekiyou: String,        // 摘要（らくらく=預金摘要名 / 弥生=勘定科目名）
+    val tekiyou: String,        // 摘要（弥生=勘定科目名 / あおいろ=科目 ／ 摘要）
     val memo: String,           // メモ（通帳摘要原文）
     val deposit: Int?,          // 入金（正の金額）
     val withdrawal: Int?,       // 出金（負の金額の絶対値）
@@ -120,7 +120,7 @@ private fun PurchaseOutputConfirmContent(
     scope: kotlinx.coroutines.CoroutineScope,
     context: Context,
     appPreferences: AppPreferences,
-    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU
+    accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI
 ) {
     var listFontSize by remember { mutableStateOf(appPreferences.listFontSize) }
     var allItems by remember { mutableStateOf<List<PurchaseOutputItem>>(emptyList()) }
@@ -141,11 +141,7 @@ private fun PurchaseOutputConfirmContent(
         uri?.let {
             scope.launch {
                 val selected = outputItems.filter { item -> item.isSelected }
-                val success = if (accountingSoftware == AccountingSoftware.YAYOI) {
-                    exportPurchaseYayoiCsvToUri(context, it, selected)
-                } else {
-                    exportPurchaseCsvToUri(context, it, selected)
-                }
+                val success = exportPurchaseYayoiCsvToUri(context, it, selected)
                 if (success) {
                     val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date())
                     val exportedIds = selected.map { item -> item.id }.toSet()
@@ -450,11 +446,10 @@ internal fun AoiroExportResultDialog(
  * 購買グリッドヘッダー
  */
 @Composable
-private fun PurchaseGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU) {
+private fun PurchaseGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI) {
     val tekiyouLabel = when (accountingSoftware) {
         AccountingSoftware.YAYOI -> "科目/メモ"
         AccountingSoftware.BLUE_RETURN_PREP -> "科目 ／ 摘要/メモ"
-        else -> "摘要/メモ"
     }
     Row(
         modifier = Modifier
@@ -504,7 +499,7 @@ private fun PurchaseGridHeader(accountingSoftware: AccountingSoftware = Accounti
 private fun PurchaseGridRow(
     item: PurchaseOutputItem,
     fontSize: Float = 14f,
-    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU,
+    accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI,
     onToggleSelect: () -> Unit
 ) {
     // 弥生は科目未設定のまま出力できないため警告扱い
@@ -608,7 +603,7 @@ private fun DepositOutputConfirmContent(
     context: Context,
     hideAmount: Boolean = false,
     appPreferences: AppPreferences,
-    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU
+    accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI
 ) {
     var listFontSize by remember { mutableStateOf(appPreferences.listFontSize) }
     var allItems by remember { mutableStateOf<List<DepositOutputItem>>(emptyList()) }
@@ -632,11 +627,7 @@ private fun DepositOutputConfirmContent(
         uri?.let {
             scope.launch {
                 val selected = outputItems.filter { item -> item.isSelected }
-                val success = if (accountingSoftware == AccountingSoftware.YAYOI) {
-                    exportDepositYayoiCsvToUri(context, it, selected)
-                } else {
-                    exportDepositCsvToUri(context, it, selected)
-                }
+                val success = exportDepositYayoiCsvToUri(context, it, selected)
                 if (success) {
                     val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date())
                     val exportedIds = selected.map { item -> item.id }.toSet()
@@ -949,11 +940,10 @@ private fun DepositOutputConfirmContent(
  * 預金グリッドヘッダー
  */
 @Composable
-private fun DepositGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU) {
+private fun DepositGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI) {
     val tekiyouLabel = when (accountingSoftware) {
         AccountingSoftware.YAYOI -> "科目/メモ"
         AccountingSoftware.BLUE_RETURN_PREP -> "科目 ／ 摘要/メモ"
-        else -> "摘要/メモ"
     }
     Row(
         modifier = Modifier
@@ -1004,7 +994,7 @@ private fun DepositGridRow(
     item: DepositOutputItem,
     hideAmount: Boolean = false,
     fontSize: Float = 14f,
-    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU,
+    accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI,
     onToggleSelect: () -> Unit
 ) {
     // 弥生は科目未設定のまま出力できないため警告扱い
@@ -1113,12 +1103,11 @@ private fun DepositGridRow(
  */
 private suspend fun loadPurchaseOutputItems(
     database: ReceiptDatabase,
-    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU
+    accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI
 ): List<PurchaseOutputItem> {
     return withContext(Dispatchers.IO) {
         val receiptItems = database.receiptDao().getAllReceiptItems()
         val productMasterDao = database.productMasterDao()
-        val rakurakuTekiyouDao = database.rakurakuTekiyouDao()
         val ocrVariantDao = database.ocrVariantDao()
         val allYayoiAccounts = if (accountingSoftware == AccountingSoftware.YAYOI)
             database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
@@ -1163,7 +1152,7 @@ private suspend fun loadPurchaseOutputItems(
                         defaultTaxCategory = account?.defaultTaxCategory ?: "対象外",
                         exportedAt = item.exportedAt
                     )
-                } else if (isAoiro) {
+                } else {
                     // 表示は今の vocabulary の名前。当年度に無いキーは出さない（JSON でも送らない）
                     val accountName = productMaster?.accountKey?.let { aoiroAccountNames[it] }
                     val memoName = productMaster?.memoKey?.let { aoiroMemoNames[it] }
@@ -1176,18 +1165,6 @@ private suspend fun loadPurchaseOutputItems(
                         exportedAt = item.exportedAt,
                         aoiroRow = AoiroChoboTransactionsBuilder.PurchaseRow(item, productMaster)
                     )
-                } else {
-                    val tekiyouName = productMaster?.kaikakeTekiyouId?.let { tekiyouId ->
-                        rakurakuTekiyouDao.getById(tekiyouId)?.tekiyouName
-                    } ?: ""
-                    PurchaseOutputItem(
-                        id = item.id,
-                        date = date,
-                        tekiyou = tekiyouName,
-                        memo = item.productName,
-                        amount = item.amount,
-                        exportedAt = item.exportedAt
-                    )
                 }
             }
     }
@@ -1198,7 +1175,7 @@ private suspend fun loadPurchaseOutputItems(
  */
 private suspend fun loadDepositOutputItems(
     database: ReceiptDatabase,
-    accountingSoftware: AccountingSoftware = AccountingSoftware.RAKURAKU
+    accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI
 ): List<DepositOutputItem> {
     return withContext(Dispatchers.IO) {
         val depositMeisaiList = database.depositMeisaiDao().getAll()
@@ -1206,10 +1183,6 @@ private suspend fun loadDepositOutputItems(
         val matchingRules = database.tekiyouMatchingRuleDao().getAllWithTekiyou()
         val allYayoiAccounts = if (accountingSoftware == AccountingSoftware.YAYOI)
             database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
-        // 行単位の個別オーバーライド（TekiyouMatchingScreen の個別変更ダイアログで設定）を
-        // 解決するためのマスタ。らくらくは overrideTekiyouId、弥生は overrideYayoiAccountId。
-        val allRakurakuTekiyou = if (accountingSoftware == AccountingSoftware.RAKURAKU)
-            database.rakurakuTekiyouDao().getAll().associateBy { it.id } else emptyMap()
         // あおいろはルールの accountKey / memoKey を使う（結合ビューには無いのでエンティティを読む）
         val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
         val aoiroRulesByPattern = if (isAoiro)
@@ -1255,7 +1228,7 @@ private suspend fun loadDepositOutputItems(
                     passbookId = meisai.passbookId,
                     bankYayoiSubAccountName = passbooksById[meisai.passbookId]?.yayoiSubAccountName.orEmpty()
                 )
-            } else if (isAoiro) {
+            } else {
                 val aoiroRule = aoiroRulesByPattern[patternKey]
                 // 表示は今の vocabulary の名前。個別指定があれば科目・摘要ともそちら（ビルダーと同じ優先順）
                 val overridden = meisai.overrideAccountKey != null
@@ -1277,20 +1250,6 @@ private suspend fun loadDepositOutputItems(
                         meisai, passbooksById[meisai.passbookId], aoiroRule
                     )
                 )
-            } else {
-                // 個別オーバーライドを最優先、なければルール一致の摘要名
-                val tekiyouName = meisai.overrideTekiyouId?.let { allRakurakuTekiyou[it]?.tekiyouName }
-                    ?: rule?.rakurakuTekiyouName ?: ""
-                DepositOutputItem(
-                    id = meisai.id,
-                    date = meisai.transactionDate,
-                    tekiyou = tekiyouName,
-                    memo = meisai.tekiyou,
-                    deposit = if (meisai.amount >= 0) meisai.amount else null,
-                    withdrawal = if (meisai.amount < 0) -meisai.amount else null,
-                    exportedAt = meisai.exportedAt,
-                    passbookId = meisai.passbookId
-                )
             }
         }
     }
@@ -1307,9 +1266,6 @@ private fun normalizeTekiyou(tekiyou: String): String {
         .trim()
 }
 
-/**
- * 購買CSVを出力（URI経由）
- */
 /**
  * あおいろ帳簿向け transactions.json を書き出す（docs/integration/transaction-import.md）。
  * 成功したらビルダーの結果（出した行・出せなかった行・警告）を返す。失敗・vocabulary 未取込なら null。
@@ -1381,83 +1337,6 @@ private suspend fun exportDepositAoiroJsonToUri(
     }
 }
 
-private suspend fun exportPurchaseCsvToUri(context: Context, uri: Uri, items: List<PurchaseOutputItem>): Boolean =
-    withContext(Dispatchers.IO) {
-        try {
-            context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
-                // ヘッダー行
-                writer.write("ID,日付,摘要,メモ,金額")
-                writer.newLine()
-
-                // データ行
-                for (item in items) {
-                    val line = listOf(
-                        item.id.toString(),
-                        item.date,
-                        escapeCsvField(item.tekiyou),
-                        escapeCsvField(item.memo),
-                        item.amount.toString()
-                    ).joinToString(",")
-                    writer.write(line)
-                    writer.newLine()
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSVを出力しました", Toast.LENGTH_LONG).show()
-            }
-            true
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-            false
-        }
-    }
-
-/**
- * 預金CSVを出力（URI経由）
- */
-private suspend fun exportDepositCsvToUri(context: Context, uri: Uri, items: List<DepositOutputItem>): Boolean =
-    withContext(Dispatchers.IO) {
-        try {
-            context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
-                // ヘッダー行
-                writer.write("ID,日付,摘要,メモ,金額")
-                writer.newLine()
-
-                // データ行（入金はプラス、出金はマイナス）
-                for (item in items) {
-                    val amount = when {
-                        item.deposit != null -> item.deposit
-                        item.withdrawal != null -> -item.withdrawal
-                        else -> 0
-                    }
-                    val line = listOf(
-                        item.id.toString(),
-                        item.date,
-                        escapeCsvField(item.tekiyou),
-                        escapeCsvField(item.memo),
-                        amount.toString()
-                    ).joinToString(",")
-                    writer.write(line)
-                    writer.newLine()
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSVを出力しました", Toast.LENGTH_LONG).show()
-            }
-            true
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-            false
-        }
-    }
-
-private fun escapeCsvField(field: String): String = CsvUtils.escapeCsvField(field)
 
 private fun toYayoiDate(dateStr: String): String = CsvUtils.toYayoiDate(dateStr)
 
@@ -1607,14 +1486,13 @@ private fun UnmatchedAccountBlockDialog(
 }
 
 /**
- * 出力形式バッジ（弥生=青、らくらく=緑）
+ * 出力形式バッジ（弥生=青、あおいろ=青緑）
  */
 @Composable
 private fun OutputFormatBadge(accountingSoftware: AccountingSoftware) {
     val (bgColor, badgeLabel, formatNote) = when (accountingSoftware) {
         AccountingSoftware.YAYOI -> Triple(Color(0xFF1565C0), "弥生の青色申告", "仕訳CSV（Shift-JIS・25列）")
         AccountingSoftware.BLUE_RETURN_PREP -> Triple(Color(0xFF00695C), "あおいろ帳簿", "transactions.json（UTF-8）")
-        else -> Triple(Color(0xFF2E7D32), "らくらく青色申告", "シンプルCSV（UTF-8）")
     }
     Row(
         modifier = Modifier

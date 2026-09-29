@@ -61,11 +61,7 @@ fun GeneralReceiptOutputScreen(
         uri?.let {
             scope.launch {
                 val selected = outputItems.filter { item -> item.isSelected }
-                val success = if (accountingSoftware == AccountingSoftware.YAYOI) {
-                    exportYayoiCsvToUri(context, it, selected)
-                } else {
-                    exportRakurakuCsvToUri(context, it, selected)
-                }
+                val success = exportYayoiCsvToUri(context, it, selected)
                 if (success) {
                     val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date())
                     val exportedIds = selected.map { item -> item.itemId }.toSet()
@@ -207,12 +203,6 @@ fun GeneralReceiptOutputScreen(
                             )
                         AccountingSoftware.BLUE_RETURN_PREP ->
                             Triple(Color(0xFF00695C), "あおいろ帳簿", "transactions.json（UTF-8）")
-                        else ->
-                            Triple(
-                                Color(0xFF2E7D32),
-                                "らくらく青色申告",
-                                "シンプルCSV（UTF-8）"
-                            )
                     }
                     Surface(
                         color = badgeColor,
@@ -418,7 +408,7 @@ private fun GeneralReceiptGridRow(
     accountingSoftware: AccountingSoftware,
     onToggleSelect: () -> Unit
 ) {
-    // 弥生は科目未設定のまま出力できないため警告表示。らくらくは未設定でも問題ないため通常表示
+    // 弥生は科目未設定のまま出力できないため警告表示
     val isUnmatchedWarning = accountingSoftware == AccountingSoftware.YAYOI && item.accountName.isBlank()
     val backgroundColor = when {
         isUnmatchedWarning -> Color(0xFFFFEBEE)
@@ -660,41 +650,3 @@ private suspend fun exportYayoiCsvToUri(
         false
     }
 }
-
-// ─── らくらく出力（シンプル・UTF-8）──────────────────────────────────────
-
-private suspend fun exportRakurakuCsvToUri(
-    context: android.content.Context,
-    uri: Uri,
-    items: List<GeneralReceiptOutputItem>
-): Boolean = withContext(Dispatchers.IO) {
-    try {
-        context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
-            writer.write("日付,商品名,金額,勘定科目,科目コード")
-            writer.newLine()
-            for (item in items) {
-                val date = item.date.replace("-", "/")
-                val line = listOf(
-                    date,
-                    escapeCsvField(item.itemName),
-                    item.price.toString(),
-                    escapeCsvField(item.accountName),
-                    escapeCsvField(item.accountCode)
-                ).joinToString(",")
-                writer.write(line)
-                writer.newLine()
-            }
-        }
-        withContext(Dispatchers.Main) {
-            Toast.makeText(context, "CSVを出力しました", Toast.LENGTH_LONG).show()
-        }
-        true
-    } catch (e: Exception) {
-        withContext(Dispatchers.Main) {
-            Toast.makeText(context, "CSV出力エラー: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-        false
-    }
-}
-
-private fun escapeCsvField(field: String): String = CsvUtils.escapeCsvField(field)

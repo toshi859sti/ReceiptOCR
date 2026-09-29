@@ -26,12 +26,10 @@ import com.example.greenframeocr.ui.OutputConfirmScreen
 import com.example.greenframeocr.ui.PassbookDataScreen
 import com.example.greenframeocr.ui.ProductListScreen
 import com.example.greenframeocr.ui.PurchaseMenuScreen
-import com.example.greenframeocr.ui.RakurakuTekiyouScreen
 import com.example.greenframeocr.ui.ReceiptInputScreen
 import com.example.greenframeocr.ui.SettingsScreen
 import com.example.greenframeocr.ui.TekiyouMatchingScreen
 import com.example.greenframeocr.ui.BookkeepingMenuScreen
-import com.example.greenframeocr.ui.RakurakuAccountSettingsScreen
 import com.example.greenframeocr.ui.YayoiAccountEditScreen
 import com.example.greenframeocr.ui.YayoiAccountSettingsScreen
 import com.example.greenframeocr.ui.GeneralItemMatchingScreen
@@ -59,11 +57,9 @@ sealed class Screen(val route: String) {
     object PassbookData : Screen("passbook_data")
     object TekiyouMatching : Screen("tekiyou_matching")
     object DepositOutputConfirm : Screen("deposit_output_confirm")
-    object RakurakuTekiyou : Screen("rakuraku_tekiyou")
     object YearSummary : Screen("year_summary")
     object BookkeepingMenu : Screen("bookkeeping_menu")
     object YayoiAccountSettings : Screen("yayoi_account_settings")
-    object RakurakuAccountSettings : Screen("rakuraku_account_settings")
     object AoiroChoboVocabulary : Screen("aoirochobo_vocabulary")
     object YayoiAccountEdit : Screen("yayoi_account_edit/{accountId}?parentId={parentId}") {
         fun createRoute(accountId: Long, parentId: Long = -1L): String =
@@ -218,12 +214,6 @@ fun ReceiptNavGraph(
                 onNavigateToYayoiAccounts = {
                     navController.navigate(Screen.YayoiAccountSettings.route)
                 },
-                onNavigateToRakurakuAccounts = {
-                    navController.navigate(Screen.RakurakuAccountSettings.route)
-                },
-                onNavigateToRakurakuTekiyou = {
-                    navController.navigate(Screen.RakurakuTekiyou.route)
-                },
                 onNavigateToAoiroChoboVocabulary = {
                     navController.navigate(Screen.AoiroChoboVocabulary.route)
                 }
@@ -249,14 +239,6 @@ fun ReceiptNavGraph(
             )
         }
 
-        // らくらく勘定科目設定画面
-        composable(Screen.RakurakuAccountSettings.route) {
-            RakurakuAccountSettingsScreen(
-                database = database,
-                onBack = { navController.popBackStack() }
-            )
-        }
-
         // 弥生勘定科目編集画面（accountId = -1 で新規、parentId = -1 で単独作成）
         composable(
             route = Screen.YayoiAccountEdit.route,
@@ -278,15 +260,6 @@ fun ReceiptNavGraph(
         // 購買品リスト画面
         composable(Screen.ProductList.route) {
             ProductListScreen(
-                database = database,
-                appPreferences = appPreferences,
-                onBack = { navController.popBackStack() }
-            )
-        }
-
-        // 摘要辞書画面
-        composable(Screen.RakurakuTekiyou.route) {
-            RakurakuTekiyouScreen(
                 database = database,
                 appPreferences = appPreferences,
                 onBack = { navController.popBackStack() }
