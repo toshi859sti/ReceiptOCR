@@ -12,6 +12,11 @@
 >
 > 本書は Android 側の実コード（Kotlin / Room DB v33、2026-09時点）に基づく。
 > 迷ったら本書ではなく `app/src/main/java/com/example/greenframeocr/` の実装が正。
+>
+> **2026-09-29 追記**：PC 会計アプリ（AoiroChobo）との連携の一次情報は `docs/integration/` の契約に移った
+> （取引は `transactions.json`・科目は PC 所有の `accountKey`）。本書の §10 の提案などはその前の段階の記述。
+> らくらく青色申告農業版は撤去済み（DB v40 で `rakuraku_tekiyou`・`rakuraku_accounts` とそれを指す列を削除、
+> らくらく CSV も削除）なので、本書からもらくらくの記述を外した。バックアップ JSON に残るらくらくのキーは取込時に無視される。
 
 ---
 
@@ -22,9 +27,7 @@
 | JA伝票 / 購買伝票 | 島原雲仙農業協同組合の「購買代金請求明細書」。買掛（掛け仕入）。`receipt_items` |
 | 預金 / 通帳 | 銀行通帳の入出金明細。`deposit_meisai` |
 | 一般レシート / 領収書 | JA以外の店舗のレシート・領収書。`general_receipts` + `general_receipt_items` |
-| 摘要辞書 | らくらく青色申告（農業版）の摘要マスタ。`rakuraku_tekiyou` |
-| 勘定科目 | 会計ソフトの勘定科目マスタ。弥生用 `yayoi_accounts` / らくらく用 `rakuraku_accounts` |
-| 買掛摘要 | 購買仕訳に使う摘要。商品 → 摘要のマッピング |
+| 勘定科目 | 会計ソフトの勘定科目マスタ。弥生用 `yayoi_accounts`（あおいろは PC から取り込んだ `aoirochobo_accounts`） |
 | canonicalKey | 商品名・品目名の表記ゆれを吸収した正規化文字列（§4.3） |
 | 作業年（eraYear） | 令和 X 年。アプリ全体の「いま処理している年度」。西暦 = eraYear + 2018 |
 
@@ -32,7 +35,7 @@
 
 ```
 [JA伝票撮影] ─Gemini OCR→ receipt_items ┐
-[通帳手入力/CSV]            deposit_meisai ├→ [出力確認画面] ─→ CSV（らくらく or 弥生）
+[通帳手入力/CSV]            deposit_meisai ├→ [出力確認画面] ─→ 弥生 CSV or あおいろ transactions.json
 [レシート撮影] ─Gemini OCR→ general_receipt_items ┘
 
 [設定 > データ管理] ─→ JSON バックアップ（全テーブルの生ダンプ）
@@ -49,7 +52,7 @@ PCアプリが取り込む入力は **設定＞データ管理の JSON バック
 ## 1. アプリの役割と前提
 
 - 対象ユーザー：農業経営者（簿記の専門知識は薄い）。会計ソフトは
-  **らくらく青色申告 農業版** または **弥生の青色申告** のどちらか（設定で切替、§9）。
+  **弥生の青色申告** または **あおいろ帳簿**（自作 PC アプリ AoiroChobo）のどちらか（設定で切替、§9）。
 - 課税方式：簡易課税・税込入力・農業（第二種）を想定。
 - Androidアプリは「証憑 → 明細データ化 + 勘定科目/摘要の割り当て」までを担当。
   最終的な仕訳帳登録は会計ソフト（CSVインポート）が担当。
@@ -64,7 +67,6 @@ PCアプリが取り込む入力は **設定＞データ管理の JSON バック
 | 種別 | 形式 | 文字コード | 備考 |
 |---|---|---|---|
 | データバックアップ（PCアプリの入力想定） | JSON | UTF-8 (BOMなし) | Gson `setPrettyPrinting()` 整形済み |
-| らくらく CSV | CSV | UTF-8 (BOMなし)・改行LF | シンプル形式 |
 | 弥生 CSV | CSV | **windows-31j (MS932)**・改行CRLF | 全フィールドダブルクォート囲み |
 
 ### 2.2 JSON のシリアライズ規約（Gson）
@@ -131,8 +133,8 @@ Android 側は `windows-31j` を優先使用。PCアプリで弥生 CSV を作�
 
 | 対象 | キー | 参照先マスタ | 得られるもの |
 |---|---|---|---|
-| JA購買 明細 | `productMasterId`（FK） / なければ `productName` の canonicalKey | `product_master` | `kaikakeTekiyouId`（らくらく摘要）, `yayoiAccountId`（弥生科目） |
-| 預金 明細 | `normalizeTekiyou(tekiyou) + "_" + (D|W)` | `tekiyou_matching_rules` | `rakurakuTekiyouId`, `yayoiAccountId` |
+| JA購買 明細 | `productMasterId`（FK） / なければ `productName` の canonicalKey | `product_master` | `yayoiAccountId`（弥生科目）, `accountKey`・`memoKey`（あおいろ） |
+| 預金 明細 | `normalizeTekiyou(tekiyou) + "_" + (D|W)` | `tekiyou_matching_rules` | `yayoiAccountId`, `accountKey`・`memoKey` |
 | レシート 品目 | `canonicalKey`（`itemName` 由来） | `general_item_master`（グループデフォルト） + 明細の個別上書き | `yayoiAccountId` |
 | レシート 支払方法 | `general_receipts.paymentMethodText` の部分一致 | `receipt_payment_method_rules` | 相手科目（貸方）`yayoiAccountId` |
 
@@ -205,7 +207,7 @@ Android：**設定 → データ管理 → エクスポート**。5種類。
 | すべて | `AllExportData` | `all_backup_YYYYMMDD_HHmmss.json` | 全テーブル |
 | 購買伝票 | `PurchaseExportData` | `purchase_*.json` | `receiptItems` / `sheetData` / `monthlyData` |
 | 通帳 | `DepositExportData` | `deposit_*.json` | `depositMeisai` |
-| マスタ | `MasterExportData` | `master_*.json` | 商品・摘要・ルール・**両会計ソフトの勘定科目** |
+| マスタ | `MasterExportData` | `master_*.json` | 商品・ルール・弥生の勘定科目 |
 | レシート領収書 | `ReceiptExportData` | `receipt_*.json` | `generalReceipts` ほか |
 
 **PCアプリは「マスタ」で摘要辞書・勘定科目を、「すべて」または各種別で取引データを取得できる。**
@@ -224,10 +226,8 @@ Android：**設定 → データ管理 → エクスポート**。5種類。
   "depositMeisai":       [ DepositMeisai ],
   "productMasters":      [ ProductMaster ],
   "ocrVariants":         [ OcrVariant ],
-  "rakurakuTekiyou":     [ RakurakuTekiyou ],
   "tekiyouMatchingRules":[ TekiyouMatchingRule ],
   "yayoiAccounts":       [ YayoiAccount ],    // v2以降。旧ファイルは欠落し得る
-  "rakurakuAccounts":    [ RakurakuAccount ],
   "generalReceipts":     [ GeneralReceipt ],
   "generalReceiptItems": [ GeneralReceiptItem ],
   "invoiceStores":       [ InvoiceStore ],
@@ -242,11 +242,10 @@ Android：**設定 → データ管理 → エクスポート**。5種類。
   "exportDate": "...", "dataType": "master", "version": 3,
   "productMasters":      [ ProductMaster ],
   "ocrVariants":         [ OcrVariant ],
-  "rakurakuTekiyou":     [ RakurakuTekiyou ],     // v3以降。null あり得る
   "tekiyouMatchingRules":[ TekiyouMatchingRule ], // v3以降。null あり得る
-  "yayoiAccounts":       [ YayoiAccount ],        // v3以降。null あり得る
-  "rakurakuAccounts":    [ RakurakuAccount ]      // v3以降。null あり得る
+  "yayoiAccounts":       [ YayoiAccount ]         // v3以降。null あり得る
 }
+// 2026-09-29 より前のファイルには "rakurakuTekiyou" / "rakurakuAccounts" がある（取込時は無視）
 // PurchaseExportData : exportDate, dataType="purchase", receiptItems, sheetData, monthlyData
 // DepositExportData  : exportDate, dataType="deposit",  depositMeisai
 // ReceiptExportData  : exportDate, dataType="receipt",  generalReceipts, generalReceiptItems,
@@ -310,14 +309,10 @@ Android：**設定 → データ管理 → エクスポート**。5種類。
 | `amount` | Int | 正 = 入金 / 負 = 出金 |
 | `memo` | String | ユーザーメモ（通常空） |
 | `matchingRuleId` | Int? | `tekiyou_matching_rules.id`（参照用キャッシュ。§6.2 では pattern で引き直す） |
-| `overrideTekiyouId` | Int? | 個別上書き `rakuraku_tekiyou.id`（らくらく用）。null = グループのルールに従う |
 | `overrideYayoiAccountId` | Long? | 個別上書き `yayoi_accounts.id`（弥生用）。null = ルールに従う |
 | `exportedAt` | String? | CSV出力日時 |
 
-> **注意**：現状の Android CSV 出力（`OutputConfirmScreen.loadDepositOutputItems`）は
-> `overrideTekiyouId` / `overrideYayoiAccountId` を**参照していない**（ルール一致のみ）。
-> 個別上書き UI（`TekiyouMatchingScreen` の個別ダイアログ）は存在するが出力に反映されていない。
-> PCアプリでは **個別上書きを最優先** で見るのが正しい（レシート側 §6.3 と同じ思想）。
+> 個別上書きはルールより優先する（2026-09-09 から Android の出力もそうしている。レシート側 §6.3 と同じ思想）。
 
 #### ProductMaster（`product_master`）購買品リスト
 
@@ -330,24 +325,8 @@ Android：**設定 → データ管理 → エクスポート**。5種類。
 | `canonicalKey` | String | `toCanonicalKey(canonicalName)`（§4.3） |
 | `category` | String | `一般購買` / `給油所` / `農業機械` |
 | `frequencyCount` | Int | 使用回数（マッチング優先度の参考） |
-| `kaikakeTekiyouId` | Int? | 買掛摘要 = `rakuraku_tekiyou.id`（らくらくモードの摘要引き当て） |
 | `isCertified` | Boolean | 手動確定済みフラグ |
 | `yayoiAccountId` | Long? | `yayoi_accounts.id`（弥生モードの借方科目） |
-
-#### RakurakuTekiyou（`rakuraku_tekiyou`）らくらく摘要辞書
-
-| キー | 型 | 説明 |
-|---|---|---|
-| `id` | Int | PK |
-| `mainCategory` | String | `現金` / `預金` / `売掛` / `買掛` |
-| `subCategory` | String | `入金` / `出金` / `販売` / `購入` |
-| `tekiyouName` | String | 摘要名（例：`肥料`、`売上入金`） |
-| `searchKey` | String | ローマ字検索キー |
-| `kamoku` | String | この摘要に対応する勘定科目名（**文字列**。科目マスタへのFKではない。例：`農機具等 （資産）`） |
-| `taxRate` | String | 税率（自由文字列 `8%`/`10%`/`非`/`不`/空/` `） |
-| `businessRatio` | Int? | 事業割合(%)。null = 指定なし |
-| `isShared` | Boolean? | 現金/預金で共有か。それ以外は null |
-| `isEnabled` | Boolean | 使用可否 |
 
 #### TekiyouMatchingRule（`tekiyou_matching_rules`）預金摘要マッチングルール
 
@@ -359,7 +338,6 @@ Android：**設定 → データ管理 → エクスポート**。5種類。
 | `pattern` | String | `normalizeTekiyou(tekiyou) + "_D"|"_W"`（§4.5） |
 | `normalizedTekiyou` | String | 表示用の正規化摘要名 |
 | `isRegex` | Boolean | 複数サンプルから作られたら true（現状照合には未使用） |
-| `rakurakuTekiyouId` | Int? | `rakuraku_tekiyou.id`（らくらくモード）。null = 未割当 |
 | `sampleText` | String | 元の摘要テキスト例 |
 | `matchCount` | Int | 該当明細数 |
 | `isDeposit` | Boolean | true = 入金ルール / false = 出金ルール |
@@ -384,25 +362,6 @@ Android：**設定 → データ管理 → エクスポート**。5種類。
 | `usedForReceipt` | Boolean | レシート領収書の科目候補に出す |
 | `isEnabled` | Boolean | 有効フラグ |
 | `parentId` | Long? | 親科目 `yayoi_accounts.id`（補助科目のとき非null） |
-
-#### RakurakuAccount（`rakuraku_accounts`）らくらく 勘定科目
-
-`accountCode` に UNIQUE。
-
-| キー | 型 | 説明 |
-|---|---|---|
-| `id` | Long | PK |
-| `accountCode` | String | 科目コード |
-| `accountName` | String | 科目名 |
-| `searchKeyAlpha` | String | サーチキー |
-| `debitCredit` | String | `借` / `貸` |
-| `categoryC` / `categoryB` / `categoryA` | String | 区分小/中/大（例：`【経費】` `【流動資産】` `【資産】`） |
-| `usedForPurchase` / `usedForDeposit` | Boolean | 取引種別の候補フラグ |
-| `parentId` | Long? | 親科目（補助科目 = 子。例：`営農口座` の親が `普通預金`） |
-
-> **注意**：らくらくモードの実 CSV 出力（§7）は `rakuraku_accounts` を使っておらず、
-> 摘要名（`rakuraku_tekiyou.tekiyouName`）だけを出す。`rakuraku_accounts` は
-> 科目マスタとして保持されているが仕訳生成には現状ほぼ未使用。
 
 #### GeneralReceipt（`general_receipts`）レシート・領収書 ヘッダ
 
@@ -472,8 +431,9 @@ PCアプリのマッチングでは `product_master.canonicalKey` 完全一致�
 
 ## 6. マッチング仕様（勘定科目・摘要の引き当て）
 
-会計ソフトの選択（`AccountingSoftware` = `RAKURAKU` / `YAYOI`）で分岐する。
-PCアプリでも両対応が要る（ユーザー設定は JSON には含まれないので PC 側で持つ）。
+会計ソフトの選択（`AccountingSoftware` = `YAYOI` / `AOIRO`）で分岐する。以下は弥生モードの引き当て。
+あおいろモードは `accountKey` / `memoKey` を使い、組み立ては `util/AoiroChoboTransactionsBuilder.kt`
+（契約は `docs/integration/transaction-import.md`）。
 
 ### 6.1 JA購買 明細 → 科目/摘要
 
@@ -485,13 +445,7 @@ PCアプリでも両対応が要る（ユーザー設定は JSON には含まれ
 3. （Android は更に `ocr_variants` フォールバックするが、PC では 1–2 で十分）
 4. 見つからなければ **未マッチ**（弥生モードでは出力ブロック対象、§7.3）。
 
-**Step 2-A. らくらくモード**
-```
-tekiyouName = rakuraku_tekiyou[ product.kaikakeTekiyouId ].tekiyouName   // 無ければ ""
-→ 摘要 = tekiyouName、メモ = productName
-```
-
-**Step 2-B. 弥生モード**
+**Step 2. 弥生モード**
 ```
 account = yayoi_accounts[ product.yayoiAccountId ]      // 無ければ未設定
 借方勘定科目/補助科目 = §4.2 の解決
@@ -507,15 +461,9 @@ patternKey = normalizeTekiyou(meisai.tekiyou) + (meisai.amount >= 0 ? "_D" : "_W
 rule = tekiyou_matching_rules[ pattern == patternKey ]
 ```
 
-**らくらくモード**
-```
-摘要 = rakuraku_tekiyou[ rule.rakurakuTekiyouId ].tekiyouName   // 無ければ ""
-メモ = meisai.tekiyou（原文）
-```
-
 **弥生モード**
 ```
-（推奨：まず meisai.overrideYayoiAccountId を見る。非nullならそれを採用）
+（まず meisai.overrideYayoiAccountId を見る。非nullならそれを採用）
 account = yayoi_accounts[ rule.yayoiAccountId ]
 勘定科目/補助科目 = §4.2
 税区分 = account.defaultTaxCategory
@@ -550,8 +498,6 @@ account = yayoi_accounts[ 上記 id ]
 貸方税区分は常に "対象外"
 ```
 
-（らくらくモードのレシート出力は相手科目を持たず、借方の弥生科目＋科目コードだけを CSV に出す。§7.4）
-
 ---
 
 ## 7. 既存 CSV 出力仕様（仕訳ロジックの参照実装）
@@ -559,37 +505,7 @@ account = yayoi_accounts[ 上記 id ]
 PCアプリの「取引データ JSON」はこの CSV が担っている借方／貸方の組み立てを
 踏襲すればよい。以下は Android の実装そのまま。
 
-### 7.1 らくらく：購買 CSV
-
-ファイル名 `購買_YYYYMMDD_HHmmss.csv`、ヘッダあり。
-
-```
-ID,日付,摘要,メモ,金額
-```
-
-| 列 | 値 |
-|---|---|
-| ID | `receipt_items.id` |
-| 日付 | `%04d/%02d/%02d`（西暦=receiptYear+2018 / receiptMonth / receiptDay） |
-| 摘要 | 買掛摘要名（§6.1 Step2-A）。無ければ空 |
-| メモ | `productName` |
-| 金額 | `amount`（符号そのまま） |
-
-### 7.2 らくらく：預金 CSV
-
-ファイル名 `預金_YYYYMMDD_HHmmss.csv`、ヘッダあり。
-
-```
-ID,日付,摘要,メモ,金額
-```
-
-| 列 | 値 |
-|---|---|
-| ID | `deposit_meisai.id` |
-| 日付 | `transactionDate`（`yyyy-MM-dd` のまま） |
-| 摘要 | 預金摘要名（§6.2）。無ければ空 |
-| メモ | `tekiyou`（原文） |
-| 金額 | `amount`（正=入金 / 負=出金） |
+（§7.1・7.2・7.5 にあったらくらくのシンプル CSV は 2026-09-29 に出力ごと削除した。節番号は参照を保つため詰めていない）
 
 ### 7.3 弥生：購買・預金 CSV（25列・windows-31j・CRLF・全項目クォート・ヘッダなし）
 
@@ -650,15 +566,6 @@ ID,日付,摘要,メモ,金額
 | 18–24 | 番号/期日/タイプ/生成元/仕訳メモ/付箋1/付箋2 | `""`,`""`,`"0"`,`""`,`""`,`"0"`,`"0"` |
 | 25 | 調整 | `no` |
 
-### 7.5 らくらく：レシート領収書 CSV
-
-`GeneralReceiptOutputScreen.exportRakurakuCsvToUri`。ヘッダあり。
-
-```
-日付,商品名,金額,勘定科目,科目コード
-```
-日付は `date` の `-` を `/` に置換。勘定科目・科目コードは **弥生科目マスタ**（§6.3 で解決した `yayoi_accounts`）から取る（らくらくモードでも）。
-
 ---
 
 ## 8. 未マッチ時の扱い（重要）
@@ -666,7 +573,7 @@ ID,日付,摘要,メモ,金額
 - **弥生モード**：借方科目（購買）／科目（預金）／品目科目（レシート）が未設定の
   行がチェックされたまま出力しようとすると **ブロックダイアログ** が出て CSV を出せない。
   デフォルトでも未設定行はチェックOFFで読み込まれる。
-- **らくらくモード**：摘要未設定でも出力可能（空欄で出る）。
+- **あおいろモード**：未設定でも止めずに出す（`matchStatus` で PC 側に伝える。契約 `docs/integration/transaction-import.md`）。
 - **出力済み（`exportedAt != null`）** の行は二重計上防止でデフォルト・チェックOFF。
   PCアプリでも「出力済みフラグ」を尊重するか、独自に出力履歴を管理すること。
 
@@ -679,13 +586,11 @@ PCアプリの取引 JSON では、各明細に **「マッチ状態」** を持
 
 | 種別 | 取り得る値 |
 |---|---|
-| `AccountingSoftware`（アプリ設定・JSONには非含有） | `RAKURAKU`（らくらく青色申告農業版） / `YAYOI`（弥生の青色申告） |
+| `AccountingSoftware`（アプリ設定・JSONには非含有） | `YAYOI`（弥生の青色申告） / `AOIRO`（あおいろ帳簿）。旧値 `RAKURAKU`・`BLUE_RETURN_PREP` は読み出し時に移す |
 | `ReceiptItem.category` | `一般購買` / `給油所` / `農業機械` / `未分類`（＋一時値 `未定`・`月合計`） |
 | `ProductMaster.category` | `一般購買` / `給油所` / `農業機械` |
 | `ReceiptItem.ocrConfidence` | `high` / `medium` / `low` / null |
-| `RakurakuTekiyou.mainCategory` | `現金` / `預金` / `売掛` / `買掛` |
-| `RakurakuTekiyou.subCategory` | `入金` / `出金` / `販売` / `購入` |
-| `YayoiAccount.debitCredit` / `RakurakuAccount.debitCredit` | `借` / `貸` |
+| `YayoiAccount.debitCredit` | `借` / `貸` |
 | `YayoiAccount.categoryA` | `資産` / `負債` / `資本` / `収入` / `経費` / `引当金等` |
 | `YayoiAccount.defaultTaxCategory`（実データ） | `対象外` / `課対仕入10` / `課対仕入8` / `課税売上` / `非課税` |
 | 弥生CSV税区分列（現状は上記文字列をそのまま出力） | — |
@@ -700,9 +605,7 @@ PCアプリの取引 JSON では、各明細に **「マッチ状態」** を持
 | ファイル | 内容 | ヘッダ |
 |---|---|---|
 | `yayoi_accounts.csv` | 弥生 勘定科目 初期データ | `勘定科目,サーチキー英字,サーチキー数字,借貸,区分C,区分B,区分A,購買取引使用,預金取引使用,親科目` |
-| `rakuraku_accounts.csv` | らくらく 勘定科目 初期データ | 同上 |
-| `rakurakutekiyou.csv` | らくらく摘要辞書（セクション見出し `現金-入金` 等 → `index,摘要名,検索文字,科目,税率,事業割合,預金と共有` の表） | 可変 |
-| `product_master.csv` | 商品マスタ実績 | `id,canonical_name,category,frequency_count,yayoi_account_id,rakuraku_account_id` |
+| `product_master.csv` | 商品マスタ実績 | `id,canonical_name,category,frequency_count,yayoi_account_id` |
 | `ocr_variants.csv` | OCR誤読辞書（非稼働・参考） | `product_id,variant_text,occurrence_count,last_seen` |
 
 > `yayoi_accounts` の実エンティティは `区分C` を持たず `categoryA/categoryB/defaultTaxCategory`。
@@ -719,7 +622,7 @@ PCアプリの取引 JSON では、各明細に **「マッチ状態」** を持
 {
   "schemaVersion": 1,
   "generatedAt": "2026-09-09T14:30:00+09:00",
-  "accountingSoftware": "YAYOI",          // or "RAKURAKU"
+  "accountingSoftware": "YAYOI",
   "sourceApp": "JA仕訳変換",
   "entries": [
     {
@@ -750,14 +653,13 @@ PCアプリの取引 JSON では、各明細に **「マッチ状態」** を持
 
 | source | 借方 | 貸方 | 金額 | 摘要 |
 |---|---|---|---|---|
-| PURCHASE | 商品の科目（`product.yayoiAccountId`） | `買掛金`（固定） | `amount` | `productName`（らくらくは摘要=買掛摘要名） |
-| DEPOSIT 入金 | `普通預金` | ルールの科目（`rule.yayoiAccountId`） | `abs(amount)` | `tekiyou`（らくらくは摘要=預金摘要名） |
+| PURCHASE | 商品の科目（`product.yayoiAccountId`） | `買掛金`（固定） | `amount` | `productName` |
+| DEPOSIT 入金 | `普通預金` | ルールの科目（`rule.yayoiAccountId`） | `abs(amount)` | `tekiyou` |
 | DEPOSIT 出金 | ルールの科目 | `普通預金` | `abs(amount)` | 同上 |
 | RECEIPT | 品目の科目（個別上書き→グループデフォルト） | 相手科目（個別上書き→支払方法ルール→`現金`） | `price` | `itemName` |
 
 - 返品・値引き（`amount < 0`）：Android は符号付きのまま 1 行で出す。
   PCで貸借を反転させるか、マイナス金額のまま出すかは会計ソフト仕様に合わせて要検討。
-- らくらくモードでは税区分・補助科目は基本不要。摘要名が主。
 
 ---
 
@@ -768,8 +670,7 @@ PCアプリの取引 JSON では、各明細に **「マッチ状態」** を持
 2. **`normalizeTekiyou` / `toCanonicalKey` は 2 箇所以上に重複実装**があり、
    将来ズレる可能性。PC 側は本書 §4.3 / §4.4 を単一の真実として実装し、
    Android 実装の変更を監視すること。
-3. **預金の個別上書き（`overrideTekiyouId` / `overrideYayoiAccountId`）が
-   現状 Android CSV 出力に反映されていない**。PC は反映するのが正しい。
+3. ~~預金の個別上書きが Android CSV 出力に反映されていない~~ → 2026-09-09 に修正済み（上書きを最優先）。
 4. **`isExcluded`（レシート品目）** は集計・出力から除外すべきだが、
    Android の `loadOutputItems()` はフィルタしていない（`buildCsvForExport()` はする）。
    PC は必ず除外。
@@ -780,8 +681,7 @@ PCアプリの取引 JSON では、各明細に **「マッチ状態」** を持
    表記が異なる可能性。実際のインポート検証が必要（`docs/yayoi-csv-export-spec.md`
    は別プロジェクト "AoiroChobo" 由来の参考資料で、表記が食い違う）。
 7. **勘定科目マスタが空のユーザー**：初期 CSV（§9）投入前だと科目 0 件。
-8. **`rakuraku_accounts` はマスタとして存在するが仕訳生成にほぼ未使用**
-   （らくらく出力は摘要名ベース、レシートらくらく出力は弥生科目ベース）。
+8. ~~`rakuraku_accounts` はマスタとして存在するが仕訳生成にほぼ未使用~~ → らくらく撤去で表ごと削除（v40）。
 9. **OCR 学習系（`ocr_variants` ほか）は非稼働**。マッチングは
    `product_master.canonicalKey` 完全一致で組んでよい。
 10. JSON バックアップは **生のテーブルダンプ**で、ID をそのまま含む。

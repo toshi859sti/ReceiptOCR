@@ -23,7 +23,8 @@
       あわせて DAO のらくらく用クエリ（`DepositMeisaiDao` の `clearOverridesForRule`・`updateOverrideTekiyou`・
       JOIN の `rakuraku_tekiyou`、`TekiyouMatchingRuleDao` の結合列）と `SettingsScreen` の `withoutRakuraku()` を消す
 - [x] ④ enum `BLUE_RETURN_PREP` の改名（保存値の移行つき）。`RAKURAKU` は ③ で削除済み
-- [ ] docs（`APP_SPECIFICATION.md`・`functional-design.md`・`architecture.md`・`MANUAL.md`・`PC_ACCOUNTING_INTEGRATION_SPEC.md`）と `CLAUDE.md`（撤去済みの記載・DB バージョン。更新はユーザー確認）
+- [x] docs（`APP_SPECIFICATION.md`・`functional-design.md`・`architecture.md`・`MANUAL.md`・`PC_ACCOUNTING_INTEGRATION_SPEC.md` ほか）
+- [ ] `CLAUDE.md`（撤去済みの記載・DB バージョン v40。更新はユーザー確認）
 
 ## 完了条件
 コードに `Rakuraku` / `RAKURAKU` / らくらく の参照が残らず（移行・読み飛ばしのための記述を除く）、DB v40 への移行が実機で通り、
@@ -49,6 +50,14 @@
   - `MIGRATION_39_40`：`product_master`・`tekiyou_matching_rules`・`deposit_meisai` を残す列だけで作り直し、
     らくらくの 2 表を DROP。実機で v40・integrity ok・foreign_key_check 空・件数（商品 115・ルール 39・明細 157）一致
   - enum は `AOIRO` に改名。保存値 `BLUE_RETURN_PREP` は読み出し時に `AOIRO` に移す（実機で確認し、設定は弥生に戻した）
+- 2026-09-29 docs 更新：今の仕様を書いている 12 ファイル（APP_SPECIFICATION・functional-design・architecture・MANUAL・
+  PC_ACCOUNTING_INTEGRATION_SPEC・CSV_SPEC・DATABASE_SCHEMA・DICTIONARY・product-requirements・glossary・
+  repository-structure・known-issues）。履歴（`CHANGELOG.md`・`integration/REPLY-*`・`TASK_*`）と PC から同期している契約
+  （`integration/README.md` など）は書き換えていない
+  - `CSV_SPEC.md` の購買・預金 CSV はらくらく形式だったので削除。商品マスタ／学習データの共有 CSV はコードに無いので「未実装」と明記
+  - `DATABASE_SCHEMA.md` は v11 時代のまま全体が古いので、本文は触らず冒頭に注記だけ入れた
+  - `PC_ACCOUNTING_INTEGRATION_SPEC.md` も v33 時点の文書。らくらく部分を外し、冒頭に「連携の一次情報は `docs/integration/`」と注記
+  - MANUAL の「あおいろは購買のみ」「預金はあおいろでもらくらく CSV が出る」も古かったので直した
 
 ---
 
@@ -57,12 +66,14 @@
 ### 今回完了したこと
 - ③ コード・画面の撤去（2026-09-29・実機確認済み）
 - ④ DB v40・enum 改名（2026-09-29・実機で移行確認済み）
+- docs の更新（2026-09-29）
 
 ### 未完了・中断した理由
-- docs の更新と CLAUDE.md（DB バージョン v40・らくらく撤去済み）が未着手。CLAUDE.md はユーザー確認が要る
+- CLAUDE.md（DB バージョン v40・らくらく撤去済み）の更新がユーザー確認待ち
 
 ### 次回セッションで最初にやること
-docs（`APP_SPECIFICATION.md`・`functional-design.md`・`architecture.md`・`MANUAL.md`・`PC_ACCOUNTING_INTEGRATION_SPEC.md`）かららくらくの記述を消し、CLAUDE.md の更新案をユーザーに確認する。
+CLAUDE.md の更新案をユーザーに確認して反映し、この作業を `.steering/20260929-らくらく撤去/` にアーカイブする。
 
 ### 新たに発覚した問題・制約
-- なし
+- `DATABASE_SCHEMA.md`（v11 時代）と `PC_ACCOUNTING_INTEGRATION_SPEC.md`（v33 時点）は、らくらく以外の部分も今の実装と食い違う。
+  書き直すか廃止するかは未決定

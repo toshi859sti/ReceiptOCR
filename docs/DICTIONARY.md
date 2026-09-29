@@ -83,20 +83,6 @@ data class YayoiAccount(
 )
 ```
 
-### RakurakuAccount (らくらく青色申告勘定科目)
-```kotlin
-@Entity(tableName = "rakuraku_accounts")
-data class RakurakuAccount(
-    @PrimaryKey(autoGenerate = true)
-    val id: Long = 0,
-    val accountCode: String,
-    val accountName: String,
-    val category: String,
-    val subcategory: String?,
-    val description: String?
-)
-```
-
 ### Database Migration
 ```kotlin
 // v2 → v3
@@ -134,10 +120,6 @@ Room.databaseBuilder(context, ReceiptDatabase::class.java, "receipt_db")
 ### yayoi_accounts.csv
 - **総数**: 15勘定科目
 - **例**: 農薬費, 肥料費, 農具費, 車両費, 燃料費 など
-
-### rakuraku_accounts.csv
-- **総数**: 15勘定科目
-- **例**: 種苗費, 肥料費, 農薬衛生費, 動力光熱費 など
 
 ---
 

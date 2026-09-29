@@ -52,8 +52,6 @@ Room データベース関連クラスを配置する。
 | `ProductMaster.kt` | 商品マスタエンティティ |
 | `OcrVariant.kt` | OCR バリアント学習エンティティ（Gemini経路の商品名照合・CSV出力FKフォールバックで現役） |
 | `YayoiAccount.kt` | 弥生会計 勘定科目エンティティ |
-| `RakurakuAccount.kt` | らくらく 勘定科目エンティティ |
-| `RakurakuTekiyou.kt` | 摘要辞書エンティティ |
 | `DepositMeisai.kt` | 通帳明細エンティティ |
 | `TekiyouMatchingRule.kt` | 預金摘要マッチングルールエンティティ |
 | `OcrFallbackLog.kt` | OCR フォールバックログエンティティ |
@@ -84,7 +82,6 @@ Jetpack Compose の画面ファイル。1ファイル1画面が原則。
 | `OutputConfirmScreen.kt` | CSV 出力確認（購買・預金共用） | `purchase_output_confirm` / `deposit_output_confirm` |
 | `PassbookDataScreen.kt` | 通帳データ入力 | `passbook_data` |
 | `TekiyouMatchingScreen.kt` | 摘要マッチング設定 | `tekiyou_matching` |
-| `RakurakuTekiyouScreen.kt` | らくらく摘要辞書 | `rakuraku_tekiyou` |
 | `SettingsScreen.kt` | 設定・データ管理 | `settings` |
 | `AccountSettingsScreen.kt` | 勘定科目設定 | **Navigation 未接続** |
 
@@ -101,7 +98,6 @@ Jetpack Compose の画面ファイル。1ファイル1画面が原則。
 | `CategoryRecalculator.kt` | カテゴリ再計算 |
 | `ImagePreprocessor.kt` | 画像前処理ユーティリティ |
 | `OcrQualityEvaluator.kt` | OCR 結果品質評価 |
-| `TekiyouDictImporter.kt` | 摘要辞書インポート |
 | `Category.kt` | JA購買の区分名（一般購買・給油所・農業機械・未分類） |
 | `YuvToRgbConverter.kt` | CameraX YUV→RGB 変換 |
 

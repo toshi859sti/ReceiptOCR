@@ -85,7 +85,7 @@ JA伝票の撮影・OCR結果確認・編集・保存は`viewmodel`を介さず`
          | ReceiptInputScreen.saveMonthData()
 [検算バリデーション・要確認バッジ・小計カテゴリ重複ガードを経てRoom DB保存]
          | OutputConfirmScreen
-[弥生 CSV ／ あおいろ transactions.json ／ らくらく CSV（productMasterId で商品マスタを引いて科目・摘要を決める）]
+[弥生 CSV ／ あおいろ transactions.json（productMasterId で商品マスタを引いて科目・摘要を決める）]
 ```
 
 一般レシート（`GeneralReceiptCaptureScreen.kt`）は本フローとは独立した画面だが、
@@ -147,7 +147,7 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 ## データベース設計
 
 - **DB 名**: `receipt_database`
-- **バージョン**: 39（2026-09-26 時点・21 テーブル。`ReceiptDatabase.kt`の`entities`/`version`が一次情報源。
+- **バージョン**: 40（2026-09-29 時点・19 テーブル。`ReceiptDatabase.kt`の`entities`/`version`が一次情報源。
   このドキュメントの値は更新が追いつかず古くなることがあるため、正確なバージョンは実装を確認すること）
 - **マイグレーション**: 1→2→...→39（全ステップ定義済み、`fallbackToDestructiveMigration()`は
   2026-07-12に削除済み。以後マイグレーション必須で、書き忘れると起動時にクラッシュする）
@@ -162,8 +162,6 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
   `OcrLearningStatusScreen`）はPhase6（2026-08-11）で削除済みで現在は非稼働。読み取りのみ
   CSV出力時の商品名照合フォールバック（`ocrVariantDao.getByText()`）で現役 |
 | `yayoi_accounts` | 弥生会計 勘定科目マスタ |
-| `rakuraku_accounts` | らくらく青色申告 勘定科目マスタ |
-| `rakuraku_tekiyou` | 摘要辞書（購買・預金共用） |
 | `deposit_meisai` | 通帳明細データ（`passbookId` でどの通帳か・DB v39〜） |
 | `passbooks` | 通帳（預金口座・最大 5 冊）。弥生の補助科目と AoiroChobo の預金スロット科目を別々に持つ（DB v39〜） |
 | `tekiyou_matching_rules` | 預金摘要マッチングルール |
@@ -179,6 +177,7 @@ Gemini Vision APIへのネットワーク呼び出しになり、`gemini-3.5-fla
 
 （`correction_logs`・`ocr_score_logs`・`ocr_explicit_joins`はPhase6（v27→v28、
 `MIGRATION_27_28`）でDROP済み）
+（`rakuraku_accounts`・`rakuraku_tekiyou` はらくらく青色申告農業版の撤去で v39→v40（`MIGRATION_39_40`）で DROP 済み）
 
 ---
 

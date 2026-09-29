@@ -31,8 +31,6 @@ flowchart TD
     YayoiAccounts["弥生：勘定科目\n(YayoiAccountSettingsScreen)"]
     YayoiAccountEdit["科目の編集\n(YayoiAccountEditScreen)"]
     AoiroVocab["あおいろ帳簿：勘定科目・摘要辞書\n(AoiroChoboVocabularyScreen)"]
-    RakurakuAccounts["らくらく：勘定科目\n(RakurakuAccountSettingsScreen)"]
-    RakurakuTekiyou["らくらく：摘要辞書\n(RakurakuTekiyouScreen)"]
 
     Settings["設定\n(SettingsScreen)"]
 
@@ -64,14 +62,12 @@ flowchart TD
     BookkeepingMenu --> YayoiAccounts
     YayoiAccounts --> YayoiAccountEdit
     BookkeepingMenu --> AoiroVocab
-    BookkeepingMenu --> RakurakuAccounts
-    BookkeepingMenu --> RakurakuTekiyou
 ```
 
 - `ReceiptInputScreen` は JA 伝票の撮影（埋め込みの `CameraScreenForOcr`）・OCR・編集・保存までを 1 画面で行う
 - `CameraScreen` / `CameraScreenForOcr` / `TransformPreviewScreen` は他の画面に埋め込むコンポーザブルなので NavHost にルートが無い（不具合ではない）
 - 通帳の管理（追加・名前・弥生の補助科目・あおいろの口座・削除）は通帳データ画面の ⋮ メニューから開くダイアログ（`PassbookManageDialog`）
-- 買掛摘要辞書・預金摘要辞書の専用画面は、どこからも開けなかったので 2026-09-26 に削除した。摘要は「らくらく：摘要辞書」の各タブで扱う
+- 買掛摘要辞書・預金摘要辞書の専用画面は、どこからも開けなかったので 2026-09-26 に削除した。らくらくの勘定科目・摘要辞書の画面も 2026-09-29 に撤去した
 
 ### 一覧画面の共通 UI
 
@@ -129,7 +125,6 @@ erDiagram
         string canonicalKey
         string category
         int frequencyCount
-        int kaikakeTekiyouId FK
         long yayoiAccountId
         string accountKey
         string memoKey
@@ -139,15 +134,6 @@ erDiagram
         long productId FK
         string variantText
         string confidenceLevel
-    }
-    rakuraku_tekiyou {
-        int id PK
-        string mainCategory
-        string subCategory
-        string tekiyouName
-        string kamoku
-        string taxRate
-        string memoKey
     }
     passbooks {
         int id PK
@@ -164,7 +150,6 @@ erDiagram
         string tekiyou
         int amount
         int matchingRuleId
-        int overrideTekiyouId
         long overrideYayoiAccountId
         string overrideAccountKey
         string exportedAt
@@ -173,7 +158,6 @@ erDiagram
         int id PK
         string pattern UK
         string normalizedTekiyou
-        int rakurakuTekiyouId FK
         long yayoiAccountId
         string accountKey
         string memoKey
@@ -227,8 +211,6 @@ erDiagram
     sheet_data ||--o{ receipt_items : "年・月・伝票番号"
     product_master ||--o{ receipt_items : "productMasterId"
     product_master ||--o{ ocr_variants : "productId"
-    rakuraku_tekiyou ||--o{ product_master : "kaikakeTekiyouId"
-    rakuraku_tekiyou ||--o{ tekiyou_matching_rules : "rakurakuTekiyouId"
     tekiyou_matching_rules ||--o{ deposit_meisai : "matchingRuleId"
     passbooks ||--o{ deposit_meisai : "passbookId"
     general_receipts ||--o{ general_receipt_items : "receiptId"
@@ -238,9 +220,8 @@ erDiagram
     aoirochobo_memo_templates ||--o{ product_master : "memoKey"
 ```
 
-- 図の線のうち Room の外部キーを張っているのは `product_master.kaikakeTekiyouId`・`tekiyou_matching_rules.rakurakuTekiyouId`（どちらも SET_NULL）・
-  `ocr_variants.productId`・`general_receipt_items.receiptId` だけ。ほかは列の値で引き当てているだけで、制約は無い
-- 会計ソフトごとの紐付けは別々の列に持つ（弥生 `yayoiAccountId`／あおいろ `accountKey`・`memoKey`／らくらく `*TekiyouId`）。
+- 図の線のうち Room の外部キーを張っているのは `ocr_variants.productId`・`general_receipt_items.receiptId` だけ。ほかは列の値で引き当てているだけで、制約は無い
+- 会計ソフトごとの紐付けは別々の列に持つ（弥生 `yayoiAccountId`／あおいろ `accountKey`・`memoKey`）。らくらくの `*TekiyouId` 列と `rakuraku_*` 表は v40 で削除した。
   弥生とあおいろは科目体系が別物なので、互いに変換しない
 - `accountKey` / `memoKey` は PC 会計アプリ（AoiroChobo）が持つ不透明な文字列。名前（`*KeyName`）は確定したときに見えていた名前を控えたもので、
   PC 側で名前が変わったら紐付けを外す合図に使う
@@ -279,11 +260,11 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 
 出力先は設定の「連携会計ソフト」で決まる。列ごとの詳しい仕様は `docs/PC_ACCOUNTING_INTEGRATION_SPEC.md` の §7。
 
-| 部門 | 弥生の青色申告 | あおいろ帳簿 | らくらく青色申告 |
-|---|---|---|---|
-| JA 購買 | 仕訳 CSV | `transactions.json` | シンプル CSV |
-| JA 預金 | 仕訳 CSV | `transactions.json` | シンプル CSV |
-| レシート | 仕訳 CSV | `transactions.json` | シンプル CSV |
+| 部門 | 弥生の青色申告 | あおいろ帳簿 |
+|---|---|---|
+| JA 購買 | 仕訳 CSV | `transactions.json` |
+| JA 預金 | 仕訳 CSV | `transactions.json` |
+| レシート | 仕訳 CSV | `transactions.json` |
 
 どの出力も、書き出した行に出力日時（`exportedAt`）を記録し、出力確認画面で「未出力のみ表示」に絞り込める。
 弥生 CSV は、科目が決まっていない行が選ばれていると出力せず、科目を設定するかチェックを外すよう求める。
@@ -320,15 +301,11 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 - 出せない行（金額 0・実在しない日付、預金は口座が未設定の通帳・口座が今の科目に無い・通番に使えない文字）は
   出力済みにせず、理由を結果ダイアログに出す
 
-### らくらく シンプル CSV（UTF-8・ヘッダあり）
+### 共通
 
-| 部門 | ヘッダ | 中身 |
-|---|---|---|
-| 購買 | `ID,日付,摘要,メモ,金額` | 日付 `yyyy/MM/dd`・摘要＝商品の買掛摘要・メモ＝商品名 |
-| 預金 | `ID,日付,摘要,メモ,金額` | 日付 `yyyy-MM-dd`・摘要＝ルールか個別上書きの摘要・メモ＝通帳の摘要原文・金額は入金が正、出金が負 |
-| レシート | `日付,商品名,金額,勘定科目,科目コード` | 日付 `yyyy/MM/dd` |
+購買は、どの形式でも商品名に「小計」「合計」を含む行を出さない。預金の「金額を隠す」設定は画面の表示だけで、出力には効かない。
 
-購買は、どの形式でも商品名に「小計」「合計」を含む行を出さない。預金の「金額を隠す」設定は画面の表示だけで、CSV には効かない。
+らくらく青色申告農業版向けのシンプル CSV（UTF-8）はサポート終了にともない 2026-09-29 に削除した。
 
 ---
 
@@ -337,9 +314,9 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 1. 通帳データ画面で CSV を取り込む（取込先の通帳を選ぶ。取引通番が空の行には `DepositNumberAssigner` が通帳ごとに合成番号を振る）
 2. 通帳摘要別リストを開くと `updateRulesFromMeisai()` が明細の摘要を正規化してルール（`tekiyou_matching_rules`）を作り、
    明細の `matchingRuleId` を書き戻す
-3. グループ（ルール）単位で科目を決める。会計ソフトごとに別の列に入る（らくらく `rakurakuTekiyouId`・弥生 `yayoiAccountId`）
-4. 一部の明細だけ別の科目にしたいときは明細側で上書きする（`overrideTekiyouId`・`overrideYayoiAccountId`）
-5. グループの科目を保存し直すと、そのルールの明細の上書きはリセットされる（`clearOverridesForRule()` / `clearYayoiOverridesForRule()`）
+3. グループ（ルール）単位で科目を決める。弥生は `yayoiAccountId` に入る
+4. 一部の明細だけ別の科目にしたいときは明細側で上書きする（`overrideYayoiAccountId`）
+5. グループの科目を保存し直すと、そのルールの明細の上書きはリセットされる（`clearYayoiOverridesForRule()`）
 6. 未マッチの摘要はまとめて Gemini に科目を提案させられる（「AIで一括提案」）
 
 あおいろモードでは 3〜5 の列が `accountKey`/`memoKey`（ルール）・`overrideAccountKey`/`overrideMemoKey`（明細）になり、

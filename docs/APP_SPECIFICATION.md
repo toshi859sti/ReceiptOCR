@@ -37,7 +37,7 @@
 |---|---|---|
 | 弥生の青色申告 | 仕訳 CSV（Shift-JIS・25 列） | 購買・預金・レシートとも対応 |
 | あおいろ帳簿（自作 PC アプリ AoiroChobo） | `transactions.json`（UTF-8） | 購買・預金・レシートの全部門に対応（2026-09-26〜） |
-| らくらく青色申告農業版 | シンプル CSV（UTF-8） | **サポート終了が決定済み**。コードは撤去前。設定画面の選択肢からは外し、保存値が `RAKURAKU` なら読み出し時に `YAYOI` へ移す（2026-09-26） |
+| らくらく青色申告農業版 | — | **サポート終了・撤去済み**（2026-09-29）。出力・画面・DB の表（v40 で DROP）とも削除した |
 
 出力先は設定の「連携会計ソフト」（`AccountingSoftware`）で切り替える。弥生とあおいろは科目体系が別物なので、
 商品や摘要の学習は両方の科目を別々の列で持つ（1 対 1 に変換しない）。
@@ -92,15 +92,13 @@
 ├─ 簿記ソフト連携 (BookkeepingMenuScreen)
 │  ├─ 弥生：勘定科目 (YayoiAccountSettingsScreen)
 │  │  └─ 科目の編集 (YayoiAccountEditScreen)
-│  ├─ あおいろ帳簿：勘定科目・摘要辞書 (AoiroChoboVocabularyScreen)
-│  ├─ らくらく：勘定科目 (RakurakuAccountSettingsScreen)
-│  └─ らくらく：摘要辞書 (RakurakuTekiyouScreen)
+│  └─ あおいろ帳簿：勘定科目・摘要辞書 (AoiroChoboVocabularyScreen)
 │
 └─ 設定 (SettingsScreen)
 ```
 
 - `CameraScreen` / `CameraScreenForOcr` / `TransformPreviewScreen` は他の画面に埋め込むコンポーザブルなので、ルートを持たない（不具合ではない）
-- 摘要辞書（買掛・預金）の専用画面は、どこからも開けなかったので 2026-09-26 に削除した。摘要は「らくらく：摘要辞書」の各タブで扱う
+- 摘要辞書（買掛・預金）の専用画面は、どこからも開けなかったので 2026-09-26 に削除した。らくらくの勘定科目・摘要辞書の画面も 2026-09-29 に撤去した
 
 ### 一覧画面の共通 UI
 
@@ -124,7 +122,7 @@ CameraX 4K → YuvToRgbConverter → GreenFrameDetector.process()
   区分（一般購買・給油所・農業機械）の仮判定、商品マスタとの canonicalKey 照合
 → ReceiptInputScreen で確認・編集（セルを選んで部分再 OCR もできる）→ 保存
   検算（小計・合計）・要確認バッジ。保存後に CategoryRecalculator が月全体の区分を確定
-→ 出力確認画面（購買）→ 弥生 CSV ／ らくらく CSV ／ あおいろ transactions.json
+→ 出力確認画面（購買）→ 弥生 CSV ／ あおいろ transactions.json
 ```
 
 - 商品マスタ（`product_master`）に弥生の科目・あおいろの科目（`accountKey`）と摘要（`memoKey`）を別々に紐付ける
@@ -156,14 +154,14 @@ CameraX 4K → YuvToRgbConverter → GreenFrameDetector.process()
 
 ## 5. データ
 
-Room DB **v39**（2026-09-26 時点）。21 テーブル。
+Room DB **v40**（2026-09-29 時点）。19 テーブル。
 
 | 系統 | テーブル |
 |---|---|
 | JA 購買 | `receipt_items` / `sheet_data` / `monthly_data` / `product_master` |
 | JA 預金 | `passbooks` / `deposit_meisai` / `tekiyou_matching_rules` |
 | レシート | `general_receipts` / `general_receipt_items` / `invoice_stores` / `general_item_master` / `receipt_payment_method_rules` |
-| 科目・摘要 | `yayoi_accounts` / `rakuraku_accounts` / `rakuraku_tekiyou` |
+| 科目 | `yayoi_accounts`（らくらくの `rakuraku_accounts` / `rakuraku_tekiyou` は v40 で DROP） |
 | あおいろ帳簿 | `aoirochobo_accounts` / `aoirochobo_memo_templates` / `aoirochobo_vocab_meta` / `aoirochobo_account_usage` |
 | ML Kit 時代の名残 | `ocr_variants`（読み取りのみ現役・学習は非稼働） / `ocr_fallback_logs` |
 
@@ -172,16 +170,14 @@ Room DB **v39**（2026-09-26 時点）。21 テーブル。
 
 ### 初期データ（`assets/`）
 
-`DatabaseInitializer` がテーブルが空のときに取り込む：`yayoi_accounts.csv` / `rakuraku_accounts.csv` /
+`DatabaseInitializer` がテーブルが空のときに取り込む：`yayoi_accounts.csv` /
 `product_master.csv` / `ocr_variants.csv`。支払方法ルールはコード内の既定値から作る。
-摘要辞書（`rakuraku_tekiyou`）は `rakurakutekiyou.csv` から、「らくらく：摘要辞書」と「通帳摘要別リスト」を
-開くたびに差分で取り込む（`importTekiyouFromCsv`。DB に無い「大分類｜小分類｜摘要名」だけを足す）。
-そのため画面で消した既定の摘要は、次に開いたときに戻ってくる。
 
 ### バックアップ
 
 設定画面の「エクスポート」「インポート」で、全データ・マスタデータ・購買伝票・通帳データ・レシート・領収書の
 どれかを JSON ファイルにして端末外へ出し入れする。「データクリア」も同じ種類別に削除できる（確認あり）。
+撤去前（2026-09-29 より前）のバックアップに入っているらくらくの表や列は、取込時に読み飛ばす。
 
 ---
 
@@ -192,7 +188,7 @@ Room DB **v39**（2026-09-26 時点）。21 テーブル。
 | 作業年（令和） | `era_year` | 7 |
 | 作業年で固定 | `lock_year_to_working` | false |
 | 撮影時の月 / 年月固定 | `current_issue_month` / `fix_year_month` | 1 / false |
-| 連携会計ソフト | `accounting_software` | `YAYOI`（`RAKURAKU` は読み出し時に `YAYOI` へ移す） |
+| 連携会計ソフト | `accounting_software` | `YAYOI`（値は `YAYOI` / `AOIRO`。旧値 `BLUE_RETURN_PREP` は `AOIRO` へ、`RAKURAKU` などそれ以外は `YAYOI` へ読み出し時に移す） |
 | Gemini API キー | `gemini_api_key` | なし |
 | 累計トークン使用量 | `cumulative_*_tokens` | 0（リセット可） |
 | 一覧の文字サイズ | `list_font_size` | 14 |
