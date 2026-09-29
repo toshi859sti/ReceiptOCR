@@ -1,7 +1,6 @@
 package com.example.greenframeocr.data
 
 import androidx.room.Entity
-import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -14,16 +13,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "product_master",
     indices = [
-        Index(value = ["kaikakeTekiyouId"]),
         Index(value = ["canonicalKey", "category"], unique = true)
-    ],
-    foreignKeys = [
-        ForeignKey(
-            entity = RakurakuTekiyou::class,
-            parentColumns = ["id"],
-            childColumns = ["kaikakeTekiyouId"],
-            onDelete = ForeignKey.SET_NULL
-        )
     ]
 )
 data class ProductMaster(
@@ -45,9 +35,33 @@ data class ProductMaster(
     /** 使用頻度（よく買う商品を優先マッチング） */
     val frequencyCount: Int = 0,
 
-    /** 買掛摘要辞書ID（RakurakuTekiyouのID） */
-    val kaikakeTekiyouId: Int? = null,
-
     /** 確定フラグ: 手動入力・訂正済みアイテムはtrue */
-    val isCertified: Boolean = false
+    val isCertified: Boolean = false,
+
+    /** 弥生勘定科目ID（YayoiAccountのID、弥生モード時に使用） */
+    val yayoiAccountId: Long? = null,
+
+    /**
+     * AoiroChobo の科目参照キー。あおいろ出力の借方科目。
+     *
+     * 弥生用の yayoiAccountId とは**独立**。同じ商品でも弥生で A、あおいろで B を選ぶことがある
+     * （2026-09-23 ユーザー確認）。両者を結ぶ対応表は存在しない。
+     */
+    val accountKey: String? = null,
+
+    /** accountKey を確定したときに見えていた AoiroChobo 側の科目名（作り替え検知用） */
+    val accountKeyName: String? = null,
+
+    /**
+     * AoiroChobo の摘要参照キー。null = 未確定（matchStatus = "UnmatchedMemo" で出す）。
+     *
+     * 摘要は「相手科目・税区分・税率・事業割合」が不可分のセットで、内容は変えられない。
+     * したがって選べるのは counterAccountKey == accountKey の摘要だけで、科目を変えたら外す。
+     * 相手科目も税率も同じで事業割合だけ違う摘要があり（電気料金 40% / 電気料金（事業専用）100%）、
+     * そこは商品名からは決まらないので最後はユーザーが選ぶ。
+     */
+    val memoKey: String? = null,
+
+    /** memoKey を確定したときに見えていた AoiroChobo 側の摘要名（作り替え検知用） */
+    val memoKeyName: String? = null
 )

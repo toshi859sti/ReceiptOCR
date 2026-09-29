@@ -38,6 +38,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import com.example.greenframeocr.util.applyConversionToNewInput
 import com.example.greenframeocr.util.convertAllToFullWidth
 import com.example.greenframeocr.util.countFullWidthEquivalent
+import com.example.greenframeocr.util.normalizeSpaces
+import com.example.greenframeocr.util.withComputedKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -58,11 +60,14 @@ fun ReceiptInputScreen(
     eraYear: Int,
     database: com.example.greenframeocr.data.ReceiptDatabase,
     onBack: () -> Unit,
-    onCapture: () -> Unit,
     onNavigateToSummary: (Int, Int) -> Unit = { _, _ -> }  // (year, month)
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // 作業年（設定画面のeraYearで初期化。画面上の令和X年バッジからその場で変更できる）
+    var workingEraYear by remember { mutableIntStateOf(eraYear) }
+    var showEraYearDialog by remember { mutableStateOf(false) }
 
     // 基本状態
     var selectedMonth by remember { mutableIntStateOf(1) }
@@ -78,14 +83,79 @@ fun ReceiptInputScreen(
     // 現在の伝票データ
     val currentReceiptRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
 
+    // 要確認行（ocrConfidence=="low"）を全伝票から抽出（伝票番号・行インデックス付き）
+    val reviewRows = remember(allSheetsData) {
+        allSheetsData.entries.sortedBy { it.key }.flatMap { (sheetNum, rows) ->
+            rows.withIndex()
+                .filter { it.value.ocrConfidence == "low" }
+                .map { Triple(sheetNum, it.index, it.value) }
+        }
+    }
+
+    // 税込金額はあるのに取引日・商品名のどちらかが空欄の行（欠損行）を全伝票から抽出
+    val incompleteRows = remember(allSheetsData) {
+        allSheetsData.entries.sortedBy { it.key }.flatMap { (sheetNum, rows) ->
+            rows.filter {
+                !it.isSubtotal && !it.isTotalRow && it.amount != 0 &&
+                    (it.date.isBlank() || it.productName.isBlank())
+            }.map { sheetNum to it }
+        }
+    }
+
+    // この先に小計行が見つからずカテゴリが確定できない行（category=="未定"）を抽出
+    val undeterminedRows = remember(allSheetsData) {
+        allSheetsData.values.flatten()
+            .filter { !it.isSubtotal && !it.isTotalRow && it.amount != 0 && it.category == "未定" }
+    }
+
     // グリッド表示制御
     var selectedRowIndex by remember { mutableIntStateOf(-1) }
     var fontSize by remember { mutableFloatStateOf(12f) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showRowActionsBottomSheet by remember { mutableStateOf(false) }
-    var halfWidthOddRows by remember { mutableStateOf<List<String>>(emptyList()) }
     var ocrDuplicateSubtotalCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showUnclassifiedBlockDialog by remember { mutableStateOf(false) }
+    var showUndeterminedCategoryDialog by remember { mutableStateOf(false) }
+    var showIncompleteRowDialog by remember { mutableStateOf(false) }
+    var showValidationMismatchDialog by remember { mutableStateOf(false) }
+    // 取引日列の再アラインメントが取れなかった場合の要確認警告（強制ブロックはしない）
+    var showDateAlignmentWarning by remember { mutableStateOf(false) }
+    var showReviewListDialog by remember { mutableStateOf(false) }
+    var showLowConfidenceConfirmDialog by remember { mutableStateOf(false) }
+
+    // 月データの保存処理（通常の「決定」／確信度低確認ダイアログの両方から呼ばれる）
+    val performSave: () -> Unit = {
+        scope.launch {
+            saveMonthData(
+                database = database,
+                year = workingEraYear,
+                month = selectedMonth,
+                allSheetsData = allSheetsData
+            )
+
+            // カテゴリ再計算を実行
+            com.example.greenframeocr.util.CategoryRecalculator.recalculateMonthlyCategories(
+                dao = database.receiptDao(),
+                year = workingEraYear,
+                month = selectedMonth
+            )
+
+            // データ再ロード
+            loadMonthData(
+                database = database,
+                year = workingEraYear,
+                month = selectedMonth,
+                onDataLoaded = { sheets, sheetsData ->
+                    totalSheets = sheets
+                    allSheetsData = sheetsData
+                    originalAllSheetsData = sheetsData
+                }
+            )
+
+            viewMode = ViewMode.VIEW
+            selectedRowIndex = -1
+        }
+    }
 
     // カメラ表示状態
     var showCamera by remember { mutableStateOf(false) }
@@ -95,12 +165,12 @@ fun ReceiptInputScreen(
     val appPreferences = remember { com.example.greenframeocr.data.AppPreferences(context) }
     var fixYearMonth by remember { mutableStateOf(appPreferences.fixYearMonth) }
 
-    // 初回ロード
-    LaunchedEffect(selectedMonth) {
+    // 初回ロード（月・作業年のいずれかが変わったら再ロード）
+    LaunchedEffect(selectedMonth, workingEraYear) {
         if (viewMode == ViewMode.VIEW) {
             loadMonthData(
                 database = database,
-                year = eraYear,
+                year = workingEraYear,
                 month = selectedMonth,
                 onDataLoaded = { sheets, sheetsData ->
                     totalSheets = sheets
@@ -112,6 +182,57 @@ fun ReceiptInputScreen(
         }
     }
 
+    // 作業年切替ダイアログ（年表示バッジをタップした時）
+    if (showEraYearDialog) {
+        var tempEraYear by remember(showEraYearDialog) { mutableIntStateOf(workingEraYear) }
+        AlertDialog(
+            onDismissRequest = { showEraYearDialog = false },
+            title = { Text("作業年の切替") },
+            text = {
+                Column {
+                    Text(
+                        "JA購買伝票・JA預金・レシートの初期表示年が変わります。",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IconButton(onClick = { if (tempEraYear > 1) tempEraYear-- }) {
+                            Text("-", fontSize = 24.sp)
+                        }
+                        Text(
+                            text = "令和${tempEraYear}年",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(100.dp),
+                            textAlign = TextAlign.Center
+                        )
+                        IconButton(onClick = { tempEraYear++ }) {
+                            Text("+", fontSize = 24.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    workingEraYear = tempEraYear
+                    appPreferences.eraYear = tempEraYear
+                    showEraYearDialog = false
+                }) {
+                    Text("切替")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEraYearDialog = false }) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
+
     // 伝票削除確認ダイアログ
     if (ocrDuplicateSubtotalCategories.isNotEmpty()) {
         AlertDialog(
@@ -119,7 +240,7 @@ fun ReceiptInputScreen(
             title = { Text("OCR読み取りエラー") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("以下の小計カテゴリが複数検出されました。\n撮影条件を確認して再撮影してください。")
+                    Text("以下の小計カテゴリが重複しています（同じ伝票内、または他の伝票と重複）。\n同じ伝票を重複して撮影していないか確認し、再撮影してください。")
                     Spacer(modifier = Modifier.height(4.dp))
                     ocrDuplicateSubtotalCategories.forEach { cat ->
                         Text("・$cat", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
@@ -142,27 +263,6 @@ fun ReceiptInputScreen(
         )
     }
 
-    if (halfWidthOddRows.isNotEmpty()) {
-        AlertDialog(
-            onDismissRequest = { halfWidthOddRows = emptyList() },
-            title = { Text("半角文字エラー") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("以下の商品名に半角文字が奇数含まれています。\n2文字ひとまとまり（kg・cm等）になるよう修正してください。")
-                    Spacer(modifier = Modifier.height(4.dp))
-                    halfWidthOddRows.forEach { name ->
-                        Text("・$name", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { halfWidthOddRows = emptyList() }) {
-                    Text("OK")
-                }
-            }
-        )
-    }
-
     if (showUnclassifiedBlockDialog) {
         AlertDialog(
             onDismissRequest = { showUnclassifiedBlockDialog = false },
@@ -171,6 +271,174 @@ fun ReceiptInputScreen(
             confirmButton = {
                 TextButton(onClick = { showUnclassifiedBlockDialog = false }) {
                     Text("OK")
+                }
+            }
+        )
+    }
+
+    if (showIncompleteRowDialog) {
+        AlertDialog(
+            onDismissRequest = { showIncompleteRowDialog = false },
+            title = { Text("入力が不完全な行があります") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text("税込金額が入力されているのに、取引日または商品名が空欄の行があります。")
+                    incompleteRows.forEach { (sheetNum, row) ->
+                        val missing = buildList {
+                            if (row.date.isBlank()) add("取引日")
+                            if (row.productName.isBlank()) add("商品名")
+                        }.joinToString("・")
+                        Text(
+                            "・${sheetNum}枚目 ${row.rowNumber}行目（${missing}が空欄、¥${"%,d".format(row.amount)}）",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showIncompleteRowDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    if (showUndeterminedCategoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showUndeterminedCategoryDialog = false },
+            title = { Text("小計行が見つからない行があります") },
+            text = {
+                Text(
+                    "この先に小計行が見つからないため、カテゴリを確定できない行があります。\n" +
+                        "小計は必ず伝票に印字されているはずなので、2枚目以降の伝票を撮り忘れていないか" +
+                        "ご確認ください。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showUndeterminedCategoryDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    if (showValidationMismatchDialog) {
+        AlertDialog(
+            onDismissRequest = { showValidationMismatchDialog = false },
+            title = { Text("小計・合計が一致していません") },
+            text = {
+                Text(
+                    "入力された小計・合計の金額が、明細行の合計と一致していません。\n" +
+                        "画面下の「小計・合計の検証」で赤字表示になっている項目を確認・修正してから" +
+                        "決定してください。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showValidationMismatchDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    if (showDateAlignmentWarning) {
+        AlertDialog(
+            onDismissRequest = { showDateAlignmentWarning = false },
+            title = { Text("取引日をご確認ください") },
+            text = {
+                Text(
+                    "取引日列の読み取りを確認できませんでした。まれに月がずれて読み取られる" +
+                        "ことがあるため、今回撮影した伝票の各行の取引日をご確認ください。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showDateAlignmentWarning = false }) {
+                    Text("確認しました")
+                }
+            }
+        )
+    }
+
+    if (showReviewListDialog) {
+        AlertDialog(
+            onDismissRequest = { showReviewListDialog = false },
+            title = { Text("要確認一覧（${reviewRows.size}件）") },
+            text = {
+                if (reviewRows.isEmpty()) {
+                    Text("要確認の行はありません。")
+                } else {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Geminiの読み取り確信度が低い行です。タップすると該当の伝票へ移動します。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        reviewRows.forEach { (sheetNum, index, row) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        currentSheetNumber = sheetNum
+                                        selectedRowIndex = index
+                                        showReviewListDialog = false
+                                    }
+                                    .padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("${sheetNum}枚目 ${row.date}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(row.productName, fontSize = 14.sp)
+                                }
+                                Text("¥${"%,d".format(row.amount)}", fontSize = 14.sp)
+                            }
+                            Divider()
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showReviewListDialog = false }) {
+                    Text("閉じる")
+                }
+            }
+        )
+    }
+
+    if (showLowConfidenceConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showLowConfidenceConfirmDialog = false },
+            title = { Text("確信度の低い行があります") },
+            text = {
+                Text(
+                    "Geminiの読み取り確信度が低い行が${reviewRows.size}件あります。" +
+                        "内容をご確認の上、問題なければそのまま保存できます。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    allSheetsData = allSheetsData.mapValues { (_, rows) ->
+                        rows.map { if (it.ocrConfidence == "low") it.copy(ocrConfidence = null) else it }
+                    }
+                    showLowConfidenceConfirmDialog = false
+                    performSave()
+                }) {
+                    Text("確認して保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showLowConfidenceConfirmDialog = false
+                    showReviewListDialog = true
+                }) {
+                    Text("一覧を確認する")
                 }
             }
         )
@@ -224,55 +492,119 @@ fun ReceiptInputScreen(
 
     // カメラとデータグリッドを排他的に表示
     if (showCamera) {
+        // Phase5: 選択セルがあれば行範囲クロップ再OCRの対象を算出（CameraView側でAPI呼び出しを分岐する）
+        val partialReOcrTarget = computePartialReOcrTarget(currentReceiptRows)
         CameraView(
-            onOcrComplete = { parsedRows ->
-                val result = convertParsedRowsToRowData(
-                    parsedRows = parsedRows,
-                    sheetNumber = currentSheetNumber,
-                    fixYearMonth = fixYearMonth,
-                    defaultYear = eraYear,
-                    defaultMonth = selectedMonth
-                )
-                if (result.duplicatedSubtotalCategories.isNotEmpty()) {
-                    ocrDuplicateSubtotalCategories = result.duplicatedSubtotalCategories
-                    showCamera = false  // CameraView をリセットして再撮影できるようにする
-                    return@CameraView
-                }
-                val ocrRows = result.rows
-                val currentRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
+            geminiApiKey = appPreferences.geminiApiKey,
+            productMasterDao = database.productMasterDao(),
+            partialReOcrTarget = partialReOcrTarget,
+            onTokenUsage = { stats ->
+                stats?.let { appPreferences.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
+            },
+            onOcrComplete = { outcome ->
+                when (outcome) {
+                    is OcrRunResult.Full -> {
+                        val result = convertParsedRowsToRowData(
+                            parsedRows = outcome.parsedRows,
+                            sheetNumber = currentSheetNumber,
+                            fixYearMonth = fixYearMonth,
+                            defaultYear = workingEraYear,
+                            defaultMonth = selectedMonth
+                        )
+                        // 他の伝票（同じ月内）で既に検出済みの小計カテゴリと重複していないかチェック。
+                        // この伝票は月次請求明細の1ページであり、同じ小計カテゴリ（一般購買/給油所/農業機械）は
+                        // 月に1回しか出現しない仕様のため、他の伝票との重複は撮影ミス（同じ紙の重複撮影等）を
+                        // 強く示唆する（正当な複数枚パターンでの誤検知はない）。
+                        val otherSheetsSubtotalCategories = allSheetsData
+                            .filterKeys { it != currentSheetNumber }
+                            .values.flatten()
+                            .filter { it.isSubtotal }
+                            .map { it.category }
+                            .toSet()
+                        val crossSheetDuplicateCategories = result.rows
+                            .filter { it.isSubtotal && it.category in otherSheetsSubtotalCategories }
+                            .map { it.category }
+                            .toSet()
+                        val allDuplicateCategories = result.duplicatedSubtotalCategories + crossSheetDuplicateCategories
+                        if (allDuplicateCategories.isNotEmpty()) {
+                            ocrDuplicateSubtotalCategories = allDuplicateCategories
+                            showCamera = false  // CameraView をリセットして再撮影できるようにする
+                            return@CameraView
+                        }
+                        val ocrRows = result.rows
+                        val currentRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
 
-                // 選択されたセルがあるかチェック
-                val hasSelectedCells = currentRows.any { it.selectedCells.isNotEmpty() }
+                        // 選択されたセルがあるかチェック
+                        val hasSelectedCells = currentRows.any { it.selectedCells.isNotEmpty() }
 
-                val updatedRows = if (hasSelectedCells) {
-                    // 選択セルのみを更新
-                    currentRows.mapIndexed { index, row ->
-                        if (row.selectedCells.isNotEmpty() && index < ocrRows.size) {
-                            val ocrRow = ocrRows[index]
-                            val newDate = if (row.selectedCells.contains(CellType.DATE)) ocrRow.date else row.date
-                            val newProductName = if (row.selectedCells.contains(CellType.PRODUCT_NAME)) ocrRow.productName else row.productName
-                            val newAmount = if (row.selectedCells.contains(CellType.AMOUNT)) ocrRow.amount else row.amount
-                            row.copy(
-                                date = newDate,
-                                productName = newProductName,
-                                amount = newAmount,
-                                selectedCells = emptySet()
-                            )
+                        val updatedRows = if (hasSelectedCells) {
+                            // 選択セルのみを更新
+                            currentRows.mapIndexed { index, row ->
+                                if (row.selectedCells.isNotEmpty() && index < ocrRows.size) {
+                                    val ocrRow = ocrRows[index]
+                                    val newDate = if (row.selectedCells.contains(CellType.DATE)) ocrRow.date else row.date
+                                    val newProductName = if (row.selectedCells.contains(CellType.PRODUCT_NAME)) ocrRow.productName else row.productName
+                                    val newAmount = if (row.selectedCells.contains(CellType.AMOUNT)) ocrRow.amount else row.amount
+                                    val newProductMasterId = if (row.selectedCells.contains(CellType.PRODUCT_NAME)) ocrRow.productMasterId else row.productMasterId
+                                    row.copy(
+                                        date = newDate,
+                                        productName = newProductName,
+                                        amount = newAmount,
+                                        productMasterId = newProductMasterId,
+                                        selectedCells = emptySet()
+                                    )
+                                } else {
+                                    row.copy(selectedCells = emptySet())
+                                }
+                            }
                         } else {
-                            row.copy(selectedCells = emptySet())
+                            // 選択セルがない場合は全体を更新
+                            ocrRows
+                        }
+
+                        // データを更新してカテゴリを再計算
+                        val tempSheetsData = allSheetsData.toMutableMap().apply {
+                            put(currentSheetNumber, updatedRows)
+                        }
+                        allSheetsData = recalculateCategoriesInMemory(tempSheetsData)
+                        showCamera = false
+                        if (!outcome.dateColumnAligned) {
+                            showDateAlignmentWarning = true
                         }
                     }
-                } else {
-                    // 選択セルがない場合は全体を更新
-                    ocrRows
+                    is OcrRunResult.Partial -> {
+                        // 行範囲クロップ再OCR：選択セルだけをその場でマージする
+                        // （aligned=true の結果しかここに来ないため、日付列アラインメント警告は対象外）
+                        val currentRows = allSheetsData[currentSheetNumber] ?: emptyReceiptRows(currentSheetNumber)
+                        val updatedRows = currentRows.mapIndexed { index, row ->
+                            if (index in outcome.rowRange && row.selectedCells.isNotEmpty()) {
+                                val ocrRow = outcome.rows[index - outcome.rowRange.first]
+                                val newDate = if (row.selectedCells.contains(CellType.DATE))
+                                    formatOcrDate(ocrRow.date, fixYearMonth, workingEraYear, selectedMonth) else row.date
+                                val newProductName = if (row.selectedCells.contains(CellType.PRODUCT_NAME))
+                                    (ocrRow.productName ?: "") else row.productName
+                                val newAmount = if (row.selectedCells.contains(CellType.AMOUNT))
+                                    (ocrRow.amount ?: 0) else row.amount
+                                val newProductMasterId = if (row.selectedCells.contains(CellType.PRODUCT_NAME))
+                                    ocrRow.productMasterId else row.productMasterId
+                                row.copy(
+                                    date = newDate,
+                                    productName = newProductName,
+                                    amount = newAmount,
+                                    productMasterId = newProductMasterId,
+                                    selectedCells = emptySet()
+                                )
+                            } else {
+                                row.copy(selectedCells = emptySet())
+                            }
+                        }
+                        val tempSheetsData = allSheetsData.toMutableMap().apply {
+                            put(currentSheetNumber, updatedRows)
+                        }
+                        allSheetsData = recalculateCategoriesInMemory(tempSheetsData)
+                        showCamera = false
+                    }
                 }
-
-                // データを更新してカテゴリを再計算
-                val tempSheetsData = allSheetsData.toMutableMap().apply {
-                    put(currentSheetNumber, updatedRows)
-                }
-                allSheetsData = recalculateCategoriesInMemory(tempSheetsData)
-                showCamera = false
             },
             onCancel = {
                 showCamera = false
@@ -293,6 +625,11 @@ fun ReceiptInputScreen(
                         }
                     },
                     actions = {
+                        FontSizeControl(
+                            fontSize = fontSize,
+                            onDecrease = { fontSize = (fontSize - 1f).coerceAtLeast(10f) },
+                            onIncrease = { fontSize = (fontSize + 1f).coerceAtMost(20f) }
+                        )
                         Text(
                             text = if (viewMode == ViewMode.EDIT) "編集" else "閲覧",
                             fontSize = 18.sp,
@@ -333,13 +670,16 @@ fun ReceiptInputScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 年表示（目立つように）
+                    // 年表示（目立つように・タップで作業年を切替可能）
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = MaterialTheme.shapes.small
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.clickable(enabled = viewMode == ViewMode.VIEW) {
+                            showEraYearDialog = true
+                        }
                     ) {
                         Text(
-                            text = "令和${eraYear}年",
+                            text = "令和${workingEraYear}年",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -357,7 +697,7 @@ fun ReceiptInputScreen(
                             scope.launch {
                                 loadMonthData(
                                     database = database,
-                                    year = eraYear,
+                                    year = workingEraYear,
                                     month = selectedMonth,
                                     onDataLoaded = { sheets, sheetsData ->
                                         totalSheets = sheets
@@ -468,13 +808,23 @@ fun ReceiptInputScreen(
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.error
                             ),
-                            enabled = totalSheets > 0
+                            // 途中の伝票を消すと後続が繰り上がり、物理ページと伝票番号が
+                            // ズレて分からなくなるため、最後の伝票のみ削除可能とする
+                            enabled = totalSheets > 0 && currentSheetNumber == totalSheets
                         ) {
                             Icon(Icons.Default.Delete, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("伝票削除")
                         }
                     }
+                }
+
+                if (viewMode == ViewMode.EDIT && totalSheets > 0 && currentSheetNumber != totalSheets) {
+                    Text(
+                        text = "伝票の削除は最後（${totalSheets}枚目）のみ可能です。",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 // 3行目: OCR/直接、撮影
@@ -513,7 +863,7 @@ fun ReceiptInputScreen(
                     }
                 }
 
-                // 4行目: 年月固定、フォントサイズ、再計算
+                // 4行目: 年月固定、再計算（文字サイズはタイトルバー）
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -536,40 +886,6 @@ fun ReceiptInputScreen(
                         )
                         Spacer(Modifier.width(4.dp))
                         Text("年月固定", fontSize = 13.sp)
-                    }
-
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    // フォントサイズコントロール
-                    Row(
-                        modifier = Modifier
-                            .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("文字", fontSize = 12.sp)
-                        IconButton(
-                            onClick = { fontSize = (fontSize - 1f).coerceAtLeast(10f) },
-                            enabled = fontSize > 10f,
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Text("-", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Text(
-                            text = "${fontSize.toInt()}",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.width(20.dp),
-                            textAlign = TextAlign.Center
-                        )
-                        IconButton(
-                            onClick = { fontSize = (fontSize + 1f).coerceAtMost(20f) },
-                            enabled = fontSize < 20f,
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Text("+", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
                     }
 
                     Spacer(modifier = Modifier.weight(1f))
@@ -616,7 +932,7 @@ fun ReceiptInputScreen(
                         }
                         allSheetsData = recalculateCategoriesInMemory(tempSheetsData)
                     },
-                    defaultYear = eraYear,
+                    defaultYear = workingEraYear,
                     defaultMonth = selectedMonth,
                     productMasterDao = database.productMasterDao(),
                     subtotalFlags = calculateSubtotalFlags(allSheetsData),
@@ -629,7 +945,9 @@ fun ReceiptInputScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (validationResult.isValid && validationResult.calculatedTotal != 0)
+                            containerColor = if (undeterminedRows.isNotEmpty())
+                                MaterialTheme.colorScheme.errorContainer
+                            else if (validationResult.isValid && validationResult.calculatedTotal != 0)
                                 MaterialTheme.colorScheme.primaryContainer
                             else if (!validationResult.isValid)
                                 MaterialTheme.colorScheme.errorContainer
@@ -649,6 +967,30 @@ fun ReceiptInputScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
+
+                            // カテゴリ未定（この先に小計行が見つからない）の警告
+                            if (undeterminedRows.isNotEmpty()) {
+                                Divider(modifier = Modifier.padding(vertical = 4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "⚠ カテゴリ未定（${undeterminedRows.size}行、小計行が見つからない）",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    Text(
+                                        text = "${"%,d".format(undeterminedRows.sumOf { it.amount })} 円",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                            }
 
                             // カテゴリ別小計の検証
                             if (validationResult.categoryBreakdowns.isNotEmpty()) {
@@ -821,6 +1163,18 @@ fun ReceiptInputScreen(
                 if (viewMode == ViewMode.EDIT) {
                     Divider()
 
+                    if (reviewRows.isNotEmpty()) {
+                        OutlinedButton(
+                            onClick = { showReviewListDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFFF57C00)
+                            )
+                        ) {
+                            Text("要確認一覧を見る（${reviewRows.size}件）")
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -834,7 +1188,7 @@ fun ReceiptInputScreen(
                                 scope.launch {
                                     loadMonthData(
                                         database = database,
-                                        year = eraYear,
+                                        year = workingEraYear,
                                         month = selectedMonth,
                                         onDataLoaded = { sheets, sheetsData ->
                                             totalSheets = sheets
@@ -851,12 +1205,8 @@ fun ReceiptInputScreen(
 
                         Button(
                             onClick = {
-                                val invalidNames = allSheetsData.values.flatten()
-                                    .filter { !it.isSubtotal && !it.isTotalRow && it.productName.isNotBlank() }
-                                    .filter { countFullWidthEquivalent(it.productName) % 1.0 != 0.0 }
-                                    .map { it.productName }
-                                if (invalidNames.isNotEmpty()) {
-                                    halfWidthOddRows = invalidNames
+                                if (incompleteRows.isNotEmpty()) {
+                                    showIncompleteRowDialog = true
                                     return@Button
                                 }
                                 val hasUnclassified = allSheetsData.values.flatten()
@@ -865,35 +1215,21 @@ fun ReceiptInputScreen(
                                     showUnclassifiedBlockDialog = true
                                     return@Button
                                 }
-                                scope.launch {
-                                    saveMonthData(
-                                        database = database,
-                                        year = eraYear,
-                                        month = selectedMonth,
-                                        allSheetsData = allSheetsData
-                                    )
-
-                                    // カテゴリ再計算を実行
-                                    com.example.greenframeocr.util.CategoryRecalculator.recalculateMonthlyCategories(
-                                        dao = database.receiptDao(),
-                                        year = eraYear,
-                                        month = selectedMonth
-                                    )
-
-                                    // データ再ロード
-                                    loadMonthData(
-                                        database = database,
-                                        year = eraYear,
-                                        month = selectedMonth,
-                                        onDataLoaded = { sheets, sheetsData ->
-                                            totalSheets = sheets
-                                            allSheetsData = sheetsData
-                                            originalAllSheetsData = sheetsData
-                                        }
-                                    )
-
-                                    viewMode = ViewMode.VIEW
+                                val hasUndetermined = allSheetsData.values.flatten()
+                                    .any { !it.isSubtotal && !it.isTotalRow && it.amount != 0 && it.category == "未定" }
+                                if (hasUndetermined) {
+                                    showUndeterminedCategoryDialog = true
+                                    return@Button
                                 }
+                                if (hasUnresolvedMismatch(validateAllSheetsData(allSheetsData))) {
+                                    showValidationMismatchDialog = true
+                                    return@Button
+                                }
+                                if (reviewRows.isNotEmpty()) {
+                                    showLowConfidenceConfirmDialog = true
+                                    return@Button
+                                }
+                                performSave()
                             },
                             modifier = Modifier.weight(1f)
                         ) {
@@ -1137,6 +1473,9 @@ private fun InputModeToggle(
     }
 }
 
+/** 要確認バッジ列の固定幅（ヘッダー・データ行で揃える） */
+private val BADGE_COLUMN_WIDTH = 16.dp
+
 /**
  * データグリッド（動的列幅版）
  */
@@ -1166,17 +1505,19 @@ private fun DataGrid(
             .fillMaxWidth()
             .border(1.dp, MaterialTheme.colorScheme.outline)
     ) {
-        // ヘッダー行
+        // ヘッダー行（先頭に要確認バッジ列と幅を揃えるための固定スペーサー）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .padding(vertical = 8.dp)
-                .horizontalScroll(scrollState)
         ) {
-            GridHeaderCell("取引日", dateWidth, fontSize)
-            GridHeaderCell("商品名", productNameWidth, fontSize)
-            GridHeaderCell("税込金額", amountWidth, fontSize)
+            Spacer(modifier = Modifier.width(BADGE_COLUMN_WIDTH))
+            Row(modifier = Modifier.horizontalScroll(scrollState)) {
+                GridHeaderCell("取引日", dateWidth, fontSize)
+                GridHeaderCell("商品名", productNameWidth, fontSize)
+                GridHeaderCell("税込金額", amountWidth, fontSize)
+            }
         }
 
         Divider()
@@ -1314,7 +1655,7 @@ private fun DataRow(
         row.isTotalRow -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f) // 合計行は水色背景
         row.isSubtotal -> Color(0xFFE8F5E9) // 小計行は薄い緑背景
         isAfterSubtotal -> Color(0xFFF5F5F5) // 小計後の1行は薄いグレーアウト（編集不可）
-        isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        isSelected -> Color(0xFFBBDEFB) // 選択中の行は水色（テーマの緑系primaryContainerだと小計行の薄緑と紛らわしいため固定色）
         else -> Color.Transparent
     }
 
@@ -1322,50 +1663,70 @@ private fun DataRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(rowBackgroundColor)
-            .padding(vertical = 8.dp)
-            .horizontalScroll(scrollState),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        GridDataCell(
-            text = row.date,
-            width = dateWidth,
-            fontSize = fontSize,
-            textAlign = TextAlign.Center,
-            isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !isAfterSubtotal,
-            backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.DATE))
-                selectedCellColor else Color.Transparent,
-            onClick = { onCellClick(CellType.DATE) },
-            onLongClick = onRowClick
-        )
+        // 要確認バッジ（Geminiの自己申告confidenceが"low"の行のみ。強制ブロックはせず参考表示に留める）
+        Box(
+            modifier = Modifier
+                .width(BADGE_COLUMN_WIDTH),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(
+                        color = if (row.ocrConfidence == "low") Color(0xFFFFC107) else Color.Transparent,
+                        shape = androidx.compose.foundation.shape.CircleShape
+                    )
+            )
+        }
 
-        GridDataCell(
-            text = when {
-                row.isTotalRow -> "■　${row.productName}" // 合計行
-                row.isSubtotal && row.subtotalCategory != null -> "＊　小計（　${row.subtotalCategory.displayName}　　　　　）"
-                row.isSubtotal -> "[小計] ${row.productName}"
-                else -> row.productName
-            },
-            width = productNameWidth,
-            fontSize = fontSize,
-            textAlign = TextAlign.Start,
-            isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !row.isTotalRow && !isAfterSubtotal,
-            backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.PRODUCT_NAME))
-                selectedCellColor else Color.Transparent,
-            onClick = { onCellClick(CellType.PRODUCT_NAME) },
-            onLongClick = onRowClick
-        )
+        Row(
+            modifier = Modifier.horizontalScroll(scrollState),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GridDataCell(
+                text = row.date,
+                width = dateWidth,
+                fontSize = fontSize,
+                textAlign = TextAlign.Center,
+                isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !isAfterSubtotal,
+                backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.DATE))
+                    selectedCellColor else Color.Transparent,
+                onClick = { onCellClick(CellType.DATE) },
+                onLongClick = onRowClick
+            )
 
-        GridDataCell(
-            text = if (row.amount != 0) "%,d".format(row.amount) else "",
-            width = amountWidth,
-            fontSize = fontSize,
-            textAlign = TextAlign.End,
-            isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !isAfterSubtotal,
-            backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.AMOUNT))
-                selectedCellColor else Color.Transparent,
-            onClick = { onCellClick(CellType.AMOUNT) },
-            onLongClick = { if (!row.isTotalRow) onRowClick() }
-        )
+            GridDataCell(
+                text = when {
+                    row.isTotalRow -> "■　${row.productName}" // 合計行
+                    row.isSubtotal && row.subtotalCategory != null -> "＊　小計（　${row.subtotalCategory.displayName}　　　　　）"
+                    row.isSubtotal -> "[小計] ${row.productName}"
+                    else -> row.productName
+                },
+                width = productNameWidth,
+                fontSize = fontSize,
+                textAlign = TextAlign.Start,
+                isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !row.isTotalRow && !isAfterSubtotal,
+                backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.PRODUCT_NAME))
+                    selectedCellColor else Color.Transparent,
+                onClick = { onCellClick(CellType.PRODUCT_NAME) },
+                onLongClick = onRowClick
+            )
+
+            GridDataCell(
+                text = if (row.amount != 0) "%,d".format(row.amount) else "",
+                width = amountWidth,
+                fontSize = fontSize,
+                textAlign = TextAlign.End,
+                isClickable = viewMode == ViewMode.EDIT && (inputMode == InputMode.DIRECT || inputMode == InputMode.OCR) && !isAfterSubtotal,
+                backgroundColor = if (inputMode == InputMode.OCR && row.selectedCells.contains(CellType.AMOUNT))
+                    selectedCellColor else Color.Transparent,
+                onClick = { onCellClick(CellType.AMOUNT) },
+                onLongClick = { if (!row.isTotalRow) onRowClick() }
+            )
+        }
     }
 }
 
@@ -1427,54 +1788,130 @@ private fun GridDataCell(
  */
 @Composable
 private fun CameraView(
-    onOcrComplete: (List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>) -> Unit,
+    geminiApiKey: String,
+    productMasterDao: com.example.greenframeocr.data.ProductMasterDao,
+    partialReOcrTarget: PartialReOcrTarget?,
+    onTokenUsage: (com.example.greenframeocr.util.GeminiReceiptClient.AiUsageStats?) -> Unit = {},
+    onOcrComplete: (OcrRunResult) -> Unit,
     onCancel: () -> Unit
 ) {
     val ocrScope = rememberCoroutineScope()
     var isProcessingOcr by remember { mutableStateOf(false) }
+    // isValidShape() がNGだった撮影結果。nullでない間はTransformPreviewScreenを表示する
+    var previewDetectionResult by remember {
+        mutableStateOf<com.example.greenframeocr.util.GreenFrameDetector.DetectionResult?>(null)
+    }
+    // OCR（Gemini API呼び出し）失敗時のエラーメッセージと、再試行用に保持する撮影済み画像
+    var ocrError by remember {
+        mutableStateOf<Pair<String, com.example.greenframeocr.util.GreenFrameDetector.DetectionResult>?>(null)
+    }
+
+    suspend fun runFullOcr(dewarped: android.graphics.Bitmap): OcrRunResult.Full {
+        val geminiResult = com.example.greenframeocr.util.GeminiReceiptClient
+            .parseJaSheetFromImage(dewarped, geminiApiKey)
+        onTokenUsage(geminiResult.usageStats)
+        if (!geminiResult.dateColumnAligned) {
+            android.util.Log.w("ReceiptInputScreen", "取引日列のアラインメントが取れませんでした（要確認）")
+        }
+        val parsed = com.example.greenframeocr.util.JaSheetOcrMapper.applyProductMasterCorrection(
+            com.example.greenframeocr.util.JaSheetOcrMapper.mapGeminiResultToParsedRows(geminiResult),
+            productMasterDao
+        )
+        return OcrRunResult.Full(parsed, geminiResult.dateColumnAligned)
+    }
+
+    fun runOcr(detectionResult: com.example.greenframeocr.util.GreenFrameDetector.DetectionResult) {
+        isProcessingOcr = true
+        ocrScope.launch {
+            try {
+                val dewarped = detectionResult.dewarpedBitmap
+                val outcome = if (dewarped == null) {
+                    OcrRunResult.Full(emptyList(), dateColumnAligned = true)
+                } else if (partialReOcrTarget != null) {
+                    // Phase5: 選択セルの行範囲だけをクロップして再送信
+                    val partial = com.example.greenframeocr.util.GeminiReceiptClient.parseJaSheetPartial(
+                        dewarpedBitmap = dewarped,
+                        apiKey = geminiApiKey,
+                        rowRange = partialReOcrTarget.rowRange,
+                        needsDate = CellType.DATE in partialReOcrTarget.cellTypes,
+                        needsMain = CellType.PRODUCT_NAME in partialReOcrTarget.cellTypes ||
+                            CellType.AMOUNT in partialReOcrTarget.cellTypes
+                    )
+                    onTokenUsage(partial.usageStats)
+                    if (partial.aligned) {
+                        val mapped = mapPartialResultToParsedRows(partial, partialReOcrTarget.rowRange)
+                        val corrected = com.example.greenframeocr.util.JaSheetOcrMapper
+                            .applyProductMasterCorrection(mapped, productMasterDao)
+                        OcrRunResult.Partial(partialReOcrTarget.rowRange, corrected)
+                    } else {
+                        // 行数不一致 → 伝票全体再送信にフォールバック
+                        android.util.Log.w("ReceiptInputScreen", "部分再OCRの行数が一致しなかったため、伝票全体を再送信します")
+                        runFullOcr(dewarped)
+                    }
+                } else {
+                    runFullOcr(dewarped)
+                }
+                onOcrComplete(outcome)
+            } catch (e: Exception) {
+                ocrError = (e.message ?: "OCR処理エラー") to detectionResult
+            } finally {
+                isProcessingOcr = false
+            }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        CameraScreenForOcr(
-            onOcrComplete = { detectionResult ->
-                isProcessingOcr = true
-                ocrScope.launch {
-                    try {
-                        val dewarped = detectionResult.dewarpedBitmap
-                        val parsed = if (dewarped != null) {
-                            val mmRatio = dewarped.width / 203.0
-                            val ocrResult = com.example.greenframeocr.util.OCRProcessor.processUnderlayingBase(dewarped, mmRatio)
-                            ocrResult.rowsWithCategories.mapIndexed { index, (row, category) ->
-                                val isSubtotal     = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.SUBTOTAL
-                                val isMonthlyTotal = row.rowType == com.example.greenframeocr.util.UnderlyingBaseProcessor.RowType.MONTHLY_TOTAL
-                                val amount = if (isSubtotal || isMonthlyTotal) row.categorySum else row.amount
-                                com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow(
-                                    rowIndex = index, date = row.date, productName = row.itemName,
-                                    branch = null, quantity = row.quantity?.toIntOrNull(),
-                                    unitPrice = null, amount = amount,
-                                    isAmountValid = amount != null,
-                                    category = category, isSubtotal = isSubtotal,
-                                    isMonthlyTotal = isMonthlyTotal
-                                )
-                            }
-                        } else emptyList()
-                        onOcrComplete(parsed)
-                    } finally {
-                        isProcessingOcr = false
+        val preview = previewDetectionResult
+        when {
+            // isProcessingOcr を最優先で分岐しないと、送信直後にCameraScreenForOcrへ
+            // 一瞬戻ってライブカメラ映像が見えてしまう（内部でcameraViewModel.resetToPreview()
+            // が走るため）。OCR処理中は常にこのスピナーを表示する。
+            isProcessingOcr -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("OCR処理中...")
                     }
                 }
-            },
-            onCancel = onCancel,
-            modifier = Modifier.fillMaxSize()
-        )
-
-        if (isProcessingOcr) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
+            }
+            ocrError != null -> {
+                val (message, failedResult) = ocrError!!
+                OcrErrorScreen(
+                    message = message,
+                    onRetry = {
+                        ocrError = null
+                        runOcr(failedResult)
+                    },
+                    onRetake = { ocrError = null },
+                    onCancel = onCancel
+                )
+            }
+            preview != null -> {
+                TransformPreviewScreen(
+                    detectionResult = preview,
+                    onSend = {
+                        previewDetectionResult = null
+                        runOcr(preview)
+                    },
+                    onRetry = { previewDetectionResult = null }
+                )
+            }
+            else -> {
+                CameraScreenForOcr(
+                    onOcrComplete = { detectionResult ->
+                        if (com.example.greenframeocr.util.GreenFrameDetector.isValidShape(detectionResult)) {
+                            runOcr(detectionResult)
+                        } else {
+                            previewDetectionResult = detectionResult
+                        }
+                    },
+                    onCancel = onCancel,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         }
 
@@ -1548,7 +1985,12 @@ data class ReceiptRowData(
     val category: String = "未分類",  // データベースから読み込まれたカテゴリ
     // V3: 学習登録用
     val originalOcrName: String? = null,  // OCR取得時の原本（編集不可）
-    val productMasterId: Long? = null     // 商品マスタID（確定時）
+    val productMasterId: Long? = null,    // 商品マスタID（確定時）
+    val ocrConfidence: String? = null,    // Gemini自己申告の確信度（"high"/"medium"/"low"）
+    // AoiroChobo連携の externalId の材料（receipt_items.uuid にそのまま保存される）。
+    // 行オブジェクトが持つので「挿入」「削除」のシフトでは行の内容に付いて動き、
+    // 保存の全DELETE→全INSERTを跨いでも変わらない。新しい空白行には新しい値が入る
+    val uuid: String = java.util.UUID.randomUUID().toString()
 )
 
 enum class CellType {
@@ -1562,6 +2004,70 @@ data class EditingCell(
     val row: ReceiptRowData,
     val cellType: CellType
 )
+
+/** グリッド上で選択中のセル群から算出した、部分再OCRの対象範囲（Phase5） */
+private data class PartialReOcrTarget(
+    val rowRange: IntRange,
+    val cellTypes: Set<CellType>
+)
+
+/** CameraView.runOcr() の結果。選択セルの有無で Full（伝票全体）/ Partial（行範囲クロップ）に分岐する */
+private sealed class OcrRunResult {
+    data class Full(
+        val parsedRows: List<com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow>,
+        val dateColumnAligned: Boolean
+    ) : OcrRunResult()
+
+    data class Partial(
+        val rowRange: IntRange,
+        val rows: List<com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow>
+    ) : OcrRunResult()
+}
+
+/** 合計行(21行目)のグリッドインデックス。GeminiReceiptClient の TOTAL_ROW_GRID_INDEX と対応 */
+private const val TOTAL_ROW_GRID_INDEX = 20
+
+/**
+ * currentRows の selectedCells から、部分再OCRの対象範囲を算出する。
+ * 選択なし、または合計行とデータ行が混在選択されている場合はnull（呼び出し側はFullパスにフォールバック）。
+ */
+private fun computePartialReOcrTarget(currentRows: List<ReceiptRowData>): PartialReOcrTarget? {
+    val selectedIndices = currentRows.indices.filter { currentRows[it].selectedCells.isNotEmpty() }
+    if (selectedIndices.isEmpty()) return null
+    val touchesTotalRow = selectedIndices.contains(TOTAL_ROW_GRID_INDEX)
+    val touchesDataRow = selectedIndices.any { it != TOTAL_ROW_GRID_INDEX }
+    if (touchesTotalRow && touchesDataRow) return null
+    return PartialReOcrTarget(
+        rowRange = selectedIndices.min()..selectedIndices.max(),
+        cellTypes = selectedIndices.flatMap { currentRows[it].selectedCells }.toSet()
+    )
+}
+
+/**
+ * GeminiReceiptClient.PartialJaSheetResult を ParsedRow リストへ変換する（部分再OCR用の軽量マッパー）。
+ * mapGeminiResultToParsedRows() と異なり、小計後の空白行挿入・カテゴリ再判定は行わない
+ * （部分マージでは category/isSubtotal は既存行のまま据え置く既存仕様のため不要）。
+ */
+private fun mapPartialResultToParsedRows(
+    partial: com.example.greenframeocr.util.GeminiReceiptClient.PartialJaSheetResult,
+    rowRange: IntRange
+): List<com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow> =
+    partial.rows.mapIndexed { i, row ->
+        com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow(
+            rowIndex = rowRange.first + i,
+            date = row.dateRaw,
+            productName = row.itemName,
+            branch = null,
+            quantity = row.quantity?.toInt(),
+            unitPrice = null,
+            amount = row.amount,
+            isAmountValid = row.amount != null,
+            category = "",
+            isSubtotal = false,
+            isMonthlyTotal = false,
+            confidence = row.confidence
+        )
+    }
 
 // ========== ユーティリティ関数 ==========
 
@@ -1636,6 +2142,32 @@ private fun tryStripRuleDigit(entered: Int, calculated: Int): Int? {
         }
     }
     return null
+}
+
+/**
+ * 小計・合計に「解消されていない」不一致があるかを判定する。
+ * カテゴリ別小計は、OCRが値を読み取れず入力値が0のまま（=未検出）の場合は対象外とする
+ * （小計行自体が紙面に印字されないカテゴリが存在するため、機械的なブロックは避ける。
+ * ただしその小計行自体が本当に見つからない場合は`hasUndetermined`側の別チェックで扱う）。
+ * 合計（1枚目に必ず印字される）は、入力値が0＝未検出のままでも不一致とみなす。
+ * 1枚目の合計欄が読み取れていない場合は、実際に読み取り漏れが起きているか、
+ * 撮り忘れたページがあるかのいずれかであり、機械的に見逃すべきではないため。
+ * `tryStripRuleDigit` で説明が付く「罫線補正で一致」ケースは、画面表示上は許容扱い
+ * （オレンジ表示）にしているため、ここでも不一致とはみなさない。
+ * 未分類カテゴリ（小計行自体が存在しない）は`hasUnclassified`側の別チェックで扱う。
+ */
+private fun hasUnresolvedMismatch(validationResult: ValidationResult): Boolean {
+    val categoryMismatch = validationResult.categoryBreakdowns.any { category ->
+        category.categoryName != "未分類" &&
+            category.enteredSubtotal != 0 &&
+            !category.isValid &&
+            tryStripRuleDigit(category.enteredSubtotal, category.calculatedSubtotal) == null
+    }
+    val totalMismatch = validationResult.totalBreakdown?.let { total ->
+        !total.isValid &&
+            tryStripRuleDigit(total.enteredTotal, total.calculatedTotal) == null
+    } ?: false
+    return categoryMismatch || totalMismatch
 }
 
 private fun validateAllSheetsData(allSheetsData: Map<Int, List<ReceiptRowData>>): ValidationResult {
@@ -2056,8 +2588,30 @@ private data class ParsedRowResult(
     val duplicatedSubtotalCategories: Set<String>
 )
 
+/**
+ * OCRの取引日生テキスト(6桁数字等)を "YY/MM/DD" 形式へ整形する。
+ * convertParsedRowsToRowData()（伝票全体の再構成）・部分再OCRのマージ処理の両方で使う共通ロジック。
+ */
+private fun formatOcrDate(
+    rawDate: String?,
+    fixYearMonth: Boolean,
+    defaultYear: Int,
+    defaultMonth: Int
+): String {
+    val digits = rawDate?.filter { it.isDigit() } ?: ""
+    return when {
+        fixYearMonth && digits.length >= 2 -> {
+            val day = digits.takeLast(2).toIntOrNull()?.coerceIn(1, 31) ?: 1
+            "%02d/%02d/%02d".format(defaultYear % 100, defaultMonth, day)
+        }
+        digits.length >= 6 ->
+            "${digits.substring(0, 2)}/${digits.substring(2, 4)}/${digits.substring(4, 6)}"
+        else -> rawDate ?: ""
+    }
+}
+
 private fun convertParsedRowsToRowData(
-    parsedRows: List<com.example.greenframeocr.viewmodel.OcrCaptureViewModel.ParsedRow>,
+    parsedRows: List<com.example.greenframeocr.util.JaSheetOcrMapper.ParsedRow>,
     sheetNumber: Int = 1,
     fixYearMonth: Boolean = false,
     defaultYear: Int = 7,
@@ -2075,16 +2629,7 @@ private fun convertParsedRowsToRowData(
 
     for (row in normalAndSubtotalRows) {
         // 取引日テキスト → フォーマット変換
-        val digits = row.date?.filter { it.isDigit() } ?: ""
-        val formattedDate = when {
-            fixYearMonth && digits.length >= 2 -> {
-                val day = digits.takeLast(2).toIntOrNull()?.coerceIn(1, 31) ?: 1
-                "%02d/%02d/%02d".format(defaultYear % 100, defaultMonth, day)
-            }
-            digits.length >= 6 ->
-                "${digits.substring(0, 2)}/${digits.substring(2, 4)}/${digits.substring(4, 6)}"
-            else -> row.date ?: ""
-        }
+        val formattedDate = formatOcrDate(row.date, fixYearMonth, defaultYear, defaultMonth)
 
         val productName = row.productName ?: ""
         val finalAmount = row.amount ?: 0
@@ -2130,7 +2675,9 @@ private fun convertParsedRowsToRowData(
                 selectedCells = emptySet(),
                 category = categoryStr,
                 subtotalCategory = subtotalCat,
-                originalOcrName = if (productName.isNotBlank()) productName else null
+                originalOcrName = if (productName.isNotBlank()) productName else null,
+                ocrConfidence = row.confidence,
+                productMasterId = row.productMasterId
             )
         )
 
@@ -2246,7 +2793,10 @@ private fun convertReceiptItemsToRows(items: List<com.example.greenframeocr.data
                 isTotalRow = false,
                 selectedCells = emptySet(),
                 category = item.category,  // データベースのカテゴリをコピー
-                subtotalCategory = subtotalCategory  // 小計行の場合はSubtotalCategoryも設定
+                subtotalCategory = subtotalCategory,  // 小計行の場合はSubtotalCategoryも設定
+                ocrConfidence = item.ocrConfidence,
+                productMasterId = item.productMasterId,
+                uuid = item.uuid
             )
         } else {
             ReceiptRowData(
@@ -2273,7 +2823,8 @@ private fun convertReceiptItemsToRows(items: List<com.example.greenframeocr.data
                 amount = totalItem.amount,
                 isSubtotal = false,
                 isTotalRow = true,
-                selectedCells = emptySet()
+                selectedCells = emptySet(),
+                uuid = totalItem.uuid
             )
         } else {
             // 合計行がDB上にない場合は計算して作成
@@ -2296,6 +2847,27 @@ private fun convertReceiptItemsToRows(items: List<com.example.greenframeocr.data
 }
 
 /**
+ * 伝票の商品名のうち購買品リスト（ProductMaster）に未登録のものを新規追加する。
+ * ProductListScreenの「再集計」ボタンと同じロジック（小計・合計行はSQL側で除外済み）。
+ */
+private suspend fun syncNewProductsToMaster(database: com.example.greenframeocr.data.ReceiptDatabase) {
+    val existingNormalized = database.productMasterDao().getAll()
+        .map { it.canonicalName.normalizeSpaces() }.toSet()
+    val receiptProductNames = database.receiptDao().getAllDistinctProductNames()
+    val newNames = receiptProductNames.filter { name ->
+        name.isNotBlank() && name.normalizeSpaces() !in existingNormalized
+    }
+    for (name in newNames) {
+        val product = com.example.greenframeocr.data.ProductMaster(
+            canonicalName = name,
+            category = "一般購買",
+            frequencyCount = 1
+        ).withComputedKey()
+        database.productMasterDao().insertIgnore(product)
+    }
+}
+
+/**
  * 月全体のデータを保存
  *
  * V3: コミット時に手動修正を学習登録
@@ -2311,11 +2883,14 @@ private suspend fun saveMonthData(
     // V3: コミットバッチID生成
     val commitBatchId = "${year}_${month}_${System.currentTimeMillis()}"
     withContext(Dispatchers.IO) {
+        // 月全体を一旦削除してから作り直す。sheetNumberごとの削除だと、伝票削除で
+        // allSheetsDataからキーが消えた（＝もう存在しない）伝票のDB行が残り続けてしまう
+        // （例：全伝票削除→決定 で空にならない不具合の原因だった）
+        database.receiptDao().deleteReceiptItemsByMonth(year, month)
+        android.util.Log.d("ReceiptInputScreen", "Deleted existing data for year=$year month=$month")
+
         allSheetsData.forEach { (sheetNumber, rows) ->
             android.util.Log.d("ReceiptInputScreen", "Processing sheet $sheetNumber with ${rows.size} rows")
-            // 既存データを削除
-            database.receiptDao().deleteReceiptItemsBySheet(year, month, sheetNumber)
-            android.util.Log.d("ReceiptInputScreen", "Deleted existing data for sheet $sheetNumber")
 
             // 新しいデータを挿入（合計行も含む）
             val items = rows
@@ -2343,7 +2918,10 @@ private suspend fun saveMonthData(
                         productName = productName,
                         amount = row.amount,
                         category = row.category,  // 既存のカテゴリを保持（新規は「未分類」）
-                        isOcrOverwriteTarget = false
+                        isOcrOverwriteTarget = false,
+                        ocrConfidence = row.ocrConfidence,
+                        productMasterId = if (row.isSubtotal || row.isTotalRow) null else row.productMasterId,
+                        uuid = row.uuid
                     )
                 }
 
@@ -2356,12 +2934,16 @@ private suspend fun saveMonthData(
             }
         }
 
+        // 購買品リスト（ProductMaster）へ新規商品名を自動同期。従来は「再集計」ボタンを
+        // 手動で押すまで反映されなかったため、伝票保存のたびに実行するようにした
+        syncNewProductsToMaster(database)
+
         // MonthlyDataの更新（totalSheetsを保存）
         val totalSheets = allSheetsData.keys.maxOrNull() ?: 0
-        if (totalSheets > 0) {
-            val monthlyDataId = "${year}_${month}"
-            val existingMonthlyData = database.receiptDao().getMonthlyData(monthlyDataId)
+        val monthlyDataId = "${year}_${month}"
+        val existingMonthlyData = database.receiptDao().getMonthlyData(monthlyDataId)
 
+        if (totalSheets > 0) {
             if (existingMonthlyData == null) {
                 // 新規作成
                 database.receiptDao().insertMonthlyData(
@@ -2384,6 +2966,11 @@ private suspend fun saveMonthData(
                 )
                 android.util.Log.d("ReceiptInputScreen", "Updated MonthlyData: totalSheets=$totalSheets")
             }
+        } else if (existingMonthlyData != null) {
+            // 全伝票が削除され0枚になった場合はMonthlyData自体を削除する
+            // （残しておくと次回読み込み時に古いtotalSheetsが復元されてしまう）
+            database.receiptDao().deleteMonthlyData(monthlyDataId)
+            android.util.Log.d("ReceiptInputScreen", "Deleted MonthlyData (totalSheets became 0)")
         }
 
         // V3: 手動修正の学習登録
@@ -2498,31 +3085,6 @@ private suspend fun addNewSheet(
     }
 }
 
-private suspend fun deleteSheet(
-    database: com.example.greenframeocr.data.ReceiptDatabase,
-    year: Int,
-    month: Int,
-    sheetNumber: Int
-): Int {
-    return withContext(Dispatchers.IO) {
-        database.receiptDao().deleteReceiptItemsBySheet(year, month, sheetNumber)
-        database.receiptDao().deleteSheetData(year, month, sheetNumber)
-
-        val monthlyDataId = "${year}_${month}"
-        val monthlyData = database.receiptDao().getMonthlyData(monthlyDataId)
-
-        if (monthlyData != null) {
-            val newTotalSheets = (monthlyData.totalSheets - 1).coerceAtLeast(0)
-            database.receiptDao().updateMonthlyData(
-                monthlyData.copy(totalSheets = newTotalSheets)
-            )
-            newTotalSheets
-        } else {
-            0
-        }
-    }
-}
-
 /**
  * セル編集ダイアログ（小計フラグ追加版）
  */
@@ -2569,7 +3131,6 @@ private fun CellEditDialog(
     var selectedProductId by remember { mutableStateOf<Long?>(currentRow.productMasterId) }
     val coroutineScope = rememberCoroutineScope()
     val productCharCount = if (cellType == CellType.PRODUCT_NAME) countFullWidthEquivalent(inputValue) else 0.0
-    val productHalfWidthOdd = cellType == CellType.PRODUCT_NAME && productCharCount % 1.0 != 0.0
 
     LaunchedEffect(cellType) {
         if (cellType == CellType.PRODUCT_NAME) {
@@ -2638,7 +3199,7 @@ private fun CellEditDialog(
                 }
 
                 if (cellType == CellType.PRODUCT_NAME) {
-                    val countText = if (!productHalfWidthOdd) "${productCharCount.toInt()}" else "${"%.1f".format(productCharCount)}"
+                    val countText = if (productCharCount % 1.0 == 0.0) "${productCharCount.toInt()}" else "${"%.1f".format(productCharCount)}"
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2650,13 +3211,10 @@ private fun CellEditDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "$countText/20",
+                            text = "$countText/30",
                             fontSize = 11.sp,
-                            color = when {
-                                productHalfWidthOdd -> MaterialTheme.colorScheme.error
-                                productCharCount >= 20.0 -> MaterialTheme.colorScheme.error
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
+                            color = if (productCharCount >= 30.0) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -2692,7 +3250,7 @@ private fun CellEditDialog(
                                 }
                             )
                         },
-                        isError = errorMessage != null || productHalfWidthOdd,
+                        isError = errorMessage != null,
                         singleLine = cellType != CellType.PRODUCT_NAME,
                         maxLines = if (cellType == CellType.PRODUCT_NAME) 2 else 1,
                         keyboardOptions = KeyboardOptions(
@@ -2733,13 +3291,6 @@ private fun CellEditDialog(
 
                 // 商品名入力時のボタン（合計行は除外）
                 if (cellType == CellType.PRODUCT_NAME && !currentRow.isTotalRow) {
-                    if (productHalfWidthOdd) {
-                        Text(
-                            text = "半角は2文字ひとまとまりで入力してください（kg・cm等）",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Start,
@@ -2937,7 +3488,7 @@ private fun CellEditDialog(
                                     defaultMonth,
                                     day
                                 )
-                                onConfirm(currentRow.copy(date = formattedDate))
+                                onConfirm(currentRow.copy(date = formattedDate, ocrConfidence = null))
                             } else {
                                 // 通常モード: 従来通りの日付入力
                                 val formattedDate = formatDateInput(
@@ -2949,14 +3500,10 @@ private fun CellEditDialog(
                                     errorMessage = "正しい日付を入力してください（6桁/4桁/2桁）"
                                     return@TextButton
                                 }
-                                onConfirm(currentRow.copy(date = formattedDate))
+                                onConfirm(currentRow.copy(date = formattedDate, ocrConfidence = null))
                             }
                         }
                         CellType.PRODUCT_NAME -> {
-                            if (productHalfWidthOdd) {
-                                errorMessage = "半角文字が奇数です。2文字ひとまとまりにしてください"
-                                return@TextButton
-                            }
                             // 商品マスタIDを解決（ドロップダウン選択時は既にセット済み、手動入力時は検索）
                             coroutineScope.launch {
                                 val resolvedProductId = if (selectedProductId != null) {
@@ -2980,7 +3527,8 @@ private fun CellEditDialog(
                                         subtotalCategory = if (isSubtotal) selectedSubtotalCategory else null,
                                         date = if (isSubtotal) "" else currentRow.date,
                                         category = if (isSubtotal) selectedSubtotalCategory.displayName else currentRow.category,
-                                        productMasterId = if (!isSubtotal) resolvedProductId else null
+                                        productMasterId = if (!isSubtotal) resolvedProductId else null,
+                                        ocrConfidence = null
                                     )
                                 )
                             }
@@ -3003,7 +3551,7 @@ private fun CellEditDialog(
                                 return@TextButton
                             }
 
-                            onConfirm(currentRow.copy(amount = finalAmount))
+                            onConfirm(currentRow.copy(amount = finalAmount, ocrConfidence = null))
                         }
                     }
                 }

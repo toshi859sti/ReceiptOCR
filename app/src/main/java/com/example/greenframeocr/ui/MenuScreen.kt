@@ -19,8 +19,9 @@ fun MenuScreen(
     appPreferences: AppPreferences,
     onNavigateToPurchaseMenu: () -> Unit,
     onNavigateToDepositMenu: () -> Unit,
-    onNavigateToSettings: () -> Unit,
-    onNavigateToDebugCapture: () -> Unit = {}
+    onNavigateToGeneralPurchaseMenu: () -> Unit = {},
+    onNavigateToBookkeepingMenu: () -> Unit = {},
+    onNavigateToSettings: () -> Unit
 ) {
     val eraYear = remember { appPreferences.eraYear }
 
@@ -35,14 +36,7 @@ fun MenuScreen(
             )
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
+        MenuColumn(paddingValues) {
             // タイトル表示
             Text(
                 text = "JA仕訳変換",
@@ -55,15 +49,29 @@ fun MenuScreen(
 
             // メニューボタン（3項目）
             MenuButton(
-                text = "購買部門",
+                text = "JA購買伝票",
                 onClick = onNavigateToPurchaseMenu
             )
 
             Spacer(modifier = Modifier.height(24.dp))
 
             MenuButton(
-                text = "預金部門",
+                text = "JA預金",
                 onClick = onNavigateToDepositMenu
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            MenuButton(
+                text = "レシート・領収書",
+                onClick = onNavigateToGeneralPurchaseMenu
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            MenuButton(
+                text = "簿記ソフト連携",
+                onClick = onNavigateToBookkeepingMenu
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -72,20 +80,6 @@ fun MenuScreen(
                 text = "設定",
                 onClick = onNavigateToSettings
             )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            OutlinedButton(
-                onClick = onNavigateToDebugCapture,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-            ) {
-                Text(
-                    text = "デバッグ撮影",
-                    fontSize = 16.sp
-                )
-            }
 
             Spacer(modifier = Modifier.height(40.dp))
 

@@ -25,17 +25,13 @@ object DatabaseInitializer {
             try {
                 // 勘定科目データが空なら初期化
                 val yayoiCount = database.yayoiAccountDao().count()
-                val rakurakuCount = database.rakurakuAccountDao().count()
 
                 if (yayoiCount == 0) {
                     Log.d(TAG, "Initializing Yayoi accounts...")
                     importYayoiAccounts(context, database)
                 }
 
-                if (rakurakuCount == 0) {
-                    Log.d(TAG, "Initializing Rakuraku accounts...")
-                    importRakurakuAccounts(context, database)
-                }
+                seedReceiptPaymentMethodRulesIfNeeded(database)
 
                 // すでにデータがある場合はスキップ
                 val productCount = database.productMasterDao().getCount()
@@ -61,38 +57,37 @@ object DatabaseInitializer {
     }
 
     /**
-     * 弥生会計 勘定科目マスタをインポート
-     * CSV形式: 勘定科目,サーチキー英字,サーチキー数字,借貸,区分C,区分B,区分A,購買取引使用,預金取引使用,親科目
+     * 弥生会計 勘定科目マスタ初期化
+     * 初期データはマイグレーション（MIGRATION_19_20）で投入済みのため、
+     * reinitialize() 時のみ再投入が必要。
+     * CSV形式: 勘定科目,サーチキー英字,サーチキー数字,借貸,区分B,区分A,税区分,購買取引使用,預金取引使用,レシート取引使用
      */
     private suspend fun importYayoiAccounts(context: Context, database: ReceiptDatabase) {
         val dao = database.yayoiAccountDao()
         val accounts = mutableListOf<YayoiAccount>()
-        val parentMap = mutableMapOf<Int, Long>() // CSV行番号 -> DB ID
 
         context.assets.open("yayoi_accounts.csv").use { inputStream ->
             BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).use { reader ->
-                // ヘッダー行をスキップ
-                reader.readLine()
+                reader.readLine() // ヘッダー行をスキップ
 
-                var lineNumber = 1
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
-                    lineNumber++
                     val parts = line!!.split(",")
                     if (parts.isNotEmpty() && parts[0].isNotBlank()) {
                         accounts.add(
                             YayoiAccount(
-                                id = 0, // AutoGenerate
+                                id = 0,
                                 accountName = parts[0].trim(),
                                 searchKeyAlpha = parts.getOrNull(1)?.trim() ?: "",
-                                accountCode = parts.getOrNull(2)?.trim() ?: "",
+                                accountCode = parts.getOrNull(2)?.trim()?.ifEmpty { null },
                                 debitCredit = parts.getOrNull(3)?.trim() ?: "",
-                                categoryC = parts.getOrNull(4)?.trim() ?: "",
-                                categoryB = parts.getOrNull(5)?.trim() ?: "",
-                                categoryA = parts.getOrNull(6)?.trim() ?: "",
+                                categoryB = parts.getOrNull(4)?.trim() ?: "",
+                                categoryA = parts.getOrNull(5)?.trim() ?: "",
+                                defaultTaxCategory = parts.getOrNull(6)?.trim() ?: "対象外",
                                 usedForPurchase = parts.getOrNull(7)?.trim()?.uppercase() == "TRUE",
-                                usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() != "FALSE",
-                                parentId = null // 後で設定
+                                usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() == "TRUE",
+                                usedForReceipt = parts.getOrNull(9)?.trim()?.uppercase() == "TRUE",
+                                parentId = null
                             )
                         )
                     }
@@ -106,66 +101,27 @@ object DatabaseInitializer {
     }
 
     /**
-     * らくらく青色申告 勘定科目マスタをインポート
-     * CSV形式: 勘定科目,サーチキー英字,サーチキー数字,借貸,区分C,区分B,区分A,購買取引使用,預金取引使用,親科目
+     * レシート領収書の支払方法→相手科目ルールのデフォルトを投入する（ルールが1件も無い場合のみ）。
+     * 現金→現金、クレジット→事業主借、PayPay→事業主借（ユーザー方針、2026-08-15）
      */
-    private suspend fun importRakurakuAccounts(context: Context, database: ReceiptDatabase) {
-        val dao = database.rakurakuAccountDao()
-        val accounts = mutableListOf<RakurakuAccount>()
-        val parentRefs = mutableListOf<Int?>() // CSV行番号の親参照
+    private suspend fun seedReceiptPaymentMethodRulesIfNeeded(database: ReceiptDatabase) {
+        val ruleDao = database.receiptPaymentMethodRuleDao()
+        if (ruleDao.getAll().isNotEmpty()) return
 
-        context.assets.open("rakuraku_accounts.csv").use { inputStream ->
-            BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).use { reader ->
-                // ヘッダー行をスキップ
-                reader.readLine()
+        val accounts = database.yayoiAccountDao().getAll()
+        val genkin = accounts.firstOrNull { it.accountName == "現金" }
+        val jigyoushuKari = accounts.firstOrNull { it.accountName == "事業主借" }
+        if (genkin == null || jigyoushuKari == null) return
 
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    val parts = line!!.split(",")
-                    if (parts.isNotEmpty() && parts[0].isNotBlank()) {
-                        val parentRef = parts.getOrNull(9)?.trim()?.toIntOrNull()
-                        parentRefs.add(parentRef)
-                        accounts.add(
-                            RakurakuAccount(
-                                id = 0, // AutoGenerate
-                                accountName = parts[0].trim(),
-                                searchKeyAlpha = parts.getOrNull(1)?.trim() ?: "",
-                                accountCode = parts.getOrNull(2)?.trim() ?: "",
-                                debitCredit = parts.getOrNull(3)?.trim() ?: "",
-                                categoryC = parts.getOrNull(4)?.trim() ?: "",
-                                categoryB = parts.getOrNull(5)?.trim() ?: "",
-                                categoryA = parts.getOrNull(6)?.trim() ?: "",
-                                usedForPurchase = parts.getOrNull(7)?.trim()?.uppercase() == "TRUE",
-                                usedForDeposit = parts.getOrNull(8)?.trim()?.uppercase() != "FALSE",
-                                parentId = null // 後で設定
-                            )
-                        )
-                    }
-                }
-            }
-        }
-
-        dao.deleteAll()
-        dao.insertAll(accounts)
-
-        // 親科目の参照を設定（CSVの行番号ベース）
-        // ID順で取得（getAll()はカテゴリ順なので順番がずれる）
-        val allAccounts = dao.getAllById()
-        for (i in accounts.indices) {
-            val parentRef = parentRefs.getOrNull(i)
-            if (parentRef != null && parentRef > 0 && parentRef <= allAccounts.size) {
-                val account = allAccounts[i]
-                val parentAccount = allAccounts[parentRef - 1] // 1-indexed
-                dao.update(account.copy(parentId = parentAccount.id))
-            }
-        }
-
-        Log.d(TAG, "Imported ${accounts.size} Rakuraku accounts")
+        ruleDao.insert(ReceiptPaymentMethodRule(keyword = "現金", yayoiAccountId = genkin.id, sortOrder = 0))
+        ruleDao.insert(ReceiptPaymentMethodRule(keyword = "クレジット", yayoiAccountId = jigyoushuKari.id, sortOrder = 1))
+        ruleDao.insert(ReceiptPaymentMethodRule(keyword = "PayPay", yayoiAccountId = jigyoushuKari.id, sortOrder = 2))
+        Log.d(TAG, "Seeded default receipt payment method rules")
     }
 
     /**
      * 商品マスタをインポート
-     * CSV形式: id,canonical_name,category,frequency_count,yayoi_account_id,rakuraku_account_id
+     * CSV形式: id,canonical_name,category,frequency_count,yayoi_account_id
      */
     private suspend fun importProductMaster(context: Context, database: ReceiptDatabase) {
         val dao = database.productMasterDao()
@@ -185,8 +141,7 @@ object DatabaseInitializer {
                                 id = 0,
                                 canonicalName = parts[1].trim(),
                                 category = parts[2].trim(),
-                                frequencyCount = parts.getOrNull(3)?.trim()?.toIntOrNull() ?: 0,
-                                kaikakeTekiyouId = parts.getOrNull(4)?.trim()?.toIntOrNull()
+                                frequencyCount = parts.getOrNull(3)?.trim()?.toIntOrNull() ?: 0
                             ).withComputedKey()
                         )
                     }
@@ -251,14 +206,12 @@ object DatabaseInitializer {
                 // 逆順で削除（外部キー制約に配慮）
                 database.ocrVariantDao().deleteAll()
                 database.productMasterDao().deleteAll()
-                database.rakurakuAccountDao().deleteAll()
                 database.yayoiAccountDao().deleteAll()
 
                 Log.d(TAG, "All dictionary data cleared. Starting import...")
 
                 // 再インポート
                 importYayoiAccounts(context, database)
-                importRakurakuAccounts(context, database)
                 importProductMaster(context, database)
                 importOcrVariants(context, database)
 

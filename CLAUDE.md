@@ -4,13 +4,20 @@
 
 農業経営者向けの会計デジタル化 Android アプリ。
 島原雲仙農業協同組合の購買代金請求明細書（A5横・3辺のみ緑枠・右辺なし）を
-台紙（ArUco マーカー）なしで直接 OCR し、
-弥生会計・らくらく青色申告（農業版）への仕訳 CSV を自動生成する。
+台紙（ArUco マーカー）なしで直接 OCR し、会計ソフト向けの仕訳データを自動生成する。
+
+**出力先は2つ**（2026-09-23 決定）:
+- **弥生の青色申告** — 仕訳 CSV
+- **あおいろ帳簿**（PC会計アプリ `AoiroChobo`・同時進行で自作中） — `transactions.json`
+
+**らくらく青色申告農業版のサポートは終了**（2026-09-23 決定・2026-09-29 に撤去済み。DB v40 で表と列も削除）。
+弥生とあおいろは**科目体系が別物で1対1に対応しない**。同じ商品でも弥生でA・あおいろでBになるため、
+学習テーブルは両方の紐付けを独立した列で持つ。詳細は `docs/integration/REPLY-phone-2026-09-23.md`。
 
 - **アプリ名**: JA仕訳変換
 - **パッケージ**: `com.example.greenframeocr`
 - **minSdk**: 24 / **targetSdk**: 34 / **Kotlin JVM**: 17
-- **ビルド状態**: BUILD SUCCESSFUL（2026-04-29）
+- **ビルド状態**: BUILD SUCCESSFUL（2026-09-29）
 
 ---
 
@@ -36,7 +43,10 @@ GreenFrameOCR/
 │   ├── repository-structure.md  リポジトリ構造
 │   ├── development-guidelines.md 開発ガイドライン
 │   ├── glossary.md              用語定義
-│   └── known-issues.md          既知バグ・制約・技術的負債
+│   ├── known-issues.md          既知バグ・制約・技術的負債
+│   ├── PC_ACCOUNTING_INTEGRATION_SPEC.md  PC会計アプリ向けの連携仕様（Android側の出力仕様）
+│   ├── integration/             PC会計アプリ(AoiroChobo)との契約一式と往復の返信
+│   └── （上記以外にも仕様書・作業メモが多数ある。`ls docs/` で確認すること）
 └── .steering/                   ← 完了済み作業のアーカイブ
     └── YYYYMMDD-タイトル/
 ```
@@ -105,44 +115,54 @@ GreenFrameOCR/
 Imgproc.cvtColor(rgbaMat, bgrMat, Imgproc.COLOR_RGBA2BGR)
 ```
 
-ML Kit へ渡す場合は `InputImage.fromBitmap` または `InputImage.fromMediaImage` を使う。
-OpenCV で加工した Mat を Bitmap に戻して ML Kit に渡すときは、**必ず BGR→RGBA に戻してから** `Utils.matToBitmap` を呼ぶこと。逆順のまま渡すと色チャンネルが反転し OCR 精度に悪影響が出る。
+OpenCV で加工した Mat を Bitmap に戻して Gemini に渡すときは、**必ず BGR→RGBA に戻してから**
+`Utils.matToBitmap` を呼ぶこと。逆順のまま渡すと色チャンネルが反転し OCR 精度に悪影響が出る。
 
 ```kotlin
 // BGR → RGBA（matToBitmap の前）
 Imgproc.cvtColor(bgrMat, rgbaMat, Imgproc.COLOR_BGR2RGBA)
 Utils.matToBitmap(rgbaMat, bitmap)
-// → InputImage.fromBitmap(bitmap, 0) で ML Kit へ渡す
+// → GeminiReceiptClient.parseJaSheetFromImage(bitmap, apiKey) へ渡す
 ```
 
 `toBitmap()` 拡張関数は BGR→RGBA 変換を内包しているため、src は常に BGR 3ch のまま扱う。
 
 ### GreenFrameDetector の debugMode
 ```kotlin
-fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult
+fun process(inputBitmap: Bitmap, debugMode: Boolean = false, sharpness: Double = 0.0): DetectionResult
 ```
 - 本番（`debugMode=false`）: Step7（行切り抜き）スキップ → 約1,225ms
-- デバッグ（`debugMode=true`）: Step7 実行、`DebugCaptureScreen` からのみ呼ぶ
+- デバッグ（`debugMode=true`）: Step7 実行。`debugMode` は `CameraScreen` → `CameraViewModel` →
+  `GreenFrameDetector` と引き回されているが、**true を渡す箇所はどこにもない**
+  （`DebugCaptureScreen` はPhase6（2026-08-11）で削除済み。将来デバッグツールを再実装する際の
+  既存パラメータとして残している）
 
 ### 透視変換解像度（変更禁止）
 `WARP_PX_PER_MM = 15.0` → 出力 3045×2220px（203mm×148mm）
 20px/mm は Step7 が 2.6 倍遅くなるため不採用済み。
 
-### ML Kit 文字高さ（最小 100px）
-40px 以下で精度が急落する。透視変換解像度を下げてはいけない。
+**解像度を下げてもいけない。** 元は ML Kit の制約（文字高さ 100px 必要・40px 以下で精度が急落）
+として決めた値。ML Kit は2026-08-11に全廃してOCRはGeminiに移ったが、透視変換の出力は
+そのまま Gemini に渡す画像なので、下げれば読み取り精度に直接効く。変えるなら実機で
+精度を測り直すこと。
 
-### Room DB バージョン（現在 v15）
+### Room DB バージョン（現在 v40）
 バージョンアップ時は `ReceiptDatabase.kt` にマイグレーションを追加すること。
-`fallbackToDestructiveMigration()` は開発中のみ有効。本番リリース前に削除。
+`ReceiptDatabase.kt` の `version` / `entities` が一次情報源。docs 側の記載は古くなることがある。
+`fallbackToDestructiveMigration()` は削除済み（2026-07-12）。
+スキーマ変更時にマイグレーションを書き忘れるとデータ消失ではなく**起動時クラッシュ**になる。
 
-### Navigation に未接続の画面（要対応）
-`AccountSettingsScreen.kt` は実装済みだが `Navigation.kt` の NavHost に未登録。
+### エンティティに列を足したら、そのエンティティを `new` している箇所を全部見る
+保存処理の一部が `.copy()` ではなく**フィールドを列挙して組み直している**。
+そのままだと新しい列は保存のたびに黙って null に戻る（2026-09-23 に3か所で踏みかけた）。
+列を足したら `grep -rn "ProductMaster(" app/src/main` のように呼び出し側を洗うこと。
+詳細は `docs/known-issues.md` の「制約・注意事項」。
 
-### ProductNameCorrectorV3 の3層構造
-- Layer1（無条件適用）: LOCKED / 手動 CONFIRMED バリアント
-- Layer2（スコア検証後）: 自動 CONFIRMED バリアント
-- Layer3（学習素材のみ）: AUTO バリアント（補正には使わない）
-昇格・降格ロジックを変更するときは `docs/functional-design.md` の学習仕様を必ず確認すること。
+### Navigation に未登録の画面（正常）
+`CameraScreen` と `TransformPreviewScreen` は `navigation/Navigation.kt` の NavHost にルートが無いが、
+これは不具合ではない。どちらも他の画面（`ReceiptInputScreen` / `GeneralReceiptCaptureScreen` /
+`CameraScreenForOcr`）の中に埋め込んで使うコンポーザブルなので、ルート登録は不要。
+（かつてここに書かれていた未登録画面 `AccountSettingsScreen.kt` はファイルごと存在しない）
 
 ---
 
@@ -156,10 +176,10 @@ fun process(inputBitmap: Bitmap, debugMode: Boolean = false): DetectionResult
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 # パフォーマンスログ確認
-adb logcat -s GreenFrameDetector:D OCRProcessor:D | grep PERF
+adb logcat -s GreenFrameDetector:D | grep PERF
 
 # 全体ログ
-adb logcat -s GreenFrameDetector:D OCRProcessor:D CameraViewModel:D OcrCaptureViewModel:D
+adb logcat -s GreenFrameDetector:D GeminiReceiptClient:D CameraViewModel:D ReceiptInputScreen:D
 ```
 
 ---

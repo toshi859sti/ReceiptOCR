@@ -9,10 +9,9 @@
 | **小計行** | カテゴリ別の小計（一般購買／給油所／農業機械）を示す行 |
 | **合計行** | 伝票全体の合計金額を示す行 |
 | **カテゴリ** | 仕訳区分。一般購買・給油所・農業機械・未分類の4種類 |
-| **摘要** | 会計ソフトに登録する仕訳の説明文。らくらく青色申告では必須項目 |
-| **勘定科目** | 会計上の分類。弥生・らくらく各ソフトに対応したマスタを保持 |
+| **摘要** | 会計ソフトに登録する仕訳の説明文。あおいろ帳簿では PC 側の摘要辞書（相手科目・税区分・事業割合のセット）から選ぶ |
+| **勘定科目** | 会計上の分類。弥生は自前のマスタ（`yayoi_accounts`）、あおいろは PC から取り込んだ科目（`aoirochobo_accounts`）を使う |
 | **通帳明細** | 銀行通帳の入出金履歴。摘要テキストで自動マッチングする |
-| **買掛摘要** | 購買時の仕訳に使う摘要。商品→摘要のマッピングを辞書で管理 |
 | **JA** | 島原雲仙農業協同組合 |
 
 ---
@@ -32,21 +31,30 @@
 
 ---
 
-## OCR 学習システム用語
+## OCR 学習システム用語（現在は非稼働）
+
+> Phase6（2026-08-11）で学習の書き込み経路（`OcrVariantDao.registerLearning()`の呼び出し元・
+> `OcrLearningStatusScreen`）が削除され、以下の学習ロジックは実行されなくなった。`ocr_variants`
+> テーブルと`OcrVariant`エンティティ自体はコード上に残っており、CSV出力時の商品名照合
+> フォールバック（読み取り専用）として使われている。用語はコード（`OcrVariant.kt`）に
+> 実在するenum値・フィールド名なので、DBの内容を読む際の参照用に残す。
+> なお、コード上のenum値は実際には`TENTATIVE`（旧`AUTO`から2026-05-07にリネーム）だが、
+> 下表は当時のユーザー向け表示名で記載している。
 
 | 用語 | 定義 |
 |---|---|
 | **OcrVariant** | 商品名の OCR 誤認識パターン1件。`variantText`（全角化済み）→ `productId` のマッピング |
-| **confidenceLevel** | バリアントの信頼度。`LOCKED` > `CONFIRMED` > `AUTO` の3段階。ユーザー向け表示は「承認済み」（LOCKED/CONFIRMED）・「学習中」（AUTO）に統一する（コード内定数名は変更しない） |
+| **confidenceLevel** | バリアントの信頼度。`LOCKED` > `CONFIRMED` > `TENTATIVE`（旧`AUTO`）の3段階。ユーザー向け表示は「承認済み」（LOCKED/CONFIRMED）・「学習中」（TENTATIVE）に統一する（コード内定数名は変更しない） |
 | **LOCKED** | **承認済み（上位）**。手動または十分な実績により固定化されたバリアント。Layer1 として無条件に補正に使う。共有CSVエクスポート時は `承認済み` として出力 |
 | **CONFIRMED** | **承認済み（下位）**。一定実績を満たしたバリアント。Layer2 としてスコア検証後に補正に使う |
-| **AUTO** | **学習中**。学習中のバリアント。補正には使わず学習素材のみ（Layer3） |
+| **TENTATIVE（旧AUTO）** | **学習中**。学習中のバリアント。補正には使わず学習素材のみ（Layer3） |
 | **hitCount** | バリアントが OCR 結果と一致した累計回数 |
 | **highScoreHits** | スコア 0.90 以上で一致した回数 |
 | **autoFailCount** | 自動補正が失敗した（後で手動修正された）回数 |
 | **manualCorrectCount** | ユーザーが手動で確認・修正した回数 |
-| **OcrExplicitJoin** | OCR が分離した文字（例: `灯|油`）を結合するパターン1件 |
-| **CorrectionResult** | `ProductNameCorrectorV3` の補正結果。補正名・スコア・使用レイヤーを含む |
+
+（`OcrExplicitJoin`・`CorrectionResult`（`ProductNameCorrectorV3`の戻り値）はクラス自体が
+Phase6で削除済みのため用語定義から除去）
 
 ---
 
@@ -57,7 +65,7 @@
 | **DepositMeisai** | 通帳から取り込んだ1行の明細データ |
 | **TekiyouMatchingRule** | 通帳摘要テキストのマッチングルール。正規表現または固定文字列 |
 | **matchingRuleId** | `DepositMeisai` が属するマッチングルールの ID |
-| **overrideTekiyouId** | 摘要グループの設定を上書きする個別の `RakurakuTekiyou.id` |
+| **overrideYayoiAccountId** / **overrideAccountKey** | 摘要グループの設定を上書きする、明細ごとの科目（弥生 / あおいろ） |
 | **normalizedTekiyou** | 摘要テキストを正規化した文字列（マッチング用） |
 
 ---

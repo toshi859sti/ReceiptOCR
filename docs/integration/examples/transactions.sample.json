@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 2,
+  "kind": "aoirochobo.transactions",
+  "generatedAt": "2026-09-10T15:00:00+09:00",
+  "generatedBy": {
+    "app": "JA仕訳変換",
+    "appVersion": "1.4.0",
+    "sourceCommit": "5889f13"
+  },
+  "vocabulary": {
+    "schemaVersion": 2,
+    "fiscalYear": 2026,
+    "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "accountingSoftwareOnPhone": "RAKURAKU",
+  "_note": "摘要の参照キーは memoKey（vocabulary.memoTemplates[].memoKey か null の二択＝閉じた語彙）。memoName は人間可読のエコーで PC は照合に使わない。逆引き0件は memoKey=null + UnmatchedMemo で、生テキストは note に入れる。科目未確定(UnmatchedAccount)なら memoKey も null。同じ摘要名でも帳簿(ledgerType)が違えば別レコード＝別 memoKey（例: 諸材料購入 は AP の memo-0013 と Unpaid の memo-0016）。この例のキーは説明用の作り物で、実機が書き出す vocabulary.json は memo-102 のような連番（ゼロ埋めなし）になる——キーは不透明なので桁数や形を当てにしないこと。",
+  "entries": [
+    {
+      "externalId": "ocr:purchase:3f2b9c14-77a1-4a6e-9c02-1d5e8b4a0c71",
+      "source": "Purchase",
+      "ledgerType": "AP",
+      "bankSlotNo": null,
+      "entryDate": "2026-01-20",
+      "amount": 11000,
+      "debit": { "accountKey": "hiryou", "accountName": "肥料費", "taxRate": "10", "businessRatio": 100 },
+      "credit": { "accountKey": "kaikake", "accountName": "買掛金", "taxRate": null, "businessRatio": 100 },
+      "memoKey": "memo-0006",
+      "memoName": "肥料購入",
+      "note": "ダイアジノン粒剤3",
+      "hasInvoice": true,
+      "matchStatus": "Matched",
+      "confidence": "high",
+      "meta": {
+        "sourceTable": "receipt_items",
+        "sourceRowId": 123,
+        "productName": "ダイアジノン粒剤3",
+        "category": "一般購買",
+        "storeName": null,
+        "registrationNumber": null,
+        "paymentMethodText": null,
+        "isReturn": false,
+        "phoneExportedAt": null
+      }
+    },
+    {
+      "externalId": "ocr:purchase:8d41a2e7-5c60-4b19-a3f8-2e7c6b1d90a4",
+      "source": "Purchase",
+      "ledgerType": "AP",
+      "bankSlotNo": null,
+      "entryDate": "2026-01-20",
+      "amount": 3300,
+      "debit": { "accountKey": "kaikake", "accountName": "買掛金", "taxRate": null, "businessRatio": 100 },
+      "credit": { "accountKey": "syozairyou", "accountName": "諸材料費", "taxRate": "10", "businessRatio": 100 },
+      "memoKey": "memo-0013",
+      "memoName": "諸材料購入",
+      "note": "マルチシート 返品",
+      "matchStatus": "Matched",
+      "confidence": "medium",
+      "meta": {
+        "sourceTable": "receipt_items",
+        "sourceRowId": 126,
+        "productName": "マルチシート",
+        "category": "一般購買",
+        "isReturn": true
+      }
+    },
+    {
+      "externalId": "ocr:deposit:p1-2026-02-05-0012",
+      "source": "Deposit",
+      "ledgerType": "Bank",
+      "bankSlotNo": 1,
+      "entryDate": "2026-02-05",
+      "amount": 250000,
+      "debit": { "accountKey": "einou", "accountName": "営農口座", "taxRate": null, "businessRatio": 100 },
+      "credit": { "accountKey": "suitou", "accountName": "水稲", "taxRate": "8", "businessRatio": 100 },
+      "memoKey": "memo-0014",
+      "memoName": "農協売上入金",
+      "note": "フリコミ ミナミシマバラノウキヨウ",
+      "matchStatus": "Matched",
+      "confidence": "high",
+      "meta": {
+        "sourceTable": "deposit_meisai",
+        "sourceRowId": 88,
+        "paymentMethodText": null,
+        "isReturn": false
+      }
+    },
+    {
+      "externalId": "ocr:deposit:p1-2026-02-10-0013",
+      "source": "Deposit",
+      "ledgerType": "Bank",
+      "bankSlotNo": 1,
+      "entryDate": "2026-02-10",
+      "amount": 8800,
+      "debit": { "accountKey": "douryoku", "accountName": "動力光熱費", "taxRate": "10", "businessRatio": 100 },
+      "credit": { "accountKey": "einou", "accountName": "営農口座", "taxRate": null, "businessRatio": 100 },
+      "memoKey": "memo-0015",
+      "memoName": "電気料金",
+      "note": "デンキ 09シマバラ",
+      "matchStatus": "Matched",
+      "confidence": "high",
+      "meta": {
+        "sourceTable": "deposit_meisai",
+        "sourceRowId": 89,
+        "isReturn": false
+      }
+    },
+    {
+      "externalId": "ocr:deposit:p1-2026-02-15-0014",
+      "source": "Deposit",
+      "ledgerType": "Bank",
+      "bankSlotNo": 1,
+      "entryDate": "2026-02-15",
+      "amount": 30000,
+      "debit": { "accountKey": null, "accountName": null, "taxRate": null, "businessRatio": 100 },
+      "credit": { "accountKey": "einou", "accountName": "営農口座", "taxRate": null, "businessRatio": 100 },
+      "memoKey": null,
+      "memoName": null,
+      "note": "カ－ドシハライ",
+      "matchStatus": "UnmatchedAccount",
+      "confidence": "low",
+      "meta": {
+        "sourceTable": "deposit_meisai",
+        "sourceRowId": 90,
+        "isReturn": false
+      }
+    },
+    {
+      "externalId": "ocr:receipt:9f1c8b0e-4a2d-4f1a-9b3e-7c6d5e4f3a21:0",
+      "source": "Receipt",
+      "ledgerType": "Cash",
+      "bankSlotNo": null,
+      "entryDate": "2026-03-02",
+      "amount": 1580,
+      "debit": { "accountKey": "zappi", "accountName": "雑費", "taxRate": "10", "businessRatio": 100 },
+      "credit": { "accountKey": "genkin", "accountName": "現金", "taxRate": null, "businessRatio": 100 },
+      "memoKey": null,
+      "memoName": null,
+      "note": "ゴム手袋M ほか（コメリ 島原店）",
+      "hasInvoice": true,
+      "matchStatus": "UnmatchedMemo",
+      "confidence": "medium",
+      "meta": {
+        "sourceTable": "general_receipt_items",
+        "sourceRowId": 401,
+        "productName": "ゴム手袋 M",
+        "storeName": "コメリ 島原店",
+        "registrationNumber": "T1234567890123",
+        "paymentMethodText": "現金",
+        "isReturn": false
+      }
+    },
+    {
+      "externalId": "ocr:receipt:2b7e4d10-1f33-49aa-8c21-9d0e6b5a4c88:0",
+      "source": "Receipt",
+      "ledgerType": "Unpaid",
+      "bankSlotNo": null,
+      "entryDate": "2026-03-05",
+      "amount": 6600,
+      "debit": { "accountKey": "syozairyou", "accountName": "諸材料費", "taxRate": "10", "businessRatio": 100 },
+      "credit": { "accountKey": "mibarai", "accountName": "未払金", "taxRate": null, "businessRatio": 100 },
+      "memoKey": "memo-0016",
+      "memoName": "諸材料購入",
+      "note": "支柱 20本（ナフコ・クレジット払い）",
+      "matchStatus": "Matched",
+      "confidence": "high",
+      "meta": {
+        "sourceTable": "general_receipt_items",
+        "sourceRowId": 402,
+        "productName": "支柱 20本",
+        "storeName": "ナフコ",
+        "paymentMethodText": "クレジット",
+        "isReturn": false
+      }
+    }
+  ]
+}

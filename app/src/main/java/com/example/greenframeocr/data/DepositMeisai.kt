@@ -12,12 +12,16 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["transactionDate"]),
         Index(value = ["tekiyou"]),
-        Index(value = ["transactionDate", "transactionNumber"], unique = true)
+        // 通番は口座ごとに振られるので、口座が違えば同じ日・同じ通番があり得る（DB v39）
+        Index(value = ["passbookId", "transactionDate", "transactionNumber"], unique = true)
     ]
 )
 data class DepositMeisai(
     @PrimaryKey(autoGenerate = true)
     val id: Int = 0,
+
+    /** どの通帳の明細か（[Passbook.id]）。外部キーは張らない：通帳を消して明細が道連れになるのを避ける */
+    val passbookId: Int = Passbook.DEFAULT_ID,
 
     /** 取引日 (yyyy-MM-dd) */
     val transactionDate: String,
@@ -37,6 +41,17 @@ data class DepositMeisai(
     /** マッチングルールID（nullならマッチなし） */
     val matchingRuleId: Int? = null,
 
-    /** 個別オーバーライド摘要ID（nullならグループのデフォルトを使用） */
-    val overrideTekiyouId: Int? = null
+    /** 個別オーバーライド弥生勘定科目ID（nullならグループのデフォルトを使用・弥生用） */
+    val overrideYayoiAccountId: Long? = null,
+
+    /** 個別オーバーライドの AoiroChobo 科目キー（overrideYayoiAccountId のあおいろ版） */
+    val overrideAccountKey: String? = null,
+    val overrideAccountKeyName: String? = null,
+
+    /** 個別オーバーライドの AoiroChobo 摘要キー。選べるのは overrideAccountKey に属する摘要だけ */
+    val overrideMemoKey: String? = null,
+    val overrideMemoKeyName: String? = null,
+
+    /** CSV出力日時（yyyy/MM/dd HH:mm）。未出力ならnull */
+    val exportedAt: String? = null
 )

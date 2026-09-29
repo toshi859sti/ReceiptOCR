@@ -20,13 +20,12 @@ fun DepositMenuScreen(
     onBack: () -> Unit,
     onNavigateToPassbookData: () -> Unit,
     onNavigateToTekiyouMatching: () -> Unit,
-    onNavigateToYokinTekiyou: () -> Unit,
     onNavigateToOutputConfirm: () -> Unit
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("預金部門") },
+                title = { Text("JA預金") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -42,16 +41,9 @@ fun DepositMenuScreen(
             )
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
+        MenuColumn(paddingValues) {
             Text(
-                text = "預金部門",
+                text = "JA預金",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
@@ -70,13 +62,6 @@ fun DepositMenuScreen(
             SubMenuButton(
                 text = "通帳摘要別リスト",
                 onClick = onNavigateToTekiyouMatching
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            SubMenuButton(
-                text = "預金摘要辞書",
-                onClick = onNavigateToYokinTekiyou
             )
 
             Spacer(modifier = Modifier.height(16.dp))

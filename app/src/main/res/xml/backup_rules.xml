@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- API 30 以下の自動バックアップ設定。APIキーを含む秘匿prefsを除外する -->
 <full-backup-content>
-    <!-- Exclude specific files or directories from backup -->
+    <exclude domain="sharedpref" path="receipt_ocr_secrets.xml" />
 </full-backup-content>

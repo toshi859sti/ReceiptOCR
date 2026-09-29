@@ -27,6 +27,9 @@ interface ReceiptDao {
     @Query("DELETE FROM receipt_items WHERE issueYear = :year AND issueMonth = :month AND sheetNumber = :sheetNumber")
     suspend fun deleteReceiptItemsBySheet(year: Int, month: Int, sheetNumber: Int)
 
+    @Query("DELETE FROM receipt_items WHERE issueYear = :year AND issueMonth = :month")
+    suspend fun deleteReceiptItemsByMonth(year: Int, month: Int)
+
     @Update
     suspend fun updateReceiptItem(item: ReceiptItem)
 
@@ -91,6 +94,10 @@ interface ReceiptDao {
 
     @Query("SELECT DISTINCT issueMonth FROM sheet_data WHERE issueYear = :year ORDER BY issueMonth")
     suspend fun getAvailableMonthsForYear(year: Int): List<Int>
+
+    // CSV出力履歴：出力済みの明細に出力日時を記録
+    @Query("UPDATE receipt_items SET exportedAt = :exportedAt WHERE id IN (:ids)")
+    suspend fun markExported(ids: List<Long>, exportedAt: String)
 
     // 全データ削除
     @Query("DELETE FROM receipt_items")

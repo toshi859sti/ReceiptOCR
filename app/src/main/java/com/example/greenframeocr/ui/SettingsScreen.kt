@@ -15,6 +15,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,13 +25,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.greenframeocr.data.AccountingSoftware
+import com.example.greenframeocr.data.AoiroChoboVocabMeta
 import com.example.greenframeocr.data.AppDarkMode
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.AppThemePreset
 import com.example.greenframeocr.data.CameraResolution
 import com.example.greenframeocr.data.ReceiptDatabase
+import com.example.greenframeocr.util.AoiroChoboVocabImporter
 import com.example.greenframeocr.util.withComputedKey
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
@@ -48,14 +55,14 @@ import java.util.Locale
 fun SettingsScreen(
     appPreferences: AppPreferences,
     onBack: () -> Unit,
-    onNavigateToOcrLearningStatus: () -> Unit = {},
-    onNavigateToAccountSettings: () -> Unit = {},
     onThemeChanged: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val db = remember { ReceiptDatabase.getDatabase(context) }
 
+    var selectedAccountingSoftware by remember { mutableStateOf(appPreferences.accountingSoftware) }
+    var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
     var eraYear by remember { mutableIntStateOf(appPreferences.eraYear) }
     var cameraFlash by remember { mutableStateOf(appPreferences.cameraFlash) }
     var minSharpness by remember { mutableIntStateOf(appPreferences.minSharpness) }
@@ -63,6 +70,13 @@ fun SettingsScreen(
     var showCameraInfo by remember { mutableStateOf(false) }
     var selectedTheme by remember { mutableStateOf(appPreferences.themePreset) }
     var selectedDarkMode by remember { mutableStateOf(appPreferences.darkMode) }
+    var geminiApiKey by remember { mutableStateOf(appPreferences.geminiApiKey) }
+    var geminiKeyVisible by remember { mutableStateOf(false) }
+    var cumulativePromptTokens by remember { mutableLongStateOf(appPreferences.cumulativePromptTokens) }
+    var cumulativeCandidatesTokens by remember { mutableLongStateOf(appPreferences.cumulativeCandidatesTokens) }
+    var cumulativeTotalTokens by remember { mutableLongStateOf(appPreferences.cumulativeTotalTokens) }
+    var tokenUsageResetAt by remember { mutableLongStateOf(appPreferences.tokenUsageResetAt) }
+    var showTokenResetConfirm by remember { mutableStateOf(false) }
 
     // メッセージ状態
     var allExportMessage by remember { mutableStateOf<String?>(null) }
@@ -73,6 +87,8 @@ fun SettingsScreen(
     var depositImportMessage by remember { mutableStateOf<String?>(null) }
     var masterExportMessage by remember { mutableStateOf<String?>(null) }
     var masterImportMessage by remember { mutableStateOf<String?>(null) }
+    var receiptExportMessage by remember { mutableStateOf<String?>(null) }
+    var receiptImportMessage by remember { mutableStateOf<String?>(null) }
     var recountMessage by remember { mutableStateOf<String?>(null) }
     var isRecounting by remember { mutableStateOf(false) }
 
@@ -82,6 +98,18 @@ fun SettingsScreen(
     var clearDataType by remember { mutableStateOf(DataType.ALL) }
     var clearMessage by remember { mutableStateOf<String?>(null) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
+
+    // AoiroChobo 科目・摘要の取込
+    var vocabImportResult by remember {
+        mutableStateOf<AoiroChoboVocabImporter.Result?>(null)
+    }
+    var isVocabImporting by remember { mutableStateOf(false) }
+    var vocabMeta by remember {
+        mutableStateOf<AoiroChoboVocabMeta?>(null)
+    }
+    LaunchedEffect(vocabImportResult) {
+        vocabMeta = db.aoiroChoboVocabDao().getMeta()
+    }
     var isClearing by remember { mutableStateOf(false) }
 
     // 全データエクスポート用ランチャー
@@ -180,6 +208,45 @@ fun SettingsScreen(
         }
     }
 
+    // レシート・領収書エクスポート用ランチャー
+    val receiptExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri?.let {
+            scope.launch {
+                val result = exportReceiptData(context, db, it)
+                receiptExportMessage = result
+            }
+        }
+    }
+
+    // AoiroChobo 科目・摘要（vocabulary.json）取込用ランチャー。
+    // 既存の「インポート」は自前DBのバックアップ復元で、外部マスタの取込とは性質が違うため
+    // 同じ選択肢に混ぜず独立した項目にする（REPLY-phone-2026-09-22.md §2-1）
+    val vocabImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            scope.launch {
+                isVocabImporting = true
+                vocabImportResult = AoiroChoboVocabImporter.import(context, db, it)
+                isVocabImporting = false
+            }
+        }
+    }
+
+    // レシート・領収書インポート用ランチャー
+    val receiptImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            scope.launch {
+                val result = importReceiptData(context, db, it)
+                receiptImportMessage = result
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -206,6 +273,97 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            // ========== 作業年 ==========
+            SettingSection(title = "作業年")
+
+            Text(
+                text = "JA購買伝票・JA預金・レシートの入力／一覧のデフォルト年になります（1月〜12月区切り）。年をまたぐ作業をする際に間違えやすいため、必要な時だけここで切り替えてください。",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            SettingItem(
+                title = "現在の作業年",
+                subtitle = "令和${eraYear}年 / 西暦${eraYear + 2018}年"
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (eraYear > 1) {
+                                eraYear--
+                                appPreferences.eraYear = eraYear
+                            }
+                        }
+                    ) {
+                        Text("-", fontSize = 24.sp)
+                    }
+
+                    Text(
+                        text = "${eraYear}年",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.width(60.dp)
+                    )
+
+                    IconButton(
+                        onClick = {
+                            eraYear++
+                            appPreferences.eraYear = eraYear
+                        }
+                    ) {
+                        Text("+", fontSize = 24.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ========== 連携会計ソフト ==========
+            SettingSection(title = "📊 連携会計ソフト")
+
+            Text(
+                text = "購買品目リスト・通帳摘要リストのマッチング対象が切り替わります",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            AccountingSoftware.entries.forEach { software ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            selectedAccountingSoftware = software
+                            appPreferences.accountingSoftware = software
+                        }
+                        .padding(vertical = 4.dp)
+                ) {
+                    RadioButton(
+                        selected = selectedAccountingSoftware == software,
+                        onClick = {
+                            selectedAccountingSoftware = software
+                            appPreferences.accountingSoftware = software
+                        }
+                    )
+                    Column {
+                        Text(software.displayName, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        if (software == AccountingSoftware.AOIRO) {
+                            Text(
+                                "科目・摘要は PC から取り込んだものを使う",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // ========== テーマ ==========
             SettingSection(title = "🎨 テーマ")
 
@@ -251,12 +409,12 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ========== 購買部門 ==========
-            SettingSection(title = "🌾 購買部門")
+            // ========== 表示設定 ==========
+            SettingSection(title = "📱 表示設定")
 
             SettingItem(
-                title = "撮影・入力のデフォルト年",
-                subtitle = "令和${eraYear}年 / 西暦${2018 + eraYear}年　（年月固定・新規伝票に適用）"
+                title = "一覧文字サイズ",
+                subtitle = "通帳・レシート・摘要マッチング画面の文字サイズ（現在: ${listFontSize.toInt()}sp）"
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -264,32 +422,194 @@ fun SettingsScreen(
                 ) {
                     IconButton(
                         onClick = {
-                            if (eraYear > 1) {
-                                eraYear--
-                                appPreferences.eraYear = eraYear
+                            if (listFontSize > 10f) {
+                                listFontSize -= 1f
+                                appPreferences.listFontSize = listFontSize
                             }
-                        }
+                        },
+                        enabled = listFontSize > 10f
                     ) {
-                        Text("-", fontSize = 24.sp)
+                        Text("A-", fontSize = 14.sp)
                     }
-
                     Text(
-                        text = "${eraYear}年",
+                        text = "${listFontSize.toInt()}",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium,
-                        modifier = Modifier.width(60.dp)
+                        modifier = Modifier.width(32.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
-
                     IconButton(
                         onClick = {
-                            eraYear++
-                            appPreferences.eraYear = eraYear
-                        }
+                            if (listFontSize < 20f) {
+                                listFontSize += 1f
+                                appPreferences.listFontSize = listFontSize
+                            }
+                        },
+                        enabled = listFontSize < 20f
                     ) {
-                        Text("+", fontSize = 24.sp)
+                        Text("A+", fontSize = 16.sp)
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ========== 撮影設定 ==========
+            SettingSection(title = "📷 撮影設定")
+
+            SettingItem(
+                title = "フラッシュ",
+                subtitle = if (cameraFlash) "ON" else "OFF"
+            ) {
+                Switch(
+                    checked = cameraFlash,
+                    onCheckedChange = {
+                        cameraFlash = it
+                        appPreferences.cameraFlash = it
+                    }
+                )
+            }
+
+            SettingItem(
+                title = "カメラ情報",
+                subtitle = "デバイス情報を表示"
+            ) {
+                TextButton(onClick = { showCameraInfo = true }) {
+                    Text("表示")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ========== AI設定 ==========
+            SettingSection(title = "🤖 AI設定")
+
+            Text(
+                text = "Gemini APIキー",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+            )
+            Text(
+                text = "未設定・オフライン時は手動入力が必要です",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "無料枠のAPIキーは入力画像・出力内容がGoogle側のモデル改善に" +
+                            "利用される場合があります。JA購買伝票には取引先情報が含まれるため、" +
+                            "Google Cloud Consoleで請求先アカウントを設定した「課金有効化キー」の" +
+                            "使用を推奨します（設定手順は開発ガイドライン参照）。",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = geminiApiKey,
+                onValueChange = { geminiApiKey = it },
+                placeholder = { Text("AIza...") },
+                visualTransformation = if (geminiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    Row {
+                        TextButton(onClick = { geminiKeyVisible = !geminiKeyVisible }) {
+                            Text(if (geminiKeyVisible) "隠す" else "表示", fontSize = 12.sp)
+                        }
+                        IconButton(onClick = {
+                            appPreferences.geminiApiKey = geminiApiKey
+                        }) {
+                            Icon(Icons.Default.Save, contentDescription = "保存")
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 累計トークン使用量（他者への請求目的の集計。JA購買伝票OCR・レシートOCR・
+            // 3画面のAI科目提案すべての合算値。リセットボタンを押すまで加算し続ける）
+            Text(
+                text = "累計トークン使用量",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Text(
+                text = if (tokenUsageResetAt > 0) {
+                    SimpleDateFormat("yyyy/MM/dd", Locale.JAPAN).format(Date(tokenUsageResetAt)) + " 以降の累計"
+                } else {
+                    "リセットなし（記録開始以降の累計）"
+                },
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("入力: ${cumulativePromptTokens}トークン", fontSize = 14.sp)
+                    Text("出力: ${cumulativeCandidatesTokens}トークン", fontSize = 14.sp)
+                    Text(
+                        "合計: ${cumulativeTotalTokens}トークン",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            TextButton(
+                onClick = { showTokenResetConfirm = true },
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Text("リセット")
+            }
+
+            if (showTokenResetConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showTokenResetConfirm = false },
+                    title = { Text("累計トークン数をリセット") },
+                    text = { Text("現在の累計をリセットして、この時点から新たに集計を開始します。よろしいですか？") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            appPreferences.resetTokenUsage()
+                            cumulativePromptTokens = appPreferences.cumulativePromptTokens
+                            cumulativeCandidatesTokens = appPreferences.cumulativeCandidatesTokens
+                            cumulativeTotalTokens = appPreferences.cumulativeTotalTokens
+                            tokenUsageResetAt = appPreferences.tokenUsageResetAt
+                            showTokenResetConfirm = false
+                        }) {
+                            Text("リセットする", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showTokenResetConfirm = false }) { Text("キャンセル") }
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ========== JA購買伝票 ==========
+            SettingSection(title = "🌾 JA購買伝票")
 
             SettingItem(
                 title = "最低鮮鋭度",
@@ -328,50 +648,10 @@ fun SettingsScreen(
                 }
             }
 
-            SettingItem(
-                title = "フラッシュ",
-                subtitle = if (cameraFlash) "ON" else "OFF"
-            ) {
-                Switch(
-                    checked = cameraFlash,
-                    onCheckedChange = {
-                        cameraFlash = it
-                        appPreferences.cameraFlash = it
-                    }
-                )
-            }
-
-            SettingItem(
-                title = "カメラ情報",
-                subtitle = "デバイス情報を表示"
-            ) {
-                TextButton(onClick = { showCameraInfo = true }) {
-                    Text("表示")
-                }
-            }
-
-            SettingItem(
-                title = "OCR学習状況",
-                subtitle = "誤認識パターンの学習データベースを表示"
-            ) {
-                TextButton(onClick = onNavigateToOcrLearningStatus) {
-                    Text("表示")
-                }
-            }
-
-            SettingItem(
-                title = "勘定科目設定",
-                subtitle = "らくらく青色申告・弥生会計の勘定科目を管理"
-            ) {
-                TextButton(onClick = onNavigateToAccountSettings) {
-                    Text("表示")
-                }
-            }
-
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ========== 預金部門 ==========
-            SettingSection(title = "🏦 預金部門")
+            // ========== JA預金 ==========
+            SettingSection(title = "🏦 JA預金")
 
             SettingItem(
                 title = "金額を非表示",
@@ -401,6 +681,7 @@ fun SettingsScreen(
                     DataType.PURCHASE -> purchaseExportMessage
                     DataType.DEPOSIT -> depositExportMessage
                     DataType.MASTER -> masterExportMessage
+                    DataType.RECEIPT -> receiptExportMessage
                 },
                 onExecute = {
                     val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
@@ -409,6 +690,7 @@ fun SettingsScreen(
                         DataType.PURCHASE -> purchaseExportLauncher.launch("purchase_$timestamp.json")
                         DataType.DEPOSIT -> depositExportLauncher.launch("deposit_$timestamp.json")
                         DataType.MASTER -> masterExportLauncher.launch("master_$timestamp.json")
+                        DataType.RECEIPT -> receiptExportLauncher.launch("receipt_$timestamp.json")
                     }
                 }
             )
@@ -425,6 +707,7 @@ fun SettingsScreen(
                     DataType.PURCHASE -> purchaseImportMessage
                     DataType.DEPOSIT -> depositImportMessage
                     DataType.MASTER -> masterImportMessage
+                    DataType.RECEIPT -> receiptImportMessage
                 },
                 onExecute = {
                     when (importDataType) {
@@ -432,9 +715,35 @@ fun SettingsScreen(
                         DataType.PURCHASE -> purchaseImportLauncher.launch(arrayOf("application/json"))
                         DataType.DEPOSIT -> depositImportLauncher.launch(arrayOf("application/json"))
                         DataType.MASTER -> masterImportLauncher.launch(arrayOf("application/json"))
+                        DataType.RECEIPT -> receiptImportLauncher.launch(arrayOf("application/json"))
                     }
                 }
             )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // AoiroChobo（PC会計アプリ）の科目・摘要スナップショットの取込。
+            // 上の「インポート」は自前DBのバックアップ復元で、外部マスタの取込とは性質が違うため
+            // 同じ選択肢に混ぜず独立した項目にしている（REPLY-phone-2026-09-22.md §2-1）
+            SettingItem(
+                title = "AoiroChobo 科目・摘要を取り込む",
+                subtitle = vocabMeta?.let { meta ->
+                    val age = AoiroChoboVocabImporter.ageInDays(meta.generatedAt)
+                    val freshness = when {
+                        age == null -> "生成日時が読めないファイル"
+                        age == 0L -> "今日書き出したファイル"
+                        else -> "${age}日前に書き出したファイル"
+                    }
+                    "${meta.fiscalYear}年度を取込済み（$freshness）"
+                } ?: "未取込。AoiroChoboの「スマホ連携」で書き出したJSONを選びます"
+            ) {
+                TextButton(
+                    onClick = { vocabImportLauncher.launch(arrayOf("application/json")) },
+                    enabled = !isVocabImporting
+                ) {
+                    Text(if (isVocabImporting) "取込中..." else "取込")
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -489,6 +798,14 @@ fun SettingsScreen(
                 subtitle = "2025-12-14"
             ) {}
         }
+    }
+
+    // AoiroChobo 科目・摘要の取込結果
+    vocabImportResult?.let { result ->
+        AoiroChoboVocabImportDialog(
+            result = result,
+            onDismiss = { vocabImportResult = null }
+        )
     }
 
     // カメラ情報ダイアログ
@@ -676,9 +993,10 @@ private fun SettingItem(
  */
 enum class DataType(val displayName: String) {
     ALL("全データ"),
+    MASTER("マスタデータ"),
     PURCHASE("購買伝票"),
     DEPOSIT("通帳データ"),
-    MASTER("マスタデータ")
+    RECEIPT("レシート・領収書")
 }
 
 /**
@@ -707,64 +1025,38 @@ private fun DataManagementSection(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // ラジオボタングループ（2行表示）
-        // 1行目: 全データ、マスタデータ
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            listOf(DataType.ALL, DataType.MASTER).forEach { type ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    RadioButton(
-                        selected = selectedType == type,
-                        onClick = { onTypeSelected(type) },
-                        colors = if (isDestructive) {
-                            RadioButtonDefaults.colors(
-                                selectedColor = MaterialTheme.colorScheme.error
-                            )
-                        } else {
-                            RadioButtonDefaults.colors()
-                        }
-                    )
-                    Text(
-                        text = type.displayName,
-                        fontSize = 14.sp,
-                        maxLines = 1
-                    )
+        // ラジオボタングループ（2列×N行。DataType.entriesの宣言順に2件ずつ並べる）
+        DataType.entries.chunked(2).forEach { rowTypes ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                rowTypes.forEach { type ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        RadioButton(
+                            selected = selectedType == type,
+                            onClick = { onTypeSelected(type) },
+                            colors = if (isDestructive) {
+                                RadioButtonDefaults.colors(
+                                    selectedColor = MaterialTheme.colorScheme.error
+                                )
+                            } else {
+                                RadioButtonDefaults.colors()
+                            }
+                        )
+                        Text(
+                            text = type.displayName,
+                            fontSize = 14.sp,
+                            maxLines = 1
+                        )
+                    }
                 }
-            }
-        }
-        // 2行目: 購買伝票、通帳データ
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            listOf(DataType.PURCHASE, DataType.DEPOSIT).forEach { type ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    RadioButton(
-                        selected = selectedType == type,
-                        onClick = { onTypeSelected(type) },
-                        colors = if (isDestructive) {
-                            RadioButtonDefaults.colors(
-                                selectedColor = MaterialTheme.colorScheme.error
-                            )
-                        } else {
-                            RadioButtonDefaults.colors()
-                        }
-                    )
-                    Text(
-                        text = type.displayName,
-                        fontSize = 14.sp,
-                        maxLines = 1
-                    )
+                if (rowTypes.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -859,7 +1151,9 @@ data class PurchaseExportData(
 data class DepositExportData(
     val exportDate: String,
     val dataType: String = "deposit",
-    val depositMeisai: List<com.example.greenframeocr.data.DepositMeisai>
+    val depositMeisai: List<com.example.greenframeocr.data.DepositMeisai>,
+    // DB v39 で追加。古いバックアップには無い（null）
+    val passbooks: List<com.example.greenframeocr.data.Passbook>? = null
 )
 
 /**
@@ -868,12 +1162,139 @@ data class DepositExportData(
 data class MasterExportData(
     val exportDate: String,
     val dataType: String = "master",
-    val version: Int = 2,
+    val version: Int = 3,
     val productMasters: List<com.example.greenframeocr.data.ProductMaster>,
     val ocrVariants: List<com.example.greenframeocr.data.OcrVariant>,
-    val rakurakuTekiyou: List<com.example.greenframeocr.data.RakurakuTekiyou>? = null,
-    val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>? = null
+    val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>? = null,
+    // v3で追加：簿記ソフトの勘定科目マスタ
+    val yayoiAccounts: List<com.example.greenframeocr.data.YayoiAccount>? = null
 )
+
+/**
+ * レシート・領収書データエクスポート用のデータクラス
+ */
+data class ReceiptExportData(
+    val exportDate: String,
+    val dataType: String = "receipt",
+    val generalReceipts: List<com.example.greenframeocr.data.GeneralReceipt>,
+    val generalReceiptItems: List<com.example.greenframeocr.data.GeneralReceiptItem>,
+    val invoiceStores: List<com.example.greenframeocr.data.InvoiceStore>,
+    val generalItemMasters: List<com.example.greenframeocr.data.GeneralItemMaster>,
+    val receiptPaymentMethodRules: List<com.example.greenframeocr.data.ReceiptPaymentMethodRule>
+)
+
+/**
+ * AoiroChobo の科目・摘要を取り込んだ結果。
+ *
+ * 契約が「安全側に失敗する」設計なので、黙って進まず何が起きたかを全部見せる。
+ * とくに「紐付けを外した」は、次に仕訳を出したときその科目が UnmatchedAccount になる
+ * という予告なので、件数ではなく具体名を並べる。
+ */
+@Composable
+private fun AoiroChoboVocabImportDialog(
+    result: AoiroChoboVocabImporter.Result,
+    onDismiss: () -> Unit
+) {
+    val title = when (result) {
+        is AoiroChoboVocabImporter.Result.Aborted -> "取り込めませんでした"
+        is AoiroChoboVocabImporter.Result.Skipped -> "前回と同じファイルです"
+        is AoiroChoboVocabImporter.Result.Imported -> "取り込みました"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                when (result) {
+                    is AoiroChoboVocabImporter.Result.Aborted -> {
+                        Text(result.message)
+                    }
+
+                    is AoiroChoboVocabImporter.Result.Skipped -> {
+                        Text(
+                            "前回取り込んだファイルと中身が同じ（contentHash が一致）でした。" +
+                                "科目・摘要は変更していません。"
+                        )
+                        Text(
+                            text = "${result.fiscalYear}年度" + freshnessSuffix(result.ageDays),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    is AoiroChoboVocabImporter.Result.Imported -> {
+                        Text("科目 ${result.accountCount}件・摘要 ${result.memoCount}件")
+                        Text(
+                            text = "${result.fiscalYear}年度" + freshnessSuffix(result.ageDays),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (result.fiscalYearChanged) {
+                            Text(
+                                "年度が変わったので、前の年度の科目・摘要は破棄しました（保持は1年度分）。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        if (result.unlinkedByRename.isNotEmpty()) {
+                            Divider()
+                            Text(
+                                "名前が変わったため紐付けを外しました（${result.unlinkedByRename.size}件）",
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                "AoiroChobo 側で科目が別の用途に作り替えられた合図です。" +
+                                    "付け直すまで、この科目を使う仕訳は「要確認」で出ます。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            result.unlinkedByRename.forEach {
+                                Text("・$it", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+
+                        if (result.danglingLinks > 0) {
+                            Divider()
+                            Text("ファイルから消えた科目・摘要を指している紐付け: ${result.danglingLinks}件")
+                            Text(
+                                "AoiroChobo 側で無効化されたものです。付け直すまで「要確認」で出ます。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        Divider()
+                        Text(
+                            "科目がまだ決まっていない学習: ${result.learningWithoutAccount}件" +
+                                "（摘要だけ未確定: ${result.learningWithoutMemo}件）"
+                        )
+
+                        if (result.warnings.isNotEmpty()) {
+                            Divider()
+                            Text("警告", color = MaterialTheme.colorScheme.error)
+                            result.warnings.forEach {
+                                Text("・$it", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Text(
+                                "取り込みは止めていません。値はそのまま保持しています。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("OK") }
+        }
+    )
+}
+
+private fun freshnessSuffix(ageDays: Long?): String = when {
+    ageDays == null -> "（生成日時が読めないファイル）"
+    ageDays == 0L -> "（今日書き出したファイル）"
+    else -> "（${ageDays}日前に書き出したファイル）"
+}
 
 /**
  * 全データエクスポート用のデータクラス
@@ -881,7 +1302,7 @@ data class MasterExportData(
 data class AllExportData(
     val exportDate: String,
     val dataType: String = "all",
-    val version: Int = 1,
+    val version: Int = 2,
     // 購買伝票
     val receiptItems: List<com.example.greenframeocr.data.ReceiptItem>,
     val sheetData: List<com.example.greenframeocr.data.SheetData>,
@@ -891,8 +1312,16 @@ data class AllExportData(
     // マスタデータ
     val productMasters: List<com.example.greenframeocr.data.ProductMaster>,
     val ocrVariants: List<com.example.greenframeocr.data.OcrVariant>,
-    val rakurakuTekiyou: List<com.example.greenframeocr.data.RakurakuTekiyou>,
-    val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>
+    val tekiyouMatchingRules: List<com.example.greenframeocr.data.TekiyouMatchingRule>,
+    // v2で追加：簿記ソフトの勘定科目マスタ・レシート領収書
+    val yayoiAccounts: List<com.example.greenframeocr.data.YayoiAccount>? = null,
+    val generalReceipts: List<com.example.greenframeocr.data.GeneralReceipt>? = null,
+    val generalReceiptItems: List<com.example.greenframeocr.data.GeneralReceiptItem>? = null,
+    val invoiceStores: List<com.example.greenframeocr.data.InvoiceStore>? = null,
+    val generalItemMasters: List<com.example.greenframeocr.data.GeneralItemMaster>? = null,
+    val receiptPaymentMethodRules: List<com.example.greenframeocr.data.ReceiptPaymentMethodRule>? = null,
+    // DB v39 で追加：通帳（複数口座）
+    val passbooks: List<com.example.greenframeocr.data.Passbook>? = null
 )
 
 /**
@@ -912,8 +1341,14 @@ private suspend fun exportAllData(
             depositMeisai = db.depositMeisaiDao().getAll(),
             productMasters = db.productMasterDao().getAll(),
             ocrVariants = db.ocrVariantDao().getAll(),
-            rakurakuTekiyou = db.rakurakuTekiyouDao().getAll(),
-            tekiyouMatchingRules = db.tekiyouMatchingRuleDao().getAll()
+            tekiyouMatchingRules = db.tekiyouMatchingRuleDao().getAll(),
+            yayoiAccounts = db.yayoiAccountDao().getAll(),
+            generalReceipts = db.generalReceiptDao().getAllReceiptsOnce(),
+            generalReceiptItems = db.generalReceiptDao().getAllItemsOnce(),
+            invoiceStores = db.invoiceStoreDao().getAllOnce(),
+            generalItemMasters = db.generalItemMasterDao().getAll(),
+            receiptPaymentMethodRules = db.receiptPaymentMethodRuleDao().getAll(),
+            passbooks = db.passbookDao().getAll()
         )
 
         val gson = GsonBuilder().setPrettyPrinting().create()
@@ -923,10 +1358,51 @@ private suspend fun exportAllData(
             outputStream.write(json.toByteArray())
         }
 
-        "成功: 購買${exportData.receiptItems.size}件, 通帳${exportData.depositMeisai.size}件, マスタ${exportData.productMasters.size}件"
+        "成功: 購買${exportData.receiptItems.size}件, 通帳${exportData.depositMeisai.size}件, マスタ${exportData.productMasters.size}件, レシート${exportData.generalReceipts?.size ?: 0}件"
     } catch (e: Exception) {
         "失敗: ${e.message}"
     }
+}
+
+/**
+ * 旧バージョンのバックアップJSONには uuid フィールドが無い。Gson はコンストラクタの
+ * デフォルト値を使わずフィールドを null のまま残すため、NOT NULL 列の
+ * receipt_items.uuid / general_receipts.uuid に null が入って落ちる。復元時にここで採番し直す。
+ */
+private fun com.example.greenframeocr.data.ReceiptItem.withRestoredUuid():
+    com.example.greenframeocr.data.ReceiptItem {
+    val restored: String? = uuid
+    return if (restored.isNullOrBlank()) copy(uuid = java.util.UUID.randomUUID().toString()) else this
+}
+
+private fun com.example.greenframeocr.data.GeneralReceipt.withRestoredUuid():
+    com.example.greenframeocr.data.GeneralReceipt {
+    val restored: String? = uuid
+    return if (restored.isNullOrBlank()) copy(uuid = java.util.UUID.randomUUID().toString()) else this
+}
+
+/**
+ * 通帳と預金明細を復元する。
+ *
+ * v39 より前のバックアップには通帳が無く、明細の passbookId も無い（Gson は Int を 0 のまま残す）。
+ * その明細は 1 冊目に入れる。明細が指す通帳がバックアップにも端末にも無ければ「通帳N」を作る
+ * （通帳の無い明細は画面から選べなくなるため）。
+ */
+private suspend fun restoreDeposits(
+    db: ReceiptDatabase,
+    passbooks: List<com.example.greenframeocr.data.Passbook>?,
+    meisai: List<com.example.greenframeocr.data.DepositMeisai>
+) {
+    val passbookDao = db.passbookDao()
+    passbooks?.takeIf { it.isNotEmpty() }?.let { passbookDao.upsertAll(it) }
+    val restored = meisai.map {
+        if (it.passbookId <= 0) it.copy(passbookId = com.example.greenframeocr.data.Passbook.DEFAULT_ID) else it
+    }
+    val existingIds = passbookDao.ensureDefault().map { it.id }.toSet()
+    restored.map { it.passbookId }.distinct().filter { it !in existingIds }.forEach { id ->
+        passbookDao.insert(com.example.greenframeocr.data.Passbook(id = id, name = "通帳$id", displayOrder = id))
+    }
+    db.depositMeisaiDao().insertAll(restored)
 }
 
 /**
@@ -946,20 +1422,28 @@ private suspend fun importAllData(
         val importData = gson.fromJson(json, AllExportData::class.java)
 
         // 購買伝票
-        db.receiptDao().insertReceiptItems(importData.receiptItems)
+        db.receiptDao().insertReceiptItems(importData.receiptItems.map { it.withRestoredUuid() })
         importData.sheetData.forEach { db.receiptDao().insertSheetData(it) }
         importData.monthlyData.forEach { db.receiptDao().insertMonthlyData(it) }
 
         // 通帳データ
-        db.depositMeisaiDao().insertAll(importData.depositMeisai)
+        restoreDeposits(db, importData.passbooks, importData.depositMeisai)
 
         // マスタデータ
         importData.productMasters.forEach { db.productMasterDao().insertIgnore(it.withComputedKey()) }
         importData.ocrVariants.forEach { db.ocrVariantDao().insertIgnore(it) }
-        importData.rakurakuTekiyou.forEach { db.rakurakuTekiyouDao().insertIgnore(it) }
         importData.tekiyouMatchingRules.forEach { db.tekiyouMatchingRuleDao().insertIgnore(it) }
+        importData.yayoiAccounts?.let { mergeYayoiAccounts(db, it) }
 
-        "成功: 購買${importData.receiptItems.size}件, 通帳${importData.depositMeisai.size}件"
+        // レシート・領収書（IDを保持したまま復元。general_receipt_itemsはreceiptId経由でFK参照するため
+        // 先にgeneral_receiptsを復元する）
+        importData.generalReceipts?.forEach { db.generalReceiptDao().insertReceipt(it.withRestoredUuid()) }
+        importData.generalReceiptItems?.let { db.generalReceiptDao().insertItems(it) }
+        importData.invoiceStores?.let { db.invoiceStoreDao().upsertAll(it) }
+        importData.generalItemMasters?.let { db.generalItemMasterDao().upsertAll(it) }
+        importData.receiptPaymentMethodRules?.let { db.receiptPaymentMethodRuleDao().insertAll(it) }
+
+        "成功: 購買${importData.receiptItems.size}件, 通帳${importData.depositMeisai.size}件, レシート${importData.generalReceipts?.size ?: 0}件"
     } catch (e: Exception) {
         "失敗: ${e.message}"
     }
@@ -1014,7 +1498,7 @@ private suspend fun importPurchaseData(
         val gson = Gson()
         val importData = gson.fromJson(json, PurchaseExportData::class.java)
 
-        db.receiptDao().insertReceiptItems(importData.receiptItems)
+        db.receiptDao().insertReceiptItems(importData.receiptItems.map { it.withRestoredUuid() })
         importData.sheetData.forEach { db.receiptDao().insertSheetData(it) }
         importData.monthlyData.forEach { db.receiptDao().insertMonthlyData(it) }
 
@@ -1037,7 +1521,8 @@ private suspend fun exportDepositData(
 
         val exportData = DepositExportData(
             exportDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
-            depositMeisai = depositMeisai
+            depositMeisai = depositMeisai,
+            passbooks = db.passbookDao().getAll()
         )
 
         val gson = GsonBuilder().setPrettyPrinting().create()
@@ -1069,7 +1554,7 @@ private suspend fun importDepositData(
         val gson = Gson()
         val importData = gson.fromJson(json, DepositExportData::class.java)
 
-        db.depositMeisaiDao().insertAll(importData.depositMeisai)
+        restoreDeposits(db, importData.passbooks, importData.depositMeisai)
 
         "成功: ${importData.depositMeisai.size}件"
     } catch (e: Exception) {
@@ -1089,16 +1574,16 @@ private suspend fun exportMasterData(
         // データベースから全データを取得
         val productMasters = db.productMasterDao().getAll()
         val ocrVariants = db.ocrVariantDao().getAll()
-        val rakurakuTekiyou = db.rakurakuTekiyouDao().getAll()
         val tekiyouMatchingRules = db.tekiyouMatchingRuleDao().getAll()
+        val yayoiAccounts = db.yayoiAccountDao().getAll()
 
         // エクスポート用データを作成
         val exportData = MasterExportData(
             exportDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
             productMasters = productMasters,
             ocrVariants = ocrVariants,
-            rakurakuTekiyou = rakurakuTekiyou,
-            tekiyouMatchingRules = tekiyouMatchingRules
+            tekiyouMatchingRules = tekiyouMatchingRules,
+            yayoiAccounts = yayoiAccounts
         )
 
         // JSONに変換
@@ -1110,7 +1595,7 @@ private suspend fun exportMasterData(
             outputStream.write(json.toByteArray())
         }
 
-        "成功: 商品${productMasters.size}件, 学習${ocrVariants.size}件, 摘要${rakurakuTekiyou.size}件, ルール${tekiyouMatchingRules.size}件"
+        "成功: 商品${productMasters.size}件, 学習${ocrVariants.size}件, ルール${tekiyouMatchingRules.size}件, 弥生科目${yayoiAccounts.size}件"
     } catch (e: Exception) {
         "エクスポート失敗: ${e.message}"
     }
@@ -1184,13 +1669,6 @@ private suspend fun importMasterData(
             }
         }
 
-        // 摘要辞書のインポート
-        var tekiyouAdded = 0
-        importData.rakurakuTekiyou?.forEach { tekiyou ->
-            val result = db.rakurakuTekiyouDao().insertIgnore(tekiyou.copy(id = 0))
-            if (result > 0) tekiyouAdded++
-        }
-
         // マッチングルールのインポート
         var ruleAdded = 0
         importData.tekiyouMatchingRules?.forEach { rule ->
@@ -1198,9 +1676,109 @@ private suspend fun importMasterData(
             if (result > 0) ruleAdded++
         }
 
-        "成功: 商品+${productAdded}, 学習+${variantAdded}, 摘要+${tekiyouAdded}, ルール+${ruleAdded}"
+        // 簿記ソフト勘定科目のインポート（accountCodeで既存科目を更新／なければ新規追加）
+        val (yayoiAdded, yayoiUpdated) = importData.yayoiAccounts?.let { mergeYayoiAccounts(db, it) } ?: (0 to 0)
+
+        "成功: 商品+${productAdded}, 学習+${variantAdded}, ルール+${ruleAdded}, " +
+            "弥生科目+${yayoiAdded}/更新${yayoiUpdated}"
     } catch (e: Exception) {
         "インポート失敗: ${e.message}"
+    }
+}
+
+/**
+ * 弥生勘定科目マスタのマージインポート（accountCodeが既存科目と一致すれば更新、なければ新規追加）。
+ * YayoiAccountSettingsScreenのCSVインポートと同じマージ方式（id/parentId/isEnabledは既存側を維持）
+ */
+private suspend fun mergeYayoiAccounts(
+    db: ReceiptDatabase,
+    accounts: List<com.example.greenframeocr.data.YayoiAccount>
+): Pair<Int, Int> {
+    val dao = db.yayoiAccountDao()
+    var added = 0
+    var updated = 0
+    accounts.forEach { account ->
+        val existing = account.accountCode?.let { dao.getByCode(it) }
+        if (existing != null) {
+            dao.update(
+                account.copy(
+                    id = existing.id,
+                    parentId = existing.parentId,
+                    isEnabled = existing.isEnabled
+                )
+            )
+            updated++
+        } else {
+            dao.insert(account.copy(id = 0, parentId = null))
+            added++
+        }
+    }
+    return added to updated
+}
+
+/**
+ * レシート・領収書データをエクスポート
+ */
+private suspend fun exportReceiptData(
+    context: Context,
+    db: ReceiptDatabase,
+    uri: android.net.Uri
+): String = withContext(Dispatchers.IO) {
+    try {
+        val generalReceipts = db.generalReceiptDao().getAllReceiptsOnce()
+        val generalReceiptItems = db.generalReceiptDao().getAllItemsOnce()
+        val invoiceStores = db.invoiceStoreDao().getAllOnce()
+        val generalItemMasters = db.generalItemMasterDao().getAll()
+        val receiptPaymentMethodRules = db.receiptPaymentMethodRuleDao().getAll()
+
+        val exportData = ReceiptExportData(
+            exportDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
+            generalReceipts = generalReceipts,
+            generalReceiptItems = generalReceiptItems,
+            invoiceStores = invoiceStores,
+            generalItemMasters = generalItemMasters,
+            receiptPaymentMethodRules = receiptPaymentMethodRules
+        )
+
+        val gson = GsonBuilder().setPrettyPrinting().create()
+        val json = gson.toJson(exportData)
+
+        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+            outputStream.write(json.toByteArray())
+        }
+
+        "成功: レシート${generalReceipts.size}件, 明細${generalReceiptItems.size}件"
+    } catch (e: Exception) {
+        "失敗: ${e.message}"
+    }
+}
+
+/**
+ * レシート・領収書データをインポート（IDを保持したまま復元。同一IDの既存データは上書きされる）
+ */
+private suspend fun importReceiptData(
+    context: Context,
+    db: ReceiptDatabase,
+    uri: android.net.Uri
+): String = withContext(Dispatchers.IO) {
+    try {
+        val json = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            inputStream.readBytes().toString(Charsets.UTF_8)
+        } ?: return@withContext "ファイル読み込み失敗"
+
+        val gson = Gson()
+        val importData = gson.fromJson(json, ReceiptExportData::class.java)
+
+        // general_receipt_itemsはreceiptId経由でFK参照するため、先にgeneral_receiptsを復元する
+        importData.generalReceipts.forEach { db.generalReceiptDao().insertReceipt(it.withRestoredUuid()) }
+        db.generalReceiptDao().insertItems(importData.generalReceiptItems)
+        db.invoiceStoreDao().upsertAll(importData.invoiceStores)
+        db.generalItemMasterDao().upsertAll(importData.generalItemMasters)
+        db.receiptPaymentMethodRuleDao().insertAll(importData.receiptPaymentMethodRules)
+
+        "成功: レシート${importData.generalReceipts.size}件, 明細${importData.generalReceiptItems.size}件"
+    } catch (e: Exception) {
+        "失敗: ${e.message}"
     }
 }
 
@@ -1260,11 +1838,17 @@ private suspend fun clearData(
                 db.receiptDao().deleteAllSheetData()
                 // 通帳データ
                 db.depositMeisaiDao().deleteAll()
+                db.passbookDao().deleteAll()
                 // マスタデータ
                 db.ocrVariantDao().deleteAll()
                 db.productMasterDao().deleteAll()
-                db.rakurakuTekiyouDao().deleteAll()
                 db.tekiyouMatchingRuleDao().deleteAll()
+                db.yayoiAccountDao().deleteAll()
+                // レシート・領収書
+                db.generalReceiptDao().deleteAllReceipts()
+                db.invoiceStoreDao().deleteAll()
+                db.generalItemMasterDao().deleteAll()
+                db.receiptPaymentMethodRuleDao().deleteAll()
                 "全データを削除しました"
             }
             DataType.PURCHASE -> {
@@ -1280,9 +1864,16 @@ private suspend fun clearData(
             DataType.MASTER -> {
                 db.ocrVariantDao().deleteAll()
                 db.productMasterDao().deleteAll()
-                db.rakurakuTekiyouDao().deleteAll()
                 db.tekiyouMatchingRuleDao().deleteAll()
-                "マスタデータを削除しました"
+                db.yayoiAccountDao().deleteAll()
+                "マスタデータ（簿記ソフト勘定科目を含む）を削除しました"
+            }
+            DataType.RECEIPT -> {
+                db.generalReceiptDao().deleteAllReceipts()
+                db.invoiceStoreDao().deleteAll()
+                db.generalItemMasterDao().deleteAll()
+                db.receiptPaymentMethodRuleDao().deleteAll()
+                "レシート・領収書データを削除しました"
             }
         }
     } catch (e: Exception) {

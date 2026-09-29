@@ -5,54 +5,84 @@
 ```mermaid
 flowchart TD
     Menu["メニュー\n(MenuScreen)"]
-    PurchaseMenu["購買メニュー\n(PurchaseMenuScreen)"]
-    DepositMenu["預金メニュー\n(DepositMenuScreen)"]
-    OcrCapture["OCR撮影\n(OcrCaptureScreen)"]
-    ReceiptInput["購買リスト\n(ReceiptInputScreen)"]
-    SheetEditor["伝票編集\n(SheetEditorScreen)"]
+
+    PurchaseMenu["JA購買伝票\n(PurchaseMenuScreen)"]
+    ReceiptInput["伝票データ（撮影・OCR・編集）\n(ReceiptInputScreen)"]
+    YearSummary["購買データ確認\n(YearSummaryScreen)"]
     MonthlySummary["月次サマリー\n(MonthlySummaryScreen)"]
-    ProductList["商品リスト\n(ProductListScreen)"]
-    KaikakeTekiyou["買掛摘要辞書\n(KaikakeTekiyouScreen)"]
-    PurchaseOutputConfirm["購買CSV出力\n(OutputConfirmScreen)"]
+    ProductList["購買品目別リスト\n(ProductListScreen)"]
+    PurchaseOutputConfirm["出力確認（購買）\n(OutputConfirmScreen)"]
+
+    DepositMenu["JA預金\n(DepositMenuScreen)"]
     PassbookData["通帳データ\n(PassbookDataScreen)"]
-    TekiyouMatching["摘要マッチング\n(TekiyouMatchingScreen)"]
-    YokinTekiyou["預金摘要辞書\n(YokinTekiyouScreen)"]
-    DepositOutputConfirm["預金CSV出力\n(OutputConfirmScreen)"]
+    TekiyouMatching["通帳摘要別リスト\n(TekiyouMatchingScreen)"]
+    DepositOutputConfirm["出力確認（預金）\n(OutputConfirmScreen)"]
+
+    GeneralMenu["レシート・領収書\n(GeneralPurchaseMenuScreen)"]
+    GeneralCapture["撮影・OCR\n(GeneralReceiptCaptureScreen)"]
+    GeneralConfirm["読み取り結果の確認\n(GeneralReceiptConfirmScreen)"]
+    GeneralList["レシート領収書一覧\n(GeneralReceiptListScreen)"]
+    GeneralItemMatching["商品名・但し書きリスト\n(GeneralItemMatchingScreen)"]
+    GeneralOutput["出力確認（レシート）\n(GeneralReceiptOutputScreen)"]
+    InvoiceStoreList["登録番号・店舗・発行者一覧\n(InvoiceStoreListScreen)"]
+    PaymentRules["支払方法の科目設定\n(ReceiptPaymentMethodRuleScreen)"]
+
+    BookkeepingMenu["簿記ソフト連携\n(BookkeepingMenuScreen)"]
+    YayoiAccounts["弥生：勘定科目\n(YayoiAccountSettingsScreen)"]
+    YayoiAccountEdit["科目の編集\n(YayoiAccountEditScreen)"]
+    AoiroVocab["あおいろ帳簿：勘定科目・摘要辞書\n(AoiroChoboVocabularyScreen)"]
+
     Settings["設定\n(SettingsScreen)"]
-    OcrLearning["OCR学習状況\n(OcrLearningStatusScreen)"]
-    RakurakuTekiyou["らくらく摘要辞書\n(RakurakuTekiyouScreen)"]
-    DebugCapture["デバッグ撮影\n(DebugCaptureScreen)"]
 
     Menu --> PurchaseMenu
     Menu --> DepositMenu
+    Menu --> GeneralMenu
+    Menu --> BookkeepingMenu
     Menu --> Settings
-    Menu --> DebugCapture
 
     PurchaseMenu --> ReceiptInput
+    PurchaseMenu --> YearSummary
     PurchaseMenu --> ProductList
-    PurchaseMenu --> KaikakeTekiyou
     PurchaseMenu --> PurchaseOutputConfirm
-
-    ReceiptInput --> OcrCapture
-    ReceiptInput --> SheetEditor
     ReceiptInput --> MonthlySummary
-    SheetEditor --> OcrCapture
-    SheetEditor -->|次/前伝票| SheetEditor
+    YearSummary --> MonthlySummary
 
     DepositMenu --> PassbookData
     DepositMenu --> TekiyouMatching
-    DepositMenu --> YokinTekiyou
     DepositMenu --> DepositOutputConfirm
 
-    Settings --> OcrLearning
-    Settings --> RakurakuTekiyou
+    GeneralMenu --> GeneralCapture
+    GeneralCapture --> GeneralConfirm
+    GeneralMenu --> GeneralList
+    GeneralMenu --> GeneralItemMatching
+    GeneralMenu --> GeneralOutput
+    GeneralMenu --> InvoiceStoreList
+    GeneralMenu --> PaymentRules
+
+    BookkeepingMenu --> YayoiAccounts
+    YayoiAccounts --> YayoiAccountEdit
+    BookkeepingMenu --> AoiroVocab
 ```
 
-> **注意**: `AccountSettingsScreen`（勘定科目設定）は実装済みだが Navigation 未接続。
+- `ReceiptInputScreen` は JA 伝票の撮影（埋め込みの `CameraScreenForOcr`）・OCR・編集・保存までを 1 画面で行う
+- `CameraScreen` / `CameraScreenForOcr` / `TransformPreviewScreen` は他の画面に埋め込むコンポーザブルなので NavHost にルートが無い（不具合ではない）
+- 通帳の管理（追加・名前・弥生の補助科目・あおいろの口座・削除）は通帳データ画面の ⋮ メニューから開くダイアログ（`PassbookManageDialog`）
+- 買掛摘要辞書・預金摘要辞書の専用画面は、どこからも開けなかったので 2026-09-26 に削除した。らくらくの勘定科目・摘要辞書の画面も 2026-09-29 に撤去した
+
+### 一覧画面の共通 UI
+
+| 要素 | 仕様 |
+|---|---|
+| 文字サイズ | タイトルバー右上の A- / A+（`FontSizeControl`）。10〜20sp、全一覧で共通の `listFontSize` |
+| 年の絞り込み | 年の選択と「作業年で固定」（`lockYearToWorking`） |
+| 検索・並び替え・絞り込み | 折りたたみパネル（`ListFilterComponents.kt`） |
+| メニュー画面 | `MenuColumn`。収まれば中央寄せ、収まらなければ（横向きなど）スクロール |
 
 ---
 
-## 2. データモデル（ER図）
+## 2. データモデル（ER 図）
+
+主要な列だけを載せる。全列は各エンティティ（`data/*.kt`）、テーブルの一覧は `docs/architecture.md` を見ること。
 
 ```mermaid
 erDiagram
@@ -64,10 +94,10 @@ erDiagram
         int subtotalGeneral
         int subtotalGas
         int subtotalAgri
-        int isOcrOverwriteTarget
     }
     receipt_items {
-        int id PK
+        long id PK
+        string uuid UK
         int issueYear
         int issueMonth
         int sheetNumber
@@ -78,258 +108,228 @@ erDiagram
         string productName
         int amount
         string category
-        int isOcrOverwriteTarget
+        string ocrConfidence
+        long productMasterId
+        string exportedAt
     }
     monthly_data {
         string id PK
         int issueYear
         int issueMonth
         int totalSheets
-        int generalPurchaseTotal
-        int agriculturalTotal
-        int gasStationTotal
         int monthlyTotal
     }
     product_master {
-        int id PK
+        long id PK
         string canonicalName
+        string canonicalKey
         string category
         int frequencyCount
-        int kaikakeTekiyouId
-        int isCertified
+        long yayoiAccountId
+        string accountKey
+        string memoKey
     }
     ocr_variants {
-        int id PK
-        int productId FK
+        long id PK
+        long productId FK
         string variantText
-        string normalizedText
         string confidenceLevel
-        int hitCount
-        int highScoreHits
-        real avgFinalScore
-        int manualCorrectCount
-        int autoFailCount
-        string source
-        int isDisabled
     }
-    yayoi_accounts {
+    passbooks {
         int id PK
-        string accountCode
-        string accountName
-        string searchKeyAlpha
-        string debitCredit
-        string categoryA
-        string categoryB
-        string categoryC
-        int usedForPurchase
-        int usedForDeposit
-        int parentId
-    }
-    rakuraku_accounts {
-        int id PK
-        string accountCode
-        string accountName
-        string searchKeyAlpha
-        string debitCredit
-        string categoryA
-        string categoryB
-        string categoryC
-        int usedForPurchase
-        int usedForDeposit
-        int parentId
-    }
-    rakuraku_tekiyou {
-        int id PK
-        string mainCategory
-        string subCategory
-        string tekiyouName
-        string searchKey
-        string kamoku
-        string taxRate
-        real businessRatio
-        int isShared
-        int isEnabled
+        string name
+        int displayOrder
+        string yayoiSubAccountName
+        string aoiroAccountKey
     }
     deposit_meisai {
         int id PK
+        int passbookId
         string transactionDate
-        int transactionNumber
+        string transactionNumber
         string tekiyou
         int amount
-        string memo
-        int matchingRuleId FK
-        int overrideTekiyouId FK
+        int matchingRuleId
+        long overrideYayoiAccountId
+        string overrideAccountKey
+        string exportedAt
     }
     tekiyou_matching_rules {
         int id PK
-        string pattern
+        string pattern UK
         string normalizedTekiyou
-        int isRegex
-        int rakurakuTekiyouId FK
-        string sampleText
-        int matchCount
+        long yayoiAccountId
+        string accountKey
+        string memoKey
         int isDeposit
     }
-    ocr_explicit_joins {
-        int id PK
-        int productId FK
-        string normalizedPattern
-        string joinedText
-        string originalTexts
-        string confidenceLevel
-        int hitCount
-        int manualConfirmCount
-        string source
-        int isDisabled
+    general_receipts {
+        long id PK
+        string uuid UK
+        string date
+        string storeName
+        int total
+        string registrationNumber
+        string paymentMethodText
+        long paymentAccountOverride
     }
-    correction_logs {
-        int id PK
-        string sessionId
-        string timestamp
-        string rawText
-        string decision
-        string correctedName
+    general_receipt_items {
+        long id PK
+        long receiptId FK
+        string itemName
+        int price
+        string canonicalKey
+        long yayoiAccountId
+        int isExcluded
+        string exportedAt
     }
-    ocr_score_logs {
-        int id PK
-        string rawOcrText
-        int candidateProductId
-        string decision
-        int totalScore
+    general_item_master {
+        string canonicalKey PK
+        long yayoiAccountId
+        string accountKey
+        string memoKey
+    }
+    invoice_stores {
+        string registrationNumber PK
+        string storeName
+    }
+    aoirochobo_accounts {
+        string accountKey PK
+        string name
+        string ledgerAffinity
+        int bankSlotNo
+    }
+    aoirochobo_memo_templates {
+        string memoKey PK
+        string ledgerType
+        string direction
+        string name
+        string counterAccountKey
+        string taxRate
     }
 
-    sheet_data ||--o{ receipt_items : "sheetNumber"
+    sheet_data ||--o{ receipt_items : "年・月・伝票番号"
+    product_master ||--o{ receipt_items : "productMasterId"
     product_master ||--o{ ocr_variants : "productId"
-    product_master ||--o{ ocr_explicit_joins : "productId"
-    rakuraku_tekiyou ||--o{ tekiyou_matching_rules : "rakurakuTekiyouId"
     tekiyou_matching_rules ||--o{ deposit_meisai : "matchingRuleId"
-    rakuraku_tekiyou ||--o{ deposit_meisai : "overrideTekiyouId"
+    passbooks ||--o{ deposit_meisai : "passbookId"
+    general_receipts ||--o{ general_receipt_items : "receiptId"
+    general_item_master ||--o{ general_receipt_items : "canonicalKey"
+    invoice_stores ||--o{ general_receipts : "registrationNumber"
+    aoirochobo_accounts ||--o{ product_master : "accountKey"
+    aoirochobo_memo_templates ||--o{ product_master : "memoKey"
 ```
+
+- 図の線のうち Room の外部キーを張っているのは `ocr_variants.productId`・`general_receipt_items.receiptId` だけ。ほかは列の値で引き当てているだけで、制約は無い
+- 会計ソフトごとの紐付けは別々の列に持つ（弥生 `yayoiAccountId`／あおいろ `accountKey`・`memoKey`）。らくらくの `*TekiyouId` 列と `rakuraku_*` 表は v40 で削除した。
+  弥生とあおいろは科目体系が別物なので、互いに変換しない
+- `accountKey` / `memoKey` は PC 会計アプリ（AoiroChobo）が持つ不透明な文字列。名前（`*KeyName`）は確定したときに見えていた名前を控えたもので、
+  PC 側で名前が変わったら紐付けを外す合図に使う
+- 通帳は最大 5 冊（DB v39〜）。明細の重複判定は UNIQUE(passbookId, transactionDate, transactionNumber)。
+  CSV に口座番号が無いので、取り込むときに取込先の通帳を選ぶ。摘要マッチングのルールは通帳をまたいで共通
+- `ocr_variants` は ML Kit 時代の学習テーブル。学習の書き込み経路は 2026-08-11 に削除済みで、
+  出力時に商品名から商品マスタを引く最後の手段（`getByText()`）としてだけ読んでいる
 
 ---
 
 ## 3. OCR パイプライン
 
-### 購買伝票 OCR フロー（processUnderlayingBase）
-
-```
-CameraX 4K フレーム
- ↓ YuvToRgbConverter
-RGB Bitmap
- ↓ GreenFrameDetector.process(bitmap, debugMode=false)
-   Step1: HSV 緑マスク（lowerGreen=35,30,80 / upperGreen=85,255,255）
-   Step2: dilate×5 → findContours → 外側輪郭取得
-   Step3: 中央枠検出（適応二値化 + モルフォロジー）
-   Step4: 4コーナー算出
-   Step5: 透視変換 15px/mm → 3045×2220px
-   Step6: 中央枠内領域確定
-   Step7: 行切り抜き（debugMode=true のみ）
-   Step8: 適応二値化（表示用）
-warpedBitmap（3045×2220px）
- ↓ OCRProcessor.processUnderlayingBase()
-   Step2: ML Kit 全体 OCR（日本語モデル）
-   Step3-7: TextBox変換 → ノイズ除去 → 行クラスタリング → 行処理 → Y フィルタ
-   Step8: 数量列特化 OCR（Latin モデル・縦罫線除去）
-   Step8.5: 商品名列特化 OCR（日本語モデル・列全体）
-   Step8.6: 商品名フォールバック
-   Step9: 数量・商品名を上書き
-   Step11: カテゴリ判定
- ↓ ProductNameCorrectorV3.correctProductName()
-   Layer1: LOCKED / 手動 CONFIRMED バリアント（無条件適用）
-   Layer2: 自動 CONFIRMED バリアント（スコア検証後）
-   Layer3: AUTO（学習素材のみ・補正には使わない）
- ↓ Room DB 保存
-```
-
-### OCR ノイズクリーニング
-- `cleanLeadingRuleNoise()`: 商品名先頭の `|` と日本語前の `I` を除去
-  - 例: `|レギュラーガソリン` → `レギュラーガソリン`、`Iエンジンオイル` → `エンジンオイル`
+JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMapper`、レシートは撮影画像をそのまま
+`GeminiReceiptClient.parseReceiptFromImage()` に送る。フロー図と各コンポーネントの役割は `docs/architecture.md` の
+「システムフロー」を参照（重複を避けるためここには再掲しない）。
 
 ---
 
-## 4. カテゴリ判定仕様
+## 4. カテゴリ判定仕様（JA 購買）
 
-**ReceiptItem.category の4種類:**
+**`ReceiptItem.category` の 4 種類**（`util/Category.kt`）:
 
-| カテゴリ | 意味 | 判定文字列例 |
+| カテゴリ | 意味 | 判定する文字列の例（OCR の誤読みも含む） |
 |---|---|---|
-| 未分類 | デフォルト・未判定 | — |
-| 一般購買 | 通常仕入商品 | "一般購買"・"一般課買" |
-| 給油所 | 燃料・ガソリン | "給油所"・"給造所" |
-| 農業機械 | 農業用機械・部品 | "農業機械"・"農来" |
+| 未分類 | 既定・未判定 | — |
+| 一般購買 | 通常の購買品 | 一般購買・一般講買・一般課買・般購買 |
+| 給油所 | 燃料・ガソリン | 給油所・給造所・給治所 |
+| 農業機械 | 農業用機械・部品 | 農業機械・農来 |
 
-- 各行は直後の小計行のカテゴリを引き継ぐ
-- 一文字判定フォールバック（固有文字の存在で分類）あり
-
----
-
-## 5. OCR 学習システム（V3）
-
-### バリアント昇格条件
-
-| 遷移 | 条件 |
-|---|---|
-| AUTO → CONFIRMED（自動） | hitCount≥3 且つ avgFinalScore≥0.90 且つ highScoreHits≥2 且つ autoFailCount=0 |
-| AUTO → CONFIRMED（手動） | manualCorrectCount≥2 |
-| CONFIRMED → LOCKED | hitCount≥10 且つ avgFinalScore≥0.92 且つ autoFailCount=0 |
-
-### 降格・無効化
-- autoFailCount が閾値を超えた場合、CONFIRMED → AUTO に降格
-- isDisabled=1 で補正対象から除外（手動または自動）
-
-### 分離テキスト結合（ExplicitJoinMatcher）
-- OCR が `灯|油` のように分離した文字を `灯油` に結合するパターンを学習
-- hitCount≥5 または manualConfirmCount≥2 で昇格
+- OCR 直後に `JaSheetOcrMapper` が小計行の区分名から仮に判定し、保存後に `CategoryRecalculator` が月全体の全伝票・全行を判定し直して確定する
+- 各行は直後の小計行のカテゴリを引き継ぐ。小計行の文字列が崩れていても、区分ごとの固有の文字 1 字で判定するフォールバックがある
 
 ---
 
-## 6. CSV 出力仕様
+## 5. 出力仕様
 
-### 購買 CSV（らくらく青色申告形式）
+出力先は設定の「連携会計ソフト」で決まる。列ごとの詳しい仕様は `docs/PC_ACCOUNTING_INTEGRATION_SPEC.md` の §7。
 
-```
-ID,日付,摘要,メモ,金額
-1,2026/04/29,種苗費,フェニックス顆粒,15000
-```
+| 部門 | 弥生の青色申告 | あおいろ帳簿 |
+|---|---|---|
+| JA 購買 | 仕訳 CSV | `transactions.json` |
+| JA 預金 | 仕訳 CSV | `transactions.json` |
+| レシート | 仕訳 CSV | `transactions.json` |
 
-- 日付: `YYYY/MM/DD`
-- 摘要: `RakurakuTekiyou.tekiyouName`（買掛摘要辞書から）
-- メモ: `ReceiptItem.productName`
-- 金額: `ReceiptItem.amount`（税込）
+どの出力も、書き出した行に出力日時（`exportedAt`）を記録し、出力確認画面で「未出力のみ表示」に絞り込める。
+弥生 CSV は、科目が決まっていない行が選ばれていると出力せず、科目を設定するかチェックを外すよう求める。
 
-### 預金 CSV（らくらく青色申告形式）
+### 弥生 仕訳 CSV
 
-```
-ID,日付,摘要,メモ,入金,出金
-1,2026-04-29,売掛金,JA振込,50000,
-2,2026-04-30,諸会費,JA共済,,3000
-```
+- 25 列・windows-31j（`CsvUtils.yayoiCharset()`。Shift_JIS だと ①・㈱ などが ? に化けるため）・CRLF・全項目を引用符で囲む・ヘッダ行なし
+- 日付は和暦（`R.07/05/01`）
+- **列の並びが部門で違う**（既知の不整合・`docs/known-issues.md`）：レシートは先頭が識別フラグ `2000` の正式な並び、購買・預金は `2000` が無く独自の並び
+- 購買：借方＝商品の科目（子科目なら親科目＋補助科目）、貸方＝買掛金
+- 預金：入金は 借方＝普通預金・貸方＝摘要の科目、出金は その逆。普通預金の補助科目に通帳の `yayoiSubAccountName` を入れる
+- レシート：借方＝品目の科目、貸方＝支払方法の科目（`receipt_payment_method_rules`）
 
-- 日付: `YYYY-MM-DD`
-- 摘要: `RakurakuTekiyou.tekiyouName`
-- メモ: `DepositMeisai.tekiyou`（通帳摘要原文）
-- 入金/出金: 金額の正負で分離
-- `hideAmount` フラグで金額非表示可
+### あおいろ帳簿 `transactions.json`（購買・預金・レシート）
+
+- 契約は `docs/integration/transaction-import.md`（schemaVersion 2）。UTF-8・BOM なし
+- 組み立ては `util/AoiroChoboTransactionsBuilder.kt`（`buildPurchase` / `buildDeposit` / `buildReceipt`）
+- 購買：借方＝商品の `accountKey`、貸方＝`ledgerAffinity == "AP"` の科目（買掛金）、
+  摘要＝商品の `memoKey`。`externalId` は `ocr:purchase:{receipt_items.uuid}`
+- 預金：`ledgerType = Bank`。入金は 借方＝口座・貸方＝相手科目、出金は その逆（出金は返品扱いにしない）。
+  口座は通帳の `aoiroAccountKey`（`bankSlotNo` 1〜5 の科目）で、`bankSlotNo` にその番号を入れる。
+  相手科目・摘要は明細の個別指定（`override*`）を最優先、無ければルールのもの。摘要は「預金/入金」「預金/出金」のタブで
+  相手科目が一致するものだけ送る。`externalId` は `ocr:deposit:p{通帳ID}-{日付}-{通番}`。
+  `note` は通帳の摘要原文と明細のメモ。口座間の振替は除外しない（PC が「重複の可能性」で受ける）
+- レシート：借方＝品目グループ（`general_item_master`）の `accountKey`・`memoKey`。貸方＝支払方法の印字に最初に部分一致した
+  ルールの `accountKey`、どれにも当たらなければ現金（`ledgerAffinity == "Cash"` の科目。弥生と同じ既定）。
+  当たったルールにあおいろの科目が無ければ貸方は未設定（`UnmatchedAccount`・現金にはしない）。
+  `ledgerType` は貸方が現金なら `Cash`、それ以外は `Unpaid`。摘要はグループに「現金/出金」のものを持ち、
+  現金以外の支払いでは「未払/発生」の同じ名前・税率・事業割合の摘要に置き換える（無ければ摘要なし）。
+  値引き（金額が負）は借方/貸方を入れ替える。経費対象外の品目は出さない。
+  `externalId` は `ocr:receipt:{general_receipts.uuid}:{itemIndex}`（itemIndex はレシートの全品目を id 順に並べた位置で、
+  経費対象外の品目も数える）。`meta` に店名・登録番号・支払方法の印字を入れる。弥生の明細・レシートごとの個別上書きは使わない
+- 科目や摘要が決まっていない行も止めずに出す（PC 側が「要確認」として受ける）。出力後に 確定／摘要なし／科目なし の件数を表示する
+- 出せない行（金額 0・実在しない日付、預金は口座が未設定の通帳・口座が今の科目に無い・通番に使えない文字）は
+  出力済みにせず、理由を結果ダイアログに出す
+
+### 共通
+
+購買は、どの形式でも商品名に「小計」「合計」を含む行を出さない。預金の「金額を隠す」設定は画面の表示だけで、出力には効かない。
+
+らくらく青色申告農業版向けのシンプル CSV（UTF-8）はサポート終了にともない 2026-09-29 に削除した。
 
 ---
 
-## 7. 摘要マッチング仕様
+## 6. 摘要マッチング仕様（JA 預金）
 
-1. `PassbookDataScreen` で通帳明細を入力
-2. `TekiyouMatchingScreen` で `updateRulesFromMeisai()` を実行
-   - 摘要テキストを正規化してマッチングルールを生成
-   - 生成後に `deposit_meisai.matchingRuleId` を書き戻す（バグ修正済み 2026-04-05）
-3. グループ展開 UI でルール単位に勘定科目を設定
-4. 個別行に異なる科目が必要な場合は `overrideTekiyouId` で上書き
-5. グループ編集保存時は `clearOverridesForRule()` で個別設定をリセット
+1. 通帳データ画面で CSV を取り込む（取込先の通帳を選ぶ。取引通番が空の行には `DepositNumberAssigner` が通帳ごとに合成番号を振る）
+2. 通帳摘要別リストを開くと `updateRulesFromMeisai()` が明細の摘要を正規化してルール（`tekiyou_matching_rules`）を作り、
+   明細の `matchingRuleId` を書き戻す
+3. グループ（ルール）単位で科目を決める。弥生は `yayoiAccountId` に入る
+4. 一部の明細だけ別の科目にしたいときは明細側で上書きする（`overrideYayoiAccountId`）
+5. グループの科目を保存し直すと、そのルールの明細の上書きはリセットされる（`clearYayoiOverridesForRule()`）
+6. 未マッチの摘要はまとめて Gemini に科目を提案させられる（「AIで一括提案」）
+
+あおいろモードでは 3〜5 の列が `accountKey`/`memoKey`（ルール）・`overrideAccountKey`/`overrideMemoKey`（明細）になり、
+`AoiroDepositLinkDialog` で相手科目 → 摘要の順に選ぶ（候補は `util/AoiroChoboDepositRules.kt`）。
+グループを保存し直すと明細のあおいろ上書きもリセットされる（`clearAoiroOverridesForRule()`）。AI 提案は弥生モードだけ。
 
 ---
 
-## 8. 商品名入力の文字幅変換仕様（SheetEditorScreen）
+## 7. 商品名入力の文字幅変換仕様（ReceiptInputScreen）
 
-伝票編集ダイアログ（`ItemEditDialog`）の商品名フィールド：
+伝票データ画面のセル編集ダイアログ（`CellEditDialog`）の商品名フィールド。変換は `util/ProductNameInputUtils.kt`。
 
-- 数字（0-9）は入力時に常に全角へ自動変換
-- 英字はトグル（全角Ａ / 半角A）で以降の入力に反映（既存テキストは変更しない）
-- 「全て全角」ボタンで現テキストの半角英数字を一括全角変換
-- 変換は新規入力部分のみに適用（差分検出方式）
+- 新しく入力した部分だけを変換する（前後の一致部分を除いた差分を見る `applyConversionToNewInput`）。既にある文字は変えない
+- 数字（0-9）と半角スペースは常に全角にする
+- 英字はトグル（英字：全角 / 半角、既定は全角）の選択に従う
+- 「一括全角」ボタンで、今の文字列の半角英数字・記号・スペースをまとめて全角にする（`convertAllToFullWidth`）

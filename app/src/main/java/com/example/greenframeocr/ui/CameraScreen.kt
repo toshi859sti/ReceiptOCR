@@ -81,7 +81,9 @@ fun CameraScreen(
     var consecutiveGoodFrames by remember { mutableStateOf(0) }
     var badFrameCount by remember { mutableStateOf(0) }
     var lastDetectionTime by remember { mutableStateOf(0L) }
+    val lastOverlayUpdateMs = remember { java.util.concurrent.atomic.AtomicLong(0L) }
     var camera by remember { mutableStateOf<Camera?>(null) }
+    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var isTorchOn by remember { mutableStateOf(false) }
     var latestBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
@@ -111,6 +113,9 @@ fun CameraScreen(
         onDispose {
             try {
                 camera?.cameraControl?.enableTorch(false)
+                // enableTorch(false) だけでは一部端末（HAL実装依存）でトーチが物理的に
+                // 消灯しないことがあるため、カメラデバイス自体をクローズして確実に消灯させる
+                cameraProvider?.unbindAll()
             } catch (e: Exception) {
                 Log.e("CameraScreen", "Failed to disable torch on dispose", e)
             }
@@ -133,7 +138,8 @@ fun CameraScreen(
                             val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
 
                             cameraProviderFuture.addListener({
-                                val cameraProvider = cameraProviderFuture.get()
+                                val boundProvider = cameraProviderFuture.get()
+                                cameraProvider = boundProvider
 
                                 val preview = Preview.Builder().build().also {
                                     it.setSurfaceProvider(previewView.surfaceProvider)
@@ -146,35 +152,41 @@ fun CameraScreen(
                                     .also {
                                         it.setAnalyzer(cameraExecutor) { imageProxy ->
                                             val now = System.currentTimeMillis()
-                                            if (!isProcessing && (now - lastDetectionTime) >= MIN_DETECTION_INTERVAL_MS) {
-                                                lastDetectionTime = now
-                                                analyzeFrame(
-                                                    imageProxy = imageProxy,
-                                                    viewModel = viewModel,
-                                                    camera = camera,
-                                                    isCaptureTriggered = isCaptureTriggered,
-                                                    consecutiveGoodFrames = consecutiveGoodFrames,
-                                                    badFrameCount = badFrameCount,
-                                                    onFocusChange = { isFocused = it },
-                                                    onQualityInfo = {},
-                                                    onFocusScore = { focusScore = it },
-                                                    onSharpnessChange = { sharpness = it },
-                                                    minSharpness = appPreferences.minSharpness,
-                                                    onCaptureTriggered = { isCaptureTriggered = it },
-                                                    onProcessingChange = { isProcessing = it },
-                                                    onConsecutiveChange = { consecutiveGoodFrames = it },
-                                                    onBadFrameCountChange = { badFrameCount = it },
-                                                    onLatestBitmap = { latestBitmap = it },
-                                                    debugMode = debugMode
-                                                )
+                                            if (!isProcessing) {
+                                                if ((now - lastDetectionTime) >= MIN_DETECTION_INTERVAL_MS) {
+                                                    lastDetectionTime = now
+                                                    lastOverlayUpdateMs.set(now)
+                                                    analyzeFrame(
+                                                        imageProxy = imageProxy,
+                                                        viewModel = viewModel,
+                                                        camera = camera,
+                                                        isCaptureTriggered = isCaptureTriggered,
+                                                        consecutiveGoodFrames = consecutiveGoodFrames,
+                                                        badFrameCount = badFrameCount,
+                                                        onFocusChange = { isFocused = it },
+                                                        onQualityInfo = {},
+                                                        onFocusScore = { focusScore = it },
+                                                        onSharpnessChange = { sharpness = it },
+                                                        minSharpness = appPreferences.minSharpness,
+                                                        onCaptureTriggered = { isCaptureTriggered = it },
+                                                        onProcessingChange = { isProcessing = it },
+                                                        onConsecutiveChange = { consecutiveGoodFrames = it },
+                                                        onBadFrameCountChange = { badFrameCount = it },
+                                                        onLatestBitmap = { latestBitmap = it },
+                                                        debugMode = debugMode
+                                                    )
+                                                } else if ((now - lastOverlayUpdateMs.get()) >= OVERLAY_INTERVAL_MS) {
+                                                    lastOverlayUpdateMs.set(now)
+                                                    updateOverlayOnly(imageProxy, viewModel)
+                                                }
                                             }
                                             imageProxy.close()
                                         }
                                     }
 
                                 try {
-                                    cameraProvider.unbindAll()
-                                    camera = cameraProvider.bindToLifecycle(
+                                    boundProvider.unbindAll()
+                                    camera = boundProvider.bindToLifecycle(
                                         lifecycleOwner,
                                         CameraSelector.DEFAULT_BACK_CAMERA,
                                         preview,
@@ -383,6 +395,9 @@ private fun analyzeFrame(
 
             // (2) 枠検出（640px 相当・GreenMask バウンディングボックス）
             val corners = com.example.greenframeocr.util.GreenFrameDetector.detectCornersFast(analysisBitmap)
+
+            // 緑枠オーバーレイ更新（毎フレーム）
+            viewModel.updateGreenOverlay(corners, analysisW, analysisH)
             analysisBitmap.recycle()
 
             // (3) 枠品質評価（面積比・アスペクト比・安定性）
@@ -436,7 +451,9 @@ private fun analyzeFrame(
 // ============================================================
 
 private const val DEBUG_SKIP_FOCUS_CHECK      = false
-private const val MIN_DETECTION_INTERVAL_MS   = 200L   // 500ms → 200ms（軽量化により短縮可能）
+private const val MIN_DETECTION_INTERVAL_MS   = 200L
+private const val OVERLAY_INTERVAL_MS         = 50L    // オーバーレイ専用更新間隔（20fps相当）
+private const val OVERLAY_PX                  = 480    // オーバーレイ用縮小解像度   // 500ms → 200ms（軽量化により短縮可能）
 private const val MIN_STABLE_FOCUS_FRAMES     = 3       // 3フレーム連続合格でトリガー
 private const val MAX_BAD_FRAMES_BEFORE_RESET = 2       // 2フレーム連続badでカウントリセット
 private const val ANALYSIS_PX                 = 960     // プレビュー評価用解像度
@@ -447,6 +464,22 @@ private const val MIN_SHARPNESS_FOR_KANJI     = 1000.0  // 複雑な漢字（雲
 // ============================================================
 // ImageProxy → Bitmap 変換
 // ============================================================
+
+private fun updateOverlayOnly(imageProxy: ImageProxy, viewModel: CameraViewModel) {
+    try {
+        val bitmap = YuvToRgbConverter.imageProxyToBitmapDirect(imageProxy)
+        if (bitmap.isRecycled) return
+        val scale = OVERLAY_PX.toFloat() / maxOf(bitmap.width, bitmap.height)
+        val w = (bitmap.width  * scale).toInt()
+        val h = (bitmap.height * scale).toInt()
+        val small = android.graphics.Bitmap.createScaledBitmap(bitmap, w, h, false)
+        val corners = com.example.greenframeocr.util.GreenFrameDetector.detectCornersFast(small)
+        viewModel.updateGreenOverlay(corners, w, h)
+        small.recycle()
+    } catch (e: Exception) {
+        Log.e("CameraScreen", "updateOverlayOnly error", e)
+    }
+}
 
 private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
     return try {

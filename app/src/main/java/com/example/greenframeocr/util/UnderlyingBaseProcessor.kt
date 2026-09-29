@@ -134,7 +134,9 @@ object UnderlyingBaseProcessor {
         val quantity: String?,
         val amount: Int?,
         val categorySum: Int?,
-        val rawText: String? = null
+        val rawText: String? = null,
+        val amountBounds: android.graphics.Rect? = null,
+        val dateBounds: android.graphics.Rect? = null
     )
 
     data class SubtotalData(
@@ -350,6 +352,8 @@ object UnderlyingBaseProcessor {
         var quantity: String? = null
         var amount: Int? = null
         var categorySum: Int? = null
+        var amountBounds: android.graphics.Rect? = null
+        var dateBounds: android.graphics.Rect? = null
 
         val sortedBoxes = rowBoxes.sortedBy { it.centerX }
         sortedBoxes.forEach { box ->
@@ -362,6 +366,7 @@ object UnderlyingBaseProcessor {
                     val normalized = normalizeDateDigits(box.text, prevDate)
                     if (normalized.length == 6) {
                         date = normalized
+                        dateBounds = android.graphics.Rect(box.bounds)
                         Log.d(TAG, "  DATE: $normalized (raw: ${box.text})")
                     } else {
                         Log.d(TAG, "  DATE skipped (not 6 digits): ${box.text}")
@@ -382,7 +387,8 @@ object UnderlyingBaseProcessor {
                     val norm  = removeThousandsSeparatorMisread(box.text, stripRuleSuffix(box.text, stripRulePrefix(box.text, normalizeToDigits(box.text))))
                     val value = norm.toIntOrNull()
                     amount = if (isNeg && value != null) -value else value
-                    Log.d(TAG, "  AMOUNT: $amount (raw: ${box.text})")
+                    amountBounds = android.graphics.Rect(box.bounds)
+                    Log.d(TAG, "  AMOUNT: $amount bounds=${box.bounds} (raw: ${box.text})")
                 }
                 ColumnType.CATEGORY_SUM -> {
                     val norm = removeThousandsSeparatorMisread(box.text, stripRuleSuffix(box.text, stripRulePrefix(box.text, normalizeToDigits(box.text))))
@@ -393,7 +399,7 @@ object UnderlyingBaseProcessor {
             }
         }
 
-        return ReceiptRow(RowType.NORMAL, date, null, quantity, amount, categorySum, rawText)
+        return ReceiptRow(RowType.NORMAL, date, null, quantity, amount, categorySum, rawText, amountBounds, dateBounds)
     }
 
     private fun processSubtotalRow(rowBoxes: List<TextBox>, rawText: String): ReceiptRow {

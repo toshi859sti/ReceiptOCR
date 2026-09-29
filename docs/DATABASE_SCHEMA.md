@@ -1,5 +1,11 @@
 # ReceiptOCR データベース構造
 
+> **この文書は DB v11 時代のまま更新されていない（2026-09-29 時点の実装は v40・19 テーブル）。**
+> 今のテーブル一覧は `docs/architecture.md`、ER 図は `docs/functional-design.md`、一次情報源は `ReceiptDatabase.kt` の
+> `version` / `entities`。下に出てくる `rakuraku_tekiyou`・`rakuraku_accounts` と、それを指す列
+> （`kaikakeTekiyouId`・`rakurakuTekiyouId`・`overrideTekiyouId`）は、らくらく青色申告農業版の撤去で v40 に削除した。
+> `correction_logs`・`ocr_score_logs` も v28 で削除済み。
+
 ## 概要
 
 Room Database Version: 11

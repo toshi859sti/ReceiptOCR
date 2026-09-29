@@ -1,5 +1,6 @@
 package com.example.greenframeocr.util
 
+import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.ProductMaster
 
 /**
@@ -9,7 +10,8 @@ import com.example.greenframeocr.data.ProductMaster
  * 変換ルール:
  *   1. 半角・全角スペース除去
  *   2. 半角カタカナ（ﾞﾟ結合を含む）→ 全角カタカナ
- *   3. 全角英数字 → 半角英数字
+ *   3. 全角英数字・全角記号（－／（）：等、U+FF01〜U+FF5E） → 半角
+ *      （ダッシュ等の記号幅がOCR実行のたびにブレる既知の傾向に対応。2026-08-11修正）
  */
 fun toCanonicalKey(name: String): String {
     // 半角カタカナ単独 → 全角カタカナ
@@ -50,9 +52,7 @@ fun toCanonicalKey(name: String): String {
             next == 'ﾞ' && dakutenMap.containsKey(c) -> { sb.append(dakutenMap[c]); i += 2 }
             next == 'ﾟ' && handakutenMap.containsKey(c) -> { sb.append(handakutenMap[c]); i += 2 }
             baseMap.containsKey(c) -> { sb.append(baseMap[c]); i++ }
-            c in 'Ａ'..'Ｚ' -> { sb.append((c.code - 0xFEE0).toChar()); i++ }
-            c in 'ａ'..'ｚ' -> { sb.append((c.code - 0xFEE0).toChar()); i++ }
-            c in '０'..'９' -> { sb.append((c.code - 0xFEE0).toChar()); i++ }
+            c.code in 0xFF01..0xFF5E -> { sb.append((c.code - 0xFEE0).toChar()); i++ }
             else -> { sb.append(c); i++ }
         }
     }
@@ -63,13 +63,21 @@ fun toCanonicalKey(name: String): String {
 fun ProductMaster.withComputedKey(): ProductMaster =
     copy(canonicalKey = toCanonicalKey(canonicalName))
 
+/** スペース正規化（半角・全角スペースを1つの半角スペースに統一し前後をトリム）。
+ *  購買品リストの新規商品名重複チェックで使用（画面表示用と伝票保存時の自動同期の両方から呼ばれる）。 */
+fun String.normalizeSpaces() = trim().replace(Regex("[\\s　]+"), " ")
+
+/** INSERT/UPDATE 前に canonicalKey を itemName から自動計算する。 */
+fun GeneralReceiptItem.withComputedKey(): GeneralReceiptItem =
+    copy(canonicalKey = toCanonicalKey(itemName))
+
 fun charFullWidthWeight(c: Char): Double =
     if (c.code in 0x20..0x7E || c.code in 0xFF61..0xFF9F) 0.5 else 1.0
 
 fun countFullWidthEquivalent(text: String): Double =
     text.sumOf { charFullWidthWeight(it) }
 
-fun truncateToFullWidthLimit(text: String, limit: Double = 20.0): String {
+fun truncateToFullWidthLimit(text: String, limit: Double = 30.0): String {
     var count = 0.0
     val result = StringBuilder()
     for (c in text) {
