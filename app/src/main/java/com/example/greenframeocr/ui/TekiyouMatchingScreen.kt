@@ -63,7 +63,7 @@ fun TekiyouMatchingScreen(
     var yayoiAccountList by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var activePatterns by remember { mutableStateOf<Set<String>>(emptySet()) }
     // あおいろ帳簿（相手科目・摘要は PC から取り込んだ辞書から選ぶ）
-    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    val isAoiro = accountingSoftware == AccountingSoftware.AOIRO
     var aoiroAccounts by remember { mutableStateOf<List<AoiroChoboAccount>>(emptyList()) }
     var aoiroMemos by remember { mutableStateOf<List<AoiroChoboMemoTemplate>>(emptyList()) }
     var aoiroUsage by remember { mutableStateOf<List<AoiroChoboAccountUsage>>(emptyList()) }
@@ -600,7 +600,7 @@ fun TekiyouMatchingScreen(
 private fun isRuleMatchedFor(rule: MatchingRuleWithTekiyou, accountingSoftware: AccountingSoftware) =
     when (accountingSoftware) {
         AccountingSoftware.YAYOI -> rule.yayoiAccountId != null
-        AccountingSoftware.BLUE_RETURN_PREP -> rule.accountKey != null
+        AccountingSoftware.AOIRO -> rule.accountKey != null
     }
 
 /**
@@ -621,7 +621,7 @@ private fun MatchingRuleCard(
     onEditIndividual: ((DepositMeisaiWithOverride) -> Unit)?
 ) {
     val isMatched = isRuleMatchedFor(rule, accountingSoftware)
-    val isBrp = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    val isAoiro = accountingSoftware == AccountingSoftware.AOIRO
     val typeColor = if (rule.isDeposit) Color(0xFF4CAF50) else Color(0xFFE53935)
     val typeLabel = if (rule.isDeposit) "入金" else "出金"
 
@@ -726,7 +726,7 @@ private fun MatchingRuleCard(
                     horizontalAlignment = Alignment.End
                 ) {
                     when {
-                        isBrp && aoiroGroupLabel != null -> {
+                        isAoiro && aoiroGroupLabel != null -> {
                             val parts = aoiroGroupLabel.split(" ／ ", limit = 2)
                             Text(
                                 parts[0],
@@ -767,7 +767,7 @@ private fun MatchingRuleCard(
                     }
                 }
 
-                // グループ編集アイコン（BRPは非表示）
+                // グループ編集アイコン（あおいろは非表示）
                 if (onEditGroup != null) {
                     IconButton(onClick = onEditGroup, modifier = Modifier.size(32.dp)) {
                         Icon(
@@ -805,7 +805,7 @@ private fun MatchingRuleCard(
                         }
                         else -> {
                             meisaiItems.forEach { meisai ->
-                                if (isBrp) {
+                                if (isAoiro) {
                                     val override = aoiroOverrideLabel(meisai)
                                     DepositMeisaiLabeledRow(
                                         meisai = meisai,

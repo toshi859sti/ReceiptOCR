@@ -74,7 +74,7 @@ fun ProductListScreen(
     var displayProducts by remember { mutableStateOf<List<ProductMaster>>(emptyList()) }
     var yayoiAccountList by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var yayoiFlaggedList by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
-    // あおいろ帳簿（BLUE_RETURN_PREP）モードの科目・摘要。PC から取り込んだミラー
+    // あおいろ帳簿（AOIRO）モードの科目・摘要。PC から取り込んだミラー
     var aoiroAccounts by remember { mutableStateOf<List<AoiroChoboAccount>>(emptyList()) }
     var aoiroMemos by remember { mutableStateOf<List<AoiroChoboMemoTemplate>>(emptyList()) }
     // 用途の絞り込み（農家がスマホで決める）。JA 購買の候補は PC のフラグ ∩ この設定
@@ -134,7 +134,7 @@ fun ProductListScreen(
             TekiyouFilter.ALL -> filtered
             TekiyouFilter.MISSING -> when (accountingSoftware) {
                 AccountingSoftware.YAYOI -> filtered.filter { it.yayoiAccountId == null }
-                AccountingSoftware.BLUE_RETURN_PREP -> filtered.filter { it.accountKey == null }
+                AccountingSoftware.AOIRO -> filtered.filter { it.accountKey == null }
             }
             TekiyouFilter.CERTIFIED -> filtered.filter { it.isCertified }
         }
@@ -401,7 +401,7 @@ fun ProductListScreen(
             // 統計カード
             val matchedProductCount = when (accountingSoftware) {
                 AccountingSoftware.YAYOI -> allProducts.count { it.yayoiAccountId != null }
-                AccountingSoftware.BLUE_RETURN_PREP -> allProducts.count { it.accountKey != null }
+                AccountingSoftware.AOIRO -> allProducts.count { it.accountKey != null }
             }
             val unmatchedProductCount = allProducts.size - matchedProductCount
             Card(
@@ -442,7 +442,7 @@ fun ProductListScreen(
             }
 
             // AI科目提案ボタン（弥生・あおいろ。常時表示で見落としを防ぐ）
-            val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+            val isAoiro = accountingSoftware == AccountingSoftware.AOIRO
             AiSuggestButton(
                 label = if (unmatchedProductCount > 0) "未マッチ${unmatchedProductCount}件をAIで一括提案" else "AI科目提案",
                 isLoading = isAiMatching,
@@ -557,7 +557,7 @@ fun ProductListScreen(
                                     if (acc.accountCode.isNullOrEmpty()) acc.accountName
                                     else "${acc.accountName}（${acc.accountCode}）"
                                 }
-                        AccountingSoftware.BLUE_RETURN_PREP -> aoiroLabel(product, aoiroAccounts, aoiroMemos)
+                        AccountingSoftware.AOIRO -> aoiroLabel(product, aoiroAccounts, aoiroMemos)
                     }
                     ProductListItem(
                         product = product,
@@ -743,7 +743,7 @@ fun ProductListScreen(
     }
 
     // AI提案ダイアログ（あおいろ）。承認した科目に、自動で埋めてよい摘要があれば一緒に保存する
-    if (showAiMatchingDialog && accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP) {
+    if (showAiMatchingDialog && accountingSoftware == AccountingSoftware.AOIRO) {
         val rows = remember(aoiroSuggestions, allProducts, aoiroAccounts, aoiroMemos) {
             val productByName = allProducts.associateBy { it.canonicalName }
             val accountByKey = aoiroAccounts.associateBy { it.accountKey }
@@ -1151,7 +1151,7 @@ private fun ProductEditDialog(
     var selectedMemoKey by remember { mutableStateOf(product?.memoKey) }
     var showAoiroAccountPicker by remember { mutableStateOf(false) }
     var showAoiroMemoPicker by remember { mutableStateOf(false) }
-    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    val isAoiro = accountingSoftware == AccountingSoftware.AOIRO
 
     val isNew = product == null
     val title = if (isNew) "購買品追加" else "購買品編集"
@@ -1232,7 +1232,7 @@ private fun ProductEditDialog(
 
                 // 弥生勘定科目 / あおいろ
                 when (accountingSoftware) {
-                    AccountingSoftware.BLUE_RETURN_PREP -> {
+                    AccountingSoftware.AOIRO -> {
                         AoiroAccountAndMemoFields(
                             accounts = aoiroAccounts,
                             memos = aoiroMemos,
@@ -1286,7 +1286,6 @@ private fun ProductEditDialog(
                             canonicalName = name.trim(),
                             category = category,
                             frequencyCount = product?.frequencyCount ?: 0,
-                            kaikakeTekiyouId = product?.kaikakeTekiyouId,
                             yayoiAccountId = if (accountingSoftware == AccountingSoftware.YAYOI) selectedYayoiAccountId else product?.yayoiAccountId,
                             isCertified = true,
                             // フィールド列挙で組み直しているので、あおいろ側は明示的に書かないと

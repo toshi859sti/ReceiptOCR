@@ -81,7 +81,7 @@ fun GeneralReceiptOutputScreen(
     }
 
     // あおいろ帳簿（transactions.json）
-    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    val isAoiro = accountingSoftware == AccountingSoftware.AOIRO
     var aoiroLabels by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var aoiroResult by remember { mutableStateOf<AoiroChoboTransactionsBuilder.Result?>(null) }
     val jsonLauncher = rememberLauncherForActivityResult(
@@ -201,7 +201,7 @@ fun GeneralReceiptOutputScreen(
                                 "弥生の青色申告",
                                 "仕訳CSV（Shift-JIS・25列）"
                             )
-                        AccountingSoftware.BLUE_RETURN_PREP ->
+                        AccountingSoftware.AOIRO ->
                             Triple(Color(0xFF00695C), "あおいろ帳簿", "transactions.json（UTF-8）")
                     }
                     Surface(

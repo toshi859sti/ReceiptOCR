@@ -159,7 +159,7 @@ private fun PurchaseOutputConfirmContent(
     }
 
     // あおいろ帳簿（transactions.json）
-    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    val isAoiro = accountingSoftware == AccountingSoftware.AOIRO
     var aoiroResult by remember { mutableStateOf<AoiroChoboTransactionsBuilder.Result?>(null) }
     val jsonLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -449,7 +449,7 @@ internal fun AoiroExportResultDialog(
 private fun PurchaseGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI) {
     val tekiyouLabel = when (accountingSoftware) {
         AccountingSoftware.YAYOI -> "科目/メモ"
-        AccountingSoftware.BLUE_RETURN_PREP -> "科目 ／ 摘要/メモ"
+        AccountingSoftware.AOIRO -> "科目 ／ 摘要/メモ"
     }
     Row(
         modifier = Modifier
@@ -645,7 +645,7 @@ private fun DepositOutputConfirmContent(
     }
 
     // あおいろ帳簿（transactions.json）
-    val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    val isAoiro = accountingSoftware == AccountingSoftware.AOIRO
     var aoiroResult by remember { mutableStateOf<AoiroChoboTransactionsBuilder.Result?>(null) }
     val jsonLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -943,7 +943,7 @@ private fun DepositOutputConfirmContent(
 private fun DepositGridHeader(accountingSoftware: AccountingSoftware = AccountingSoftware.YAYOI) {
     val tekiyouLabel = when (accountingSoftware) {
         AccountingSoftware.YAYOI -> "科目/メモ"
-        AccountingSoftware.BLUE_RETURN_PREP -> "科目 ／ 摘要/メモ"
+        AccountingSoftware.AOIRO -> "科目 ／ 摘要/メモ"
     }
     Row(
         modifier = Modifier
@@ -1111,7 +1111,7 @@ private suspend fun loadPurchaseOutputItems(
         val ocrVariantDao = database.ocrVariantDao()
         val allYayoiAccounts = if (accountingSoftware == AccountingSoftware.YAYOI)
             database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
-        val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+        val isAoiro = accountingSoftware == AccountingSoftware.AOIRO
         val aoiroAccountNames = if (isAoiro)
             database.aoiroChoboVocabDao().getAllAccounts().associate { it.accountKey to it.name } else emptyMap()
         val aoiroMemoNames = if (isAoiro)
@@ -1184,7 +1184,7 @@ private suspend fun loadDepositOutputItems(
         val allYayoiAccounts = if (accountingSoftware == AccountingSoftware.YAYOI)
             database.yayoiAccountDao().getAll().associateBy { it.id } else emptyMap()
         // あおいろはルールの accountKey / memoKey を使う（結合ビューには無いのでエンティティを読む）
-        val isAoiro = accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+        val isAoiro = accountingSoftware == AccountingSoftware.AOIRO
         val aoiroRulesByPattern = if (isAoiro)
             database.tekiyouMatchingRuleDao().getAll().associateBy { it.pattern } else emptyMap()
         val aoiroAccountNames = if (isAoiro)
@@ -1492,7 +1492,7 @@ private fun UnmatchedAccountBlockDialog(
 private fun OutputFormatBadge(accountingSoftware: AccountingSoftware) {
     val (bgColor, badgeLabel, formatNote) = when (accountingSoftware) {
         AccountingSoftware.YAYOI -> Triple(Color(0xFF1565C0), "弥生の青色申告", "仕訳CSV（Shift-JIS・25列）")
-        AccountingSoftware.BLUE_RETURN_PREP -> Triple(Color(0xFF00695C), "あおいろ帳簿", "transactions.json（UTF-8）")
+        AccountingSoftware.AOIRO -> Triple(Color(0xFF00695C), "あおいろ帳簿", "transactions.json（UTF-8）")
     }
     Row(
         modifier = Modifier

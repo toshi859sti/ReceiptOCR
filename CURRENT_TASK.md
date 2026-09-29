@@ -17,12 +17,12 @@
 - [x] ③ らくらくの画面（`RakurakuAccountSettingsScreen`・`RakurakuTekiyouScreen`・通帳摘要別リストのらくらく部分・商品編集の買掛摘要）と導線を削除
 - [x] ③ `assets/rakurakutekiyou.csv` と摘要の差分取込（`importTekiyouFromCsv`・`TekiyouDictImporter`）を削除
 - [x] ③ バックアップの書き出し・取込かららくらくの表を外す（古いバックアップのらくらく部分は読み飛ばす）
-- [ ] ③ 実機確認：弥生・あおいろの出力が撤去前と同じ／簿記ソフト連携メニューにらくらくが無い／古いバックアップの取込が通る
-- [ ] ④ **前に全データのバックアップを勧める**。DB v40 で `rakuraku_accounts`・`rakuraku_tekiyou` を落とし、
+- [x] ③ 実機確認：弥生・あおいろの出力が撤去前と同じ／簿記ソフト連携メニューにらくらくが無い／古いバックアップの取込が通る
+- [x] ④ **前に全データのバックアップを勧める**。DB v40 で `rakuraku_accounts`・`rakuraku_tekiyou` を落とし、
       学習ルール・明細・商品のらくらく列（`rakurakuTekiyouId`・`overrideTekiyouId`・`kaikakeTekiyouId` など）を外す。
       あわせて DAO のらくらく用クエリ（`DepositMeisaiDao` の `clearOverridesForRule`・`updateOverrideTekiyou`・
       JOIN の `rakuraku_tekiyou`、`TekiyouMatchingRuleDao` の結合列）と `SettingsScreen` の `withoutRakuraku()` を消す
-- [ ] ④ enum `BLUE_RETURN_PREP` の改名（保存値の移行つき）。`RAKURAKU` は ③ で削除済み
+- [x] ④ enum `BLUE_RETURN_PREP` の改名（保存値の移行つき）。`RAKURAKU` は ③ で削除済み
 - [ ] docs（`APP_SPECIFICATION.md`・`functional-design.md`・`architecture.md`・`MANUAL.md`・`PC_ACCOUNTING_INTEGRATION_SPEC.md`）と `CLAUDE.md`（撤去済みの記載・DB バージョン。更新はユーザー確認）
 
 ## 完了条件
@@ -42,19 +42,27 @@
   - `AccountHierarchyComponents.kt` → `YayoiCategoryOrder.kt`（らくらく科目画面専用だった階層表示を削除）
   - `assets/product_master.csv` の空の `rakuraku_account_id` 列を削除。旧コードは 5 列目（実は yayoi_account_id・全行空）を
     `kaikakeTekiyouId` に入れていたが、その読み込みも削除
+- 2026-09-29 ③ 実機確認済み（ユーザー）。④ 完了・実機で移行確認済み：
+  - 移行前バックアップ：`C:\Users\toshiro\GreenFrameOCR-backups\20260929-before-v40\`（DB 3 ファイル・v39・integrity ok）
+  - 移行前に実データを数えた結果、らくらく摘要を指す学習は 0 件（商品・通帳ルール・明細の個別指定とも）。
+    v36 のコメントにある `linkMemoKey`（らくらく→あおいろの引き継ぎ）は実装されていなかった
+  - `MIGRATION_39_40`：`product_master`・`tekiyou_matching_rules`・`deposit_meisai` を残す列だけで作り直し、
+    らくらくの 2 表を DROP。実機で v40・integrity ok・foreign_key_check 空・件数（商品 115・ルール 39・明細 157）一致
+  - enum は `AOIRO` に改名。保存値 `BLUE_RETURN_PREP` は読み出し時に `AOIRO` に移す（実機で確認し、設定は弥生に戻した）
 
 ---
 
 ## 作業終了時の記録（セッション終了前に必ず埋めること）
 
 ### 今回完了したこと
-- ③ コード・画面の撤去（2026-09-29・ビルド成功）
+- ③ コード・画面の撤去（2026-09-29・実機確認済み）
+- ④ DB v40・enum 改名（2026-09-29・実機で移行確認済み）
 
 ### 未完了・中断した理由
-- ③ の実機確認と ④（DB v40）が未着手
+- docs の更新と CLAUDE.md（DB バージョン v40・らくらく撤去済み）が未着手。CLAUDE.md はユーザー確認が要る
 
 ### 次回セッションで最初にやること
-③ を実機で確認（弥生・あおいろ出力、メニュー、古いバックアップ取込）してから、全データのバックアップを勧めて ④ に着手する。
+docs（`APP_SPECIFICATION.md`・`functional-design.md`・`architecture.md`・`MANUAL.md`・`PC_ACCOUNTING_INTEGRATION_SPEC.md`）かららくらくの記述を消し、CLAUDE.md の更新案をユーザーに確認する。
 
 ### 新たに発覚した問題・制約
 - なし

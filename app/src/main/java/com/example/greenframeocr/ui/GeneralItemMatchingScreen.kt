@@ -91,7 +91,7 @@ fun GeneralItemMatchingScreen(
     var hasSearchedNumericPrefixes by remember { mutableStateOf(false) }
 
     // あおいろ帳簿：グループに あおいろ科目・摘要 を付ける。明細ごとの個別上書きはあおいろには無い（列が無い）
-    val isAoiro = appPreferences.accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP
+    val isAoiro = appPreferences.accountingSoftware == AccountingSoftware.AOIRO
     var aoiroVocab by remember { mutableStateOf<GeneralReceiptViewModel.AoiroVocab?>(null) }
     var aoiroEditTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
 

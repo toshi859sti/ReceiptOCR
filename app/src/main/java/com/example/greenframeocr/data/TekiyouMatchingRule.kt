@@ -1,27 +1,17 @@
 package com.example.greenframeocr.data
 
 import androidx.room.Entity
-import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
  * 摘要マッチングルールエンティティ
- * 預金明細の摘要パターンとらくらく摘要辞書を紐付ける
+ * 預金明細の摘要パターンと勘定科目（弥生・あおいろ）を紐付ける
  */
 @Entity(
     tableName = "tekiyou_matching_rules",
     indices = [
-        Index(value = ["pattern"], unique = true),
-        Index(value = ["rakurakuTekiyouId"])
-    ],
-    foreignKeys = [
-        ForeignKey(
-            entity = RakurakuTekiyou::class,
-            parentColumns = ["id"],
-            childColumns = ["rakurakuTekiyouId"],
-            onDelete = ForeignKey.SET_NULL
-        )
+        Index(value = ["pattern"], unique = true)
     ]
 )
 data class TekiyouMatchingRule(
@@ -36,9 +26,6 @@ data class TekiyouMatchingRule(
 
     /** 正規表現として扱うか */
     val isRegex: Boolean = false,
-
-    /** 紐付けるらくらく摘要辞書ID */
-    val rakurakuTekiyouId: Int? = null,
 
     /** サンプル（元の摘要テキストの例） */
     val sampleText: String = "",

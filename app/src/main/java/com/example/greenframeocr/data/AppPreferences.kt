@@ -183,13 +183,15 @@ class AppPreferences(context: Context) {
         get() = prefs.getFloat(KEY_LIST_FONT_SIZE, DEFAULT_LIST_FONT_SIZE)
         set(value) = prefs.edit().putFloat(KEY_LIST_FONT_SIZE, value.coerceIn(10f, 20f)).apply()
 
-    // 連携会計ソフト。知らない保存値（サポート終了したらくらくの "RAKURAKU" など）は弥生に移して書き戻す
+    // 連携会計ソフト。古い保存値は今の値に移して書き戻す：あおいろの旧名 "BLUE_RETURN_PREP" は AOIRO、
+    // それ以外の知らない値（サポート終了したらくらくの "RAKURAKU" など）は弥生
     var accountingSoftware: AccountingSoftware
         get() {
             val stored = prefs.getString(KEY_ACCOUNTING_SOFTWARE, DEFAULT_ACCOUNTING_SOFTWARE) ?: DEFAULT_ACCOUNTING_SOFTWARE
             AccountingSoftware.entries.firstOrNull { it.name == stored }?.let { return it }
-            prefs.edit().putString(KEY_ACCOUNTING_SOFTWARE, AccountingSoftware.YAYOI.name).apply()
-            return AccountingSoftware.YAYOI
+            val migrated = if (stored == "BLUE_RETURN_PREP") AccountingSoftware.AOIRO else AccountingSoftware.YAYOI
+            prefs.edit().putString(KEY_ACCOUNTING_SOFTWARE, migrated.name).apply()
+            return migrated
         }
         set(value) = prefs.edit().putString(KEY_ACCOUNTING_SOFTWARE, value.name).apply()
 
@@ -255,7 +257,7 @@ class AppPreferences(context: Context) {
  */
 enum class AccountingSoftware(val displayName: String) {
     YAYOI("弥生の青色申告"),
-    BLUE_RETURN_PREP("あおいろ帳簿")  // PC 会計アプリ AoiroChobo。enum 名の変更はらくらく撤去のときにまとめて行う
+    AOIRO("あおいろ帳簿")  // PC 会計アプリ AoiroChobo。2026-09-29 までの保存値は "BLUE_RETURN_PREP"（AppPreferences.accountingSoftware で移す）
 }
 
 /**

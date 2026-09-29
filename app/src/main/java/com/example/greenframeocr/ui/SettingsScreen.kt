@@ -351,7 +351,7 @@ fun SettingsScreen(
                     )
                     Column {
                         Text(software.displayName, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        if (software == AccountingSoftware.BLUE_RETURN_PREP) {
+                        if (software == AccountingSoftware.AOIRO) {
                             Text(
                                 "科目・摘要は PC から取り込んだものを使う",
                                 fontSize = 12.sp,
@@ -1430,9 +1430,9 @@ private suspend fun importAllData(
         restoreDeposits(db, importData.passbooks, importData.depositMeisai)
 
         // マスタデータ
-        importData.productMasters.forEach { db.productMasterDao().insertIgnore(it.withComputedKey().withoutRakuraku()) }
+        importData.productMasters.forEach { db.productMasterDao().insertIgnore(it.withComputedKey()) }
         importData.ocrVariants.forEach { db.ocrVariantDao().insertIgnore(it) }
-        importData.tekiyouMatchingRules.forEach { db.tekiyouMatchingRuleDao().insertIgnore(it.withoutRakuraku()) }
+        importData.tekiyouMatchingRules.forEach { db.tekiyouMatchingRuleDao().insertIgnore(it) }
         importData.yayoiAccounts?.let { mergeYayoiAccounts(db, it) }
 
         // レシート・領収書（IDを保持したまま復元。general_receipt_itemsはreceiptId経由でFK参照するため
@@ -1639,7 +1639,7 @@ private suspend fun importMasterData(
                 productSkipped++
             } else {
                 // 新規追加（IDは自動採番されるため、新しいIDを記録）
-                val newId = db.productMasterDao().insert(product.copy(id = 0).withComputedKey().withoutRakuraku())
+                val newId = db.productMasterDao().insert(product.copy(id = 0).withComputedKey())
                 productIdMap[product.id] = newId
                 productAdded++
             }
@@ -1672,7 +1672,7 @@ private suspend fun importMasterData(
         // マッチングルールのインポート
         var ruleAdded = 0
         importData.tekiyouMatchingRules?.forEach { rule ->
-            val result = db.tekiyouMatchingRuleDao().insertIgnore(rule.copy(id = 0).withoutRakuraku())
+            val result = db.tekiyouMatchingRuleDao().insertIgnore(rule.copy(id = 0))
             if (result > 0) ruleAdded++
         }
 
@@ -1715,10 +1715,6 @@ private suspend fun mergeYayoiAccounts(
     }
     return added to updated
 }
-
-// 古いバックアップのらくらく摘要 ID は捨てる（らくらくの表はもう復元しないので、残すと外部キー違反になる）
-private fun com.example.greenframeocr.data.ProductMaster.withoutRakuraku() = copy(kaikakeTekiyouId = null)
-private fun com.example.greenframeocr.data.TekiyouMatchingRule.withoutRakuraku() = copy(rakurakuTekiyouId = null)
 
 /**
  * レシート・領収書データをエクスポート

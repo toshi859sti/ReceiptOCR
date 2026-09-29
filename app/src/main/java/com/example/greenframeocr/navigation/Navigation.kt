@@ -301,7 +301,7 @@ fun ReceiptNavGraph(
         composable(Screen.ReceiptPaymentMethodRules.route) {
             ReceiptPaymentMethodRuleScreen(
                 viewModel = generalReceiptViewModel,
-                isAoiro = appPreferences.accountingSoftware == AccountingSoftware.BLUE_RETURN_PREP,
+                isAoiro = appPreferences.accountingSoftware == AccountingSoftware.AOIRO,
                 onBack = { navController.popBackStack() }
             )
         }

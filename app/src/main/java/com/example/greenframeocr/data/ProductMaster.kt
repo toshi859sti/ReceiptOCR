@@ -1,7 +1,6 @@
 package com.example.greenframeocr.data
 
 import androidx.room.Entity
-import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -14,16 +13,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "product_master",
     indices = [
-        Index(value = ["kaikakeTekiyouId"]),
         Index(value = ["canonicalKey", "category"], unique = true)
-    ],
-    foreignKeys = [
-        ForeignKey(
-            entity = RakurakuTekiyou::class,
-            parentColumns = ["id"],
-            childColumns = ["kaikakeTekiyouId"],
-            onDelete = ForeignKey.SET_NULL
-        )
     ]
 )
 data class ProductMaster(
@@ -44,9 +34,6 @@ data class ProductMaster(
 
     /** 使用頻度（よく買う商品を優先マッチング） */
     val frequencyCount: Int = 0,
-
-    /** 買掛摘要辞書ID（RakurakuTekiyouのID） */
-    val kaikakeTekiyouId: Int? = null,
 
     /** 確定フラグ: 手動入力・訂正済みアイテムはtrue */
     val isCertified: Boolean = false,

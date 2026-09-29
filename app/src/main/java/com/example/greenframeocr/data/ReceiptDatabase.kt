@@ -16,8 +16,6 @@ import com.example.greenframeocr.util.toCanonicalKey
         ProductMaster::class,
         OcrVariant::class,
         YayoiAccount::class,
-        RakurakuAccount::class,
-        RakurakuTekiyou::class,
         DepositMeisai::class,
         TekiyouMatchingRule::class,
         OcrFallbackLog::class,
@@ -32,7 +30,7 @@ import com.example.greenframeocr.util.toCanonicalKey
         AoiroChoboAccountUsage::class,
         Passbook::class
     ],
-    version = 39,
+    version = 40,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -40,8 +38,6 @@ abstract class ReceiptDatabase : RoomDatabase() {
     abstract fun productMasterDao(): ProductMasterDao
     abstract fun ocrVariantDao(): OcrVariantDao
     abstract fun yayoiAccountDao(): YayoiAccountDao
-    abstract fun rakurakuAccountDao(): RakurakuAccountDao
-    abstract fun rakurakuTekiyouDao(): RakurakuTekiyouDao
     abstract fun depositMeisaiDao(): DepositMeisaiDao
     abstract fun tekiyouMatchingRuleDao(): TekiyouMatchingRuleDao
     abstract fun ocrFallbackLogDao(): OcrFallbackLogDao
@@ -1086,6 +1082,95 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v39 → v40: らくらく青色申告農業版の撤去（サポート終了 2026-09-23）。
+         *
+         * `rakuraku_accounts`・`rakuraku_tekiyou` を落とし、それを指していた列
+         * （`product_master.kaikakeTekiyouId`・`tekiyou_matching_rules.rakurakuTekiyouId`・
+         * `deposit_meisai.overrideTekiyouId`）を外す。らくらくの摘要を指す学習をあおいろへ移す仕組み
+         * （v36 のコメントの `linkMemoKey`）は作られなかったので、ここで引き継ぐものは無い。
+         *
+         * DROP COLUMN は端末の SQLite に依存するので、残す列だけを SELECT して作り直す（v36 と同じ形）。
+         * 子の表を作り直してから親（らくらくの表）を落とす。
+         */
+        private val MIGRATION_39_40 = object : Migration(39, 40) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE TABLE `product_master_new` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `canonicalName` TEXT NOT NULL, " +
+                        "`canonicalKey` TEXT NOT NULL, `category` TEXT NOT NULL, `frequencyCount` INTEGER NOT NULL, " +
+                        "`isCertified` INTEGER NOT NULL, `yayoiAccountId` INTEGER, `accountKey` TEXT, " +
+                        "`accountKeyName` TEXT, `memoKey` TEXT, `memoKeyName` TEXT)"
+                )
+                database.execSQL(
+                    "INSERT INTO product_master_new (id, canonicalName, canonicalKey, category, frequencyCount, " +
+                        "isCertified, yayoiAccountId, accountKey, accountKeyName, memoKey, memoKeyName) " +
+                        "SELECT id, canonicalName, canonicalKey, category, frequencyCount, " +
+                        "isCertified, yayoiAccountId, accountKey, accountKeyName, memoKey, memoKeyName FROM product_master"
+                )
+                database.execSQL("DROP TABLE product_master")
+                database.execSQL("ALTER TABLE product_master_new RENAME TO product_master")
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_product_master_canonicalKey_category` " +
+                        "ON `product_master` (`canonicalKey`, `category`)"
+                )
+
+                database.execSQL(
+                    "CREATE TABLE `tekiyou_matching_rules_new` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `pattern` TEXT NOT NULL, " +
+                        "`normalizedTekiyou` TEXT NOT NULL, `isRegex` INTEGER NOT NULL, `sampleText` TEXT NOT NULL, " +
+                        "`matchCount` INTEGER NOT NULL, `isDeposit` INTEGER NOT NULL, `yayoiAccountId` INTEGER, " +
+                        "`accountKey` TEXT, `accountKeyName` TEXT, `memoKey` TEXT, `memoKeyName` TEXT)"
+                )
+                database.execSQL(
+                    "INSERT INTO tekiyou_matching_rules_new (id, pattern, normalizedTekiyou, isRegex, sampleText, " +
+                        "matchCount, isDeposit, yayoiAccountId, accountKey, accountKeyName, memoKey, memoKeyName) " +
+                        "SELECT id, pattern, normalizedTekiyou, isRegex, sampleText, " +
+                        "matchCount, isDeposit, yayoiAccountId, accountKey, accountKeyName, memoKey, memoKeyName " +
+                        "FROM tekiyou_matching_rules"
+                )
+                database.execSQL("DROP TABLE tekiyou_matching_rules")
+                database.execSQL("ALTER TABLE tekiyou_matching_rules_new RENAME TO tekiyou_matching_rules")
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_tekiyou_matching_rules_pattern` " +
+                        "ON `tekiyou_matching_rules` (`pattern`)"
+                )
+
+                database.execSQL(
+                    "CREATE TABLE `deposit_meisai_new` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `passbookId` INTEGER NOT NULL, " +
+                        "`transactionDate` TEXT NOT NULL, `transactionNumber` TEXT NOT NULL, `tekiyou` TEXT NOT NULL, " +
+                        "`amount` INTEGER NOT NULL, `memo` TEXT NOT NULL, `matchingRuleId` INTEGER, " +
+                        "`overrideYayoiAccountId` INTEGER, `overrideAccountKey` TEXT, `overrideAccountKeyName` TEXT, " +
+                        "`overrideMemoKey` TEXT, `overrideMemoKeyName` TEXT, `exportedAt` TEXT)"
+                )
+                database.execSQL(
+                    "INSERT INTO deposit_meisai_new (id, passbookId, transactionDate, transactionNumber, tekiyou, " +
+                        "amount, memo, matchingRuleId, overrideYayoiAccountId, overrideAccountKey, " +
+                        "overrideAccountKeyName, overrideMemoKey, overrideMemoKeyName, exportedAt) " +
+                        "SELECT id, passbookId, transactionDate, transactionNumber, tekiyou, " +
+                        "amount, memo, matchingRuleId, overrideYayoiAccountId, overrideAccountKey, " +
+                        "overrideAccountKeyName, overrideMemoKey, overrideMemoKeyName, exportedAt FROM deposit_meisai"
+                )
+                database.execSQL("DROP TABLE deposit_meisai")
+                database.execSQL("ALTER TABLE deposit_meisai_new RENAME TO deposit_meisai")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_deposit_meisai_transactionDate` " +
+                        "ON `deposit_meisai` (`transactionDate`)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_deposit_meisai_tekiyou` ON `deposit_meisai` (`tekiyou`)"
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_deposit_meisai_passbookId_transactionDate_transactionNumber` " +
+                        "ON `deposit_meisai` (`passbookId`, `transactionDate`, `transactionNumber`)"
+                )
+
+                database.execSQL("DROP TABLE IF EXISTS rakuraku_tekiyou")
+                database.execSQL("DROP TABLE IF EXISTS rakuraku_accounts")
+            }
+        }
+
         private val MIGRATION_34_35 = object : Migration(34, 35) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE receipt_items ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
@@ -1510,7 +1595,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40)
                     .build()
                 INSTANCE = instance
                 instance
