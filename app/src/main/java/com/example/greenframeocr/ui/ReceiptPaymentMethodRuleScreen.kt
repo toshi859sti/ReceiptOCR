@@ -62,8 +62,6 @@ fun ReceiptPaymentMethodRuleScreen(
     fun aoiroName(rule: ReceiptPaymentMethodRule): String? =
         rule.accountKey?.let { key -> aoiroAccounts.find { it.accountKey == key }?.name ?: rule.accountKeyName ?: key }
 
-    /** あおいろモードで足したルールの弥生の科目。弥生の出力ではどのルールにも当たらないときと同じ「現金」になる */
-    fun yayoiCashId(): Long = accounts.firstOrNull { it.accountName == "現金" }?.id ?: 0L
     LaunchedEffect(Unit) { reload() }
 
     val accountsById = remember(accounts) { accounts.associateBy { it.id } }
@@ -122,7 +120,7 @@ fun ReceiptPaymentMethodRuleScreen(
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(rules, key = { it.id }) { rule ->
-                        val account = accountsById[rule.yayoiAccountId]
+                        val account = rule.yayoiAccountId?.let { accountsById[it] }
                         val targetName = if (isAoiro) aoiroName(rule) else account?.accountName
                         Row(
                             modifier = Modifier
@@ -138,7 +136,11 @@ fun ReceiptPaymentMethodRuleScreen(
                                     fontSize = 15.sp
                                 )
                                 Text(
-                                    text = "→ ${targetName ?: if (isAoiro) "（あおいろ未設定）" else "（科目未登録）"}",
+                                    text = "→ ${targetName ?: when {
+                                        isAoiro -> "（あおいろ未設定）"
+                                        rule.yayoiAccountId == null -> "（弥生未設定・このルールは飛ばします）"
+                                        else -> "（科目未登録）"
+                                    }}",
                                     fontSize = 13.sp,
                                     color = if (targetName != null) MaterialTheme.colorScheme.primary
                                             else MaterialTheme.colorScheme.error
@@ -164,7 +166,7 @@ fun ReceiptPaymentMethodRuleScreen(
             onSave = { keyword, key, name ->
                 viewModel.savePaymentMethodRule(
                     ReceiptPaymentMethodRule(
-                        keyword = keyword, yayoiAccountId = yayoiCashId(), sortOrder = rules.size,
+                        keyword = keyword, yayoiAccountId = null, sortOrder = rules.size,
                         accountKey = key, accountKeyName = name
                     )
                 )

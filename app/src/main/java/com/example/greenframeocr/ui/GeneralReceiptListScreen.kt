@@ -20,6 +20,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -27,11 +30,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.greenframeocr.data.AccountingSoftware
+import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.ReceiptItemPreview
 import com.example.greenframeocr.data.YayoiAccount
+import com.example.greenframeocr.util.AoiroChoboReceiptRules
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
 import kotlinx.coroutines.launch
 
@@ -132,6 +138,13 @@ private fun ReceiptListTab(
     var filterPanelExpanded by remember { mutableStateOf(false) }
     var sortOrder by remember { mutableStateOf(ReceiptSortOrder.DATE_DESC) }
     var todayOnly by remember { mutableStateOf(false) }
+
+    // カードに出す「今効いている支払方法の科目」。上書き・ルールで変わるので、一覧が変わるたびに引き直す
+    val isAoiro = appPreferences.accountingSoftware == AccountingSoftware.AOIRO
+    var paymentAccountNames by remember { mutableStateOf<Map<Long, String?>>(emptyMap()) }
+    LaunchedEffect(receipts, isAoiro) {
+        paymentAccountNames = viewModel.resolvePaymentAccountNames(receipts, isAoiro)
+    }
 
     val workingCalendarYear = remember { appPreferences.workingCalendarYear.toString() }
     var lockYearToWorking by remember { mutableStateOf(appPreferences.lockYearToWorking) }
@@ -453,10 +466,34 @@ private fun ReceiptListTab(
                             }
                             Spacer(Modifier.width(8.dp))
                             Column(horizontalAlignment = Alignment.End) {
+                                // 「印字 → 今効いている科目」。個別上書きしたものは科目を詳細画面と同じ色にする
+                                val printed = receipt.paymentMethodText?.takeIf { it.isNotBlank() } ?: "未記載"
+                                val overridden = if (isAoiro) receipt.paymentOverrideAccountKey != null
+                                                 else receipt.paymentAccountOverride != null
+                                val accountLabel = when {
+                                    receipt.id !in paymentAccountNames -> "…"
+                                    else -> paymentAccountNames[receipt.id] ?: "科目なし"
+                                }
                                 Text(
-                                    text = receipt.paymentMethodText?.takeIf { it.isNotBlank() } ?: "支払方法未記載",
+                                    text = buildAnnotatedString {
+                                        append("$printed → ")
+                                        withStyle(
+                                            SpanStyle(
+                                                color = when {
+                                                    overridden -> MaterialTheme.colorScheme.tertiary
+                                                    paymentAccountNames[receipt.id] == null &&
+                                                        receipt.id in paymentAccountNames -> MaterialTheme.colorScheme.error
+                                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
+                                                fontWeight = if (overridden) FontWeight.Bold else null
+                                            )
+                                        ) { append(accountLabel) }
+                                    },
                                     fontSize = (fontSize - 4f).coerceAtLeast(9f).sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 160.dp)
                                 )
                                 Text(
                                     text = "¥${"%,d".format(receipt.total)}",
@@ -501,6 +538,7 @@ private fun ReceiptListTab(
         ReceiptDetailDialog(
             receipt = receipt,
             viewModel = viewModel,
+            isAoiro = appPreferences.accountingSoftware == AccountingSoftware.AOIRO,
             fontSize = fontSize,
             onDismiss = { detailTarget = null }
         )
@@ -721,6 +759,7 @@ private fun NewReceiptDialog(
 private fun ReceiptDetailDialog(
     receipt: GeneralReceipt,
     viewModel: GeneralReceiptViewModel,
+    isAoiro: Boolean = false,
     fontSize: Float = AppPreferences.DEFAULT_LIST_FONT_SIZE,
     onDismiss: () -> Unit
 ) {
@@ -736,10 +775,26 @@ private fun ReceiptDetailDialog(
     var counterAccountName by remember { mutableStateOf<String?>(null) }
     var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var showPaymentAccountPicker by remember { mutableStateOf(false) }
+    var aoiroAccounts by remember { mutableStateOf<List<AoiroChoboAccount>>(emptyList()) }
+    // 支払方法の科目の上書きはこの画面で変えられる。receipt は開いたときの値なので、
+    // 編集の保存で古い上書きを書き戻さないよう今の値をここで持つ
+    var yayoiPaymentOverride by remember { mutableStateOf(receipt.paymentAccountOverride) }
+    var aoiroPaymentOverrideKey by remember { mutableStateOf(receipt.paymentOverrideAccountKey) }
+    var aoiroPaymentOverrideName by remember { mutableStateOf(receipt.paymentOverrideAccountKeyName) }
+
+    fun currentReceipt() = receipt.copy(
+        paymentAccountOverride = yayoiPaymentOverride,
+        paymentOverrideAccountKey = aoiroPaymentOverrideKey,
+        paymentOverrideAccountKeyName = aoiroPaymentOverrideName
+    )
 
     fun reloadCounterAccountName() {
         coroutineScope.launch {
-            counterAccountName = viewModel.resolveCounterAccountNameForReceipt(receipt)
+            counterAccountName = if (isAoiro) {
+                viewModel.resolveAoiroPaymentNameForReceipt(currentReceipt()) ?: "未設定（科目なしで PC に送ります）"
+            } else {
+                viewModel.resolveCounterAccountNameForReceipt(currentReceipt())
+            }
         }
     }
 
@@ -758,6 +813,7 @@ private fun ReceiptDetailDialog(
         editItems.addAll(loaded.toEditableItems())
         isLoading = false
         yayoiAccounts = viewModel.loadYayoiAccounts()
+        if (isAoiro) aoiroAccounts = viewModel.loadAoiroVocab().accounts
         reloadCounterAccountName()
     }
 
@@ -858,10 +914,12 @@ private fun ReceiptDetailDialog(
                                 .clickable { showPaymentAccountPicker = true },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val overridden = if (isAoiro) aoiroPaymentOverrideKey != null else yayoiPaymentOverride != null
                             Text(
-                                text = "支払方法の科目（弥生CSV出力用）: ${counterAccountName ?: "…"}",
+                                text = (if (isAoiro) "支払方法の科目（あおいろ）: " else "支払方法の科目（弥生CSV出力用）: ") +
+                                    (counterAccountName ?: "…"),
                                 fontSize = subFontSize.sp,
-                                color = if (receipt.paymentAccountOverride != null)
+                                color = if (overridden)
                                     MaterialTheme.colorScheme.tertiary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.weight(1f)
@@ -1029,17 +1087,24 @@ private fun ReceiptDetailDialog(
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
+                                        // 既存の明細は元の行を copy する。組み直すと個別上書き（弥生・あおいろ）や
+                                        // 出力済みの印（exportedAt）が黙って消える
+                                        val originalsById = originalItems.associateBy { it.id }
                                         val updatedItems = editItems.map { ei ->
-                                            GeneralReceiptItem(
-                                                id = ei.originalId ?: 0L,
+                                            val price = ei.priceStr.toIntOrNull() ?: 0
+                                            ei.originalId?.let { originalsById[it] }?.copy(
+                                                itemName = ei.itemName,
+                                                price = price,
+                                                isExcluded = ei.isExcluded
+                                            ) ?: GeneralReceiptItem(
                                                 receiptId = receipt.id,
                                                 itemName = ei.itemName,
-                                                price = ei.priceStr.toIntOrNull() ?: 0,
+                                                price = price,
                                                 isExcluded = ei.isExcluded
                                             )
                                         }
                                         viewModel.saveReceiptEdits(
-                                            receipt.copy(storeName = editStoreName, date = editDate, total = calculatedTotal),
+                                            currentReceipt().copy(storeName = editStoreName, date = editDate, total = calculatedTotal),
                                             updatedItems,
                                             originalItems
                                         )
@@ -1058,20 +1123,104 @@ private fun ReceiptDetailDialog(
     }
     }
 
-    if (showPaymentAccountPicker) {
+    if (showPaymentAccountPicker && isAoiro) {
+        AoiroPaymentOverrideDialog(
+            subject = receipt.paymentMethodText?.takeIf { it.isNotBlank() }
+                ?.let { "${receipt.storeName}（印字: $it）" } ?: receipt.storeName,
+            accounts = aoiroAccounts,
+            currentKey = aoiroPaymentOverrideKey,
+            currentName = aoiroPaymentOverrideName,
+            onDismiss = { showPaymentAccountPicker = false },
+            onSave = { key, name ->
+                viewModel.updateReceiptPaymentAccountKeyOverride(receipt.id, key, name)
+                aoiroPaymentOverrideKey = key
+                aoiroPaymentOverrideName = name
+                showPaymentAccountPicker = false
+                reloadCounterAccountName()
+            }
+        )
+    } else if (showPaymentAccountPicker) {
         PaymentAccountPickerDialog(
-            currentOverrideId = receipt.paymentAccountOverride,
+            currentOverrideId = yayoiPaymentOverride,
             accounts = yayoiAccounts,
             onDismiss = { showPaymentAccountPicker = false },
             onSelect = { accountId ->
                 viewModel.updateReceiptPaymentAccountOverride(receipt.id, accountId)
+                yayoiPaymentOverride = accountId
                 showPaymentAccountPicker = false
-                coroutineScope.launch {
-                    counterAccountName = viewModel.resolveCounterAccountNameForReceipt(
-                        receipt.copy(paymentAccountOverride = accountId)
+                reloadCounterAccountName()
+            }
+        )
+    }
+}
+
+/**
+ * レシート単位のあおいろの支払方法の科目（貸方）の上書き。科目を外して保存すると支払方法のルールに戻る。
+ * 候補は支払方法のルールと同じ（現金・未払金・事業主借。「絞り込み外も表示」で口座・借入金なども）
+ */
+@Composable
+fun AoiroPaymentOverrideDialog(
+    subject: String,
+    accounts: List<AoiroChoboAccount>,
+    currentKey: String?,
+    currentName: String?,
+    onDismiss: () -> Unit,
+    onSave: (accountKey: String?, accountKeyName: String?) -> Unit
+) {
+    var accountKey by remember { mutableStateOf(currentKey) }
+    var showPicker by remember { mutableStateOf(false) }
+    fun nameOf(key: String): String? =
+        accounts.find { it.accountKey == key }?.name ?: currentName.takeIf { key == currentKey }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("支払方法の科目を変更（あおいろ）", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (subject.isNotBlank()) {
+                    Text(subject, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (accounts.isEmpty()) {
+                    Text(
+                        "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください。",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    PickerField(
+                        label = "支払方法の科目（あおいろ）",
+                        value = accountKey?.let { nameOf(it) ?: it } ?: "ルール判定に従う",
+                        hasValue = accountKey != null,
+                        onPick = { showPicker = true },
+                        onClear = { accountKey = null }
                     )
                 }
+                Text(
+                    "科目を外して保存すると、支払方法のルールで決まる科目に戻ります（どれにも当たらなければ現金）",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(accountKey, accountKey?.let { nameOf(it) }) }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
+    )
+
+    if (showPicker) {
+        AoiroAccountPickerDialog(
+            subject = subject,
+            emptySubject = "支払方法",
+            accounts = AoiroChoboReceiptRules.paymentCandidates(accounts),
+            allAccounts = AoiroChoboReceiptRules.allPaymentCandidates(accounts),
+            memoCandidates = null,
+            selectedKey = accountKey,
+            onSelect = { key ->
+                accountKey = key
+                showPicker = false
+            },
+            onDismiss = { showPicker = false }
         )
     }
 }

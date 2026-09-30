@@ -20,7 +20,9 @@ import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.data.ReceiptItemPreview
 import com.example.greenframeocr.data.ReceiptPaymentMethodRule
 import com.example.greenframeocr.data.YayoiAccount
+import com.example.greenframeocr.util.AoiroChoboReceiptRules
 import com.example.greenframeocr.util.AoiroChoboTransactionsBuilder
+import com.example.greenframeocr.util.AoiroChoboUsageRules
 import com.example.greenframeocr.util.CsvUtils
 import com.example.greenframeocr.util.GeminiApiException
 import com.example.greenframeocr.util.GeminiApiKeyMissingException
@@ -125,6 +127,18 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     )
     private val _aiSuggestions = MutableStateFlow<List<AiSuggestion>>(emptyList())
     val aiSuggestions: StateFlow<List<AiSuggestion>> = _aiSuggestions
+
+    /** あおいろの AI 提案 1 件。AI が決めるのは科目だけで、摘要は空欄にして農家が選ぶ（空欄のままでもよい） */
+    data class AoiroAiSuggestion(
+        val canonicalKey: String,
+        val itemName: String,
+        val accountKey: String,
+        val accountName: String,
+        val reason: String
+    )
+    /** null = 提案ダイアログを出さない。空リスト = 提案なし */
+    private val _aoiroAiSuggestions = MutableStateFlow<List<AoiroAiSuggestion>?>(null)
+    val aoiroAiSuggestions: StateFlow<List<AoiroAiSuggestion>?> = _aoiroAiSuggestions
 
     private val _aiUsageStats = MutableStateFlow<GeminiReceiptClient.AiUsageStats?>(null)
     val aiUsageStats: StateFlow<GeminiReceiptClient.AiUsageStats?> = _aiUsageStats
@@ -231,7 +245,7 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
 
     /**
      * グループのあおいろの科目・摘要を変更する。弥生の科目とは独立なので弥生側（科目・個別上書き）には触らない。
-     * あおいろには明細ごとの個別上書きが無い（列が無い）ので、全件リセットも無い
+     * グループ内のあおいろの個別上書きは全解除する（弥生の [updateGroupDefaultAccount] と同じ）
      */
     fun updateGroupAoiro(
         canonicalKey: String,
@@ -249,6 +263,23 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                     memoKey = memoKey,
                     memoKeyName = memoKeyName
                 )
+            )
+            dao.clearAoiroOverridesForGroup(canonicalKey)
+        }
+    }
+
+    /** 明細 1 件だけあおいろの科目・摘要を上書きする。accountKey=null でグループの設定に戻す */
+    fun updateItemAoiroOverride(
+        itemId: Long,
+        accountKey: String?,
+        accountKeyName: String?,
+        memoKey: String?,
+        memoKeyName: String?
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.updateAoiroOverrideForItem(
+                itemId, accountKey, accountKeyName?.takeIf { accountKey != null },
+                memoKey?.takeIf { accountKey != null }, memoKeyName?.takeIf { accountKey != null && memoKey != null }
             )
         }
     }
@@ -305,11 +336,55 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         val memoNames = db.aoiroChoboVocabDao().getAllMemoTemplates().associate { it.memoKey to it.name }
         val groups = db.generalItemMasterDao().getAll().associateBy { it.canonicalKey }
         dao.getAllItemsOnce().associate { item ->
-            val group = groups[item.canonicalKey]
+            val link = AoiroChoboTransactionsBuilder.linkForReceiptItem(item, groups[item.canonicalKey])
             item.id to listOfNotNull(
-                group?.accountKey?.let { accountNames[it] },
-                group?.memoKey?.let { memoNames[it] }
+                link.accountKey?.let { accountNames[it] },
+                link.memoKey?.let { memoNames[it] }
             ).joinToString(" ／ ")
+        }
+    }
+
+    /**
+     * このレシートのあおいろの支払方法の科目名（出力と同じ決め方）。決まらなければ null（PC には「科目なし」で送る）。
+     * 辞書から消えた上書き・ルールの科目も null
+     */
+    suspend fun resolveAoiroPaymentNameForReceipt(receipt: GeneralReceipt): String? =
+        withContext(Dispatchers.IO) {
+            val accounts = db.aoiroChoboVocabDao().getAllAccounts()
+            AoiroChoboTransactionsBuilder.resolveReceiptPayment(
+                receipt,
+                db.receiptPaymentMethodRuleDao().getAll(),
+                accounts.associateBy { it.accountKey },
+                AoiroChoboTransactionsBuilder.cashAccount(accounts)
+            ).second
+        }
+
+    /**
+     * 一覧用：レシート id → 今効いている支払方法の科目名（出力と同じ決め方）。
+     * あおいろで決まらないものは null（PC には「科目なし」で送る）
+     */
+    suspend fun resolvePaymentAccountNames(
+        receipts: List<GeneralReceipt>,
+        isAoiro: Boolean
+    ): Map<Long, String?> = withContext(Dispatchers.IO) {
+        val rules = db.receiptPaymentMethodRuleDao().getAll()
+        if (isAoiro) {
+            val accounts = db.aoiroChoboVocabDao().getAllAccounts()
+            val byKey = accounts.associateBy { it.accountKey }
+            val cash = AoiroChoboTransactionsBuilder.cashAccount(accounts)
+            receipts.associate { r ->
+                r.id to AoiroChoboTransactionsBuilder.resolveReceiptPayment(r, rules, byKey, cash).second
+            }
+        } else {
+            val accountsById = db.yayoiAccountDao().getAll().associateBy { it.id }
+            receipts.associate { r -> r.id to resolveCounterAccountName(r, rules, accountsById) }
+        }
+    }
+
+    /** レシート単位のあおいろの支払方法の科目の上書き。accountKey=null でルール判定に戻す */
+    fun updateReceiptPaymentAccountKeyOverride(receiptId: Long, accountKey: String?, accountKeyName: String?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.updatePaymentAccountKeyOverride(receiptId, accountKey, accountKeyName?.takeIf { accountKey != null })
         }
     }
 
@@ -446,7 +521,74 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
+    /**
+     * 未マッチの品目グループに、あおいろの科目を AI に提案させる（弥生版 [suggestAccountsForItems] のあおいろ版）。
+     * 弥生版と違って既に科目のあるグループは送らない（JA 購買・預金のあおいろ版と同じ。承認すると個別変更が消えるため）
+     */
+    fun suggestAoiroAccountsForItems(groups: List<GeneralItemGroup>, vocab: AoiroVocab) {
+        val unmatched = groups.filter { it.accountKey == null }.take(60)
+        if (unmatched.isEmpty()) {
+            _aiError.value = "未マッチの品目がありません"
+            return
+        }
+        val accounts = AoiroChoboUsageRules.candidates(AoiroChoboUsageRules.Usage.RECEIPT, vocab.accounts, vocab.usage)
+        if (accounts.isEmpty()) {
+            _aiError.value = "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください"
+            return
+        }
+        val memoNames = accounts.associate { a ->
+            a.accountKey to AoiroChoboReceiptRules.memoCandidates(a.accountKey, vocab.memos).map { it.name }
+        }
+        viewModelScope.launch {
+            _isAiMatching.value = true
+            _aiError.value = null
+            try {
+                val result = GeminiReceiptClient.matchReceiptItemsToAoiroAccounts(
+                    itemNames = unmatched.map { it.itemName },
+                    accounts = accounts,
+                    memoNamesByAccount = memoNames,
+                    apiKey = prefs.geminiApiKey
+                )
+                val byKey = vocab.accounts.associateBy { it.accountKey }
+                _aoiroAiSuggestions.value = result.matches.mapNotNull { m ->
+                    val group = unmatched.getOrNull(m.itemIndex) ?: return@mapNotNull null
+                    val account = byKey[m.accountKey] ?: return@mapNotNull null
+                    AoiroAiSuggestion(
+                        canonicalKey = group.canonicalKey,
+                        itemName = group.itemName,
+                        accountKey = account.accountKey,
+                        accountName = account.name,
+                        reason = m.reason
+                    )
+                }
+                _aiUsageStats.value = result.usageStats
+                result.usageStats?.let { prefs.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
+            } catch (e: GeminiApiKeyMissingException) {
+                _aiError.value = e.message
+            } catch (e: GeminiQuotaExhaustedException) {
+                _aiError.value = e.message
+            } catch (e: GeminiRateLimitException) {
+                _aiError.value = e.message
+            } catch (e: GeminiApiException) {
+                _aiError.value = e.message
+            } catch (e: Exception) {
+                _aiError.value = "エラー: ${e.message}"
+            } finally {
+                _isAiMatching.value = false
+            }
+        }
+    }
+
+    /** 承認したあおいろの提案を品目グループに保存する（手で設定したときと同じく、グループ内の個別変更は外れる） */
+    fun applyAoiroSuggestions(accepted: List<AoiroAiSuggestion>) {
+        accepted.forEach { s ->
+            updateGroupAoiro(s.canonicalKey, s.accountKey, s.accountName, null, null)
+        }
+        clearAiSuggestions()
+    }
+
     fun clearAiSuggestions() {
+        _aoiroAiSuggestions.value = null
         _aiSuggestions.value = emptyList()
         _aiUsageStats.value = null
         _aiError.value = null
@@ -572,7 +714,8 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     }
 
     /** 支払方法テキスト・個別上書きから相手科目（貸方勘定科目）名を決定する。
-     *  優先順：個別上書き > ReceiptPaymentMethodRuleの部分一致（sortOrder順） > 「現金」科目 > 固定文字列"現金" */
+     *  優先順：個別上書き > ReceiptPaymentMethodRuleの部分一致（sortOrder順） > 「現金」科目 > 固定文字列"現金"。
+     *  弥生の科目を持たないルール（あおいろモードで足したもの）は飛ばす。当たっても現金にせず次のルールを見る */
     private fun resolveCounterAccountName(
         receipt: GeneralReceipt?,
         rules: List<ReceiptPaymentMethodRule>,
@@ -581,8 +724,8 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         receipt?.paymentAccountOverride?.let { id -> accountsById[id]?.accountName?.let { return it } }
         val text = receipt?.paymentMethodText
         if (!text.isNullOrBlank()) {
-            val rule = rules.firstOrNull { text.contains(it.keyword, ignoreCase = true) }
-            rule?.let { accountsById[it.yayoiAccountId]?.accountName?.let { name -> return name } }
+            val rule = rules.firstOrNull { it.yayoiAccountId != null && text.contains(it.keyword, ignoreCase = true) }
+            rule?.yayoiAccountId?.let { id -> accountsById[id]?.accountName?.let { name -> return name } }
         }
         return accountsById.values.firstOrNull { it.accountName == "現金" }?.accountName ?: "現金"
     }

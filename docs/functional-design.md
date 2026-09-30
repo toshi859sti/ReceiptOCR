@@ -289,14 +289,19 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
   相手科目・摘要は明細の個別指定（`override*`）を最優先、無ければルールのもの。摘要は「預金/入金」「預金/出金」のタブで
   相手科目が一致するものだけ送る。`externalId` は `ocr:deposit:p{通帳ID}-{日付}-{通番}`。
   `note` は通帳の摘要原文と明細のメモ。口座間の振替は除外しない（PC が「重複の可能性」で受ける）
-- レシート：借方＝品目グループ（`general_item_master`）の `accountKey`・`memoKey`。貸方＝支払方法の印字に最初に部分一致した
-  ルールの `accountKey`、どれにも当たらなければ現金（`ledgerAffinity == "Cash"` の科目。弥生と同じ既定）。
+- レシート：借方＝明細の個別上書き（`general_receipt_items.overrideAccountKey`・`overrideMemoKey`）、無ければ品目グループ
+  （`general_item_master`）の `accountKey`・`memoKey`。貸方＝レシートの個別上書き（`general_receipts.paymentOverrideAccountKey`）、
+  無ければ支払方法の印字に最初に部分一致したルールの `accountKey`、どれにも当たらなければ現金（`ledgerAffinity == "Cash"` の科目。弥生と同じ既定）。
   当たったルールにあおいろの科目が無ければ貸方は未設定（`UnmatchedAccount`・現金にはしない）。
   `ledgerType` は貸方が現金なら `Cash`、それ以外は `Unpaid`。摘要はグループに「現金/出金」のものを持ち、
   現金以外の支払いでは「未払/発生」の同じ名前・税率・事業割合の摘要に置き換える（無ければ摘要なし）。
   値引き（金額が負）は借方/貸方を入れ替える。経費対象外の品目は出さない。
   `externalId` は `ocr:receipt:{general_receipts.uuid}:{itemIndex}`（itemIndex はレシートの全品目を id 順に並べた位置で、
-  経費対象外の品目も数える）。`meta` に店名・登録番号・支払方法の印字を入れる。弥生の明細・レシートごとの個別上書きは使わない
+  経費対象外の品目も数える）。`meta` に店名・登録番号・支払方法の印字を入れる。弥生の個別上書き（`yayoiAccountId`・
+  `paymentAccountOverride`）は使わない（あおいろの上書きは別の列。グループのあおいろ設定を保存し直すと、そのグループの明細の上書きは消える）
+- 支払方法のルールの弥生の科目（`yayoiAccountId`）は null 可（v41〜）。あおいろモードで足したルールは弥生の科目を持たず、
+  弥生の出力はそのルールを飛ばして次のルールを見る（どれにも当たらなければ現金）。逆に、あおいろの科目が無いルールに当たった
+  レシートは、あおいろでは貸方未設定（`UnmatchedAccount`）で送る
 - 科目や摘要が決まっていない行も止めずに出す（PC 側が「要確認」として受ける）。出力後に 確定／摘要なし／科目なし の件数を表示する
 - 出せない行（金額 0・実在しない日付、預金は口座が未設定の通帳・口座が今の科目に無い・通番に使えない文字）は
   出力済みにせず、理由を結果ダイアログに出す
@@ -320,8 +325,10 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 6. 未マッチの摘要はまとめて Gemini に科目を提案させられる（「AIで一括提案」）
 
 あおいろモードでは 3〜5 の列が `accountKey`/`memoKey`（ルール）・`overrideAccountKey`/`overrideMemoKey`（明細）になり、
-`AoiroDepositLinkDialog` で相手科目 → 摘要の順に選ぶ（候補は `util/AoiroChoboDepositRules.kt`）。
-グループを保存し直すと明細のあおいろ上書きもリセットされる（`clearAoiroOverridesForRule()`）。AI 提案は弥生モードだけ。
+`AoiroLinkDialog` で摘要（上）・相手科目（下）を選ぶ。摘要を選ぶと相手科目はその摘要の相手科目になる（候補は `util/AoiroChoboDepositRules.kt`）。
+グループを保存し直すと明細のあおいろ上書きもリセットされる（`clearAoiroOverridesForRule()`）。AI 提案はあおいろモードにもある
+（`GeminiReceiptClient.matchTekiyouToAoiroAccounts`。未マッチのパターンだけを送り、行も科目も通し番号で答えさせて手元で `accountKey` に戻す。
+AI が決めるのは科目だけで、摘要は空欄にする。レシートの品目グループ・JA 購買の商品も同じ：`matchReceiptItemsToAoiroAccounts`）。
 
 ---
 

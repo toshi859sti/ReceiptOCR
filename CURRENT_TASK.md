@@ -1,80 +1,83 @@
 # CURRENT_TASK.md
 
 ## 作業タイトル
-らくらく青色申告農業版の撤去（③ コード・画面 → ④ DB v40）
+あおいろ帳簿モードの未対応部分の解消
 
 ## 目的・背景
-らくらく青色申告農業版のサポート終了（2026-09-23 決定・`docs/integration/REPLY-phone-2026-09-23.md` §5）。
-出力先は 弥生 CSV と あおいろ帳簿 `transactions.json` の 2 本にする。
-
-撤去は 4 段階（ユーザー了承・2026-09-26）。①② は完了済みで、記録は
-`.steering/20260926-あおいろtransactions.json（購買・預金・レシート）/CURRENT_TASK.md`：
-- ① 既定値を弥生に・設定の選択肢から外す（**済**。保存値 `RAKURAKU` は読み出し時に `YAYOI` へ移す）
-- ② 預金・レシートのあおいろ JSON（**済**。あおいろモードの全部門が JSON を出し、らくらく CSV の分岐はどこからも通らない）
+らくらく撤去（2026-09-29）で出力先は弥生とあおいろの 2 本になった。あおいろは全部門の出力に対応したが、
+弥生にあってあおいろに無いもの・あおいろ固有の使いにくさが `docs/known-issues.md`「未実装・将来対応」に残っている。
 
 ## 今回のタスク
-- [x] ③ らくらく CSV の出力（購買・預金・レシート）と、`AccountingSoftware.RAKURAKU` を見ている分岐を削除
-- [x] ③ らくらくの画面（`RakurakuAccountSettingsScreen`・`RakurakuTekiyouScreen`・通帳摘要別リストのらくらく部分・商品編集の買掛摘要）と導線を削除
-- [x] ③ `assets/rakurakutekiyou.csv` と摘要の差分取込（`importTekiyouFromCsv`・`TekiyouDictImporter`）を削除
-- [x] ③ バックアップの書き出し・取込かららくらくの表を外す（古いバックアップのらくらく部分は読み飛ばす）
-- [x] ③ 実機確認：弥生・あおいろの出力が撤去前と同じ／簿記ソフト連携メニューにらくらくが無い／古いバックアップの取込が通る
-- [x] ④ **前に全データのバックアップを勧める**。DB v40 で `rakuraku_accounts`・`rakuraku_tekiyou` を落とし、
-      学習ルール・明細・商品のらくらく列（`rakurakuTekiyouId`・`overrideTekiyouId`・`kaikakeTekiyouId` など）を外す。
-      あわせて DAO のらくらく用クエリ（`DepositMeisaiDao` の `clearOverridesForRule`・`updateOverrideTekiyou`・
-      JOIN の `rakuraku_tekiyou`、`TekiyouMatchingRuleDao` の結合列）と `SettingsScreen` の `withoutRakuraku()` を消す
-- [x] ④ enum `BLUE_RETURN_PREP` の改名（保存値の移行つき）。`RAKURAKU` は ③ で削除済み
-- [x] docs（`APP_SPECIFICATION.md`・`functional-design.md`・`architecture.md`・`MANUAL.md`・`PC_ACCOUNTING_INTEGRATION_SPEC.md` ほか）
-- [x] `CLAUDE.md`（撤去済みの記載・DB バージョン v40。更新はユーザー確認）
+- [x] ① 選択欄（`AoiroPickers.kt` の `PickerField`）が本体タップで開かず ▼ でしか開かない
+- [ ] ② 預金・レシートの AI 提案があおいろの科目・摘要を出さない（弥生の科目だけを提案する）
+- [x] ② レシートの明細ごと・レシートごとの個別上書き（DB v41）
+- [x] ② あおいろモードで足した支払方法ルールの弥生科目に「現金」が入る（DB v41 で NOT NULL を外す）
+- [x] ② b・c の実機確認（ユーザー・2026-09-30）
+- [x] ② a 預金・レシートの AI 提案をあおいろ対応（科目だけ提案・摘要が上の欄に作り直し。実機確認済み 2026-09-30）
+- [x] PC への提案書 `docs/integration/REPLY-phone-2026-09-30.md`（レシートを支払方法の科目で帳簿に振り分ける・事業主借は振替伝票。PC の返信待ち）
+- [ ] PC 対応後：帳簿の使い分け、どれにも当たらないときの既定の支払方法を選べるように
 
 ## 完了条件
-コードに `Rakuraku` / `RAKURAKU` / らくらく の参照が残らず（移行・読み飛ばしのための記述を除く）、DB v40 への移行が実機で通り、
-弥生・あおいろの出力が撤去前と同じ結果になる。
+上記がすべて解消し、あおいろモードで弥生と同じ操作ができる。弥生の出力は変わらない。
 
 ## 進捗メモ
-- 2026-09-26 時点の参照：約 25 ファイル・約 300 か所（多いのは `ReceiptDatabase.kt`・`RakurakuAccountDao.kt`・`SettingsScreen.kt`・
-  `TekiyouMatchingScreen.kt`）。着手時に `grep -rniE "らくらく|rakuraku" app/src/main` で取り直すこと
-- エンティティの列を外すときは、そのエンティティを列挙で組み直している箇所を必ず洗う（`CLAUDE.md`）
-- ④ はスキーマ変更。マイグレーションを書き忘れると起動時クラッシュ。実機は DB 3 ファイル（本体・wal・shm）をセットでバックアップ
-- 2026-09-29 ③ 完了（ビルド成功・実機未確認）。決定・変更点：
-  - enum `RAKURAKU` は計画を前倒しして ③ で削除（残すと exhaustive な when にダミー分岐が要るため）。
-    `AppPreferences.accountingSoftware` は知らない保存値を弥生に移して書き戻す
-  - バックアップ取込は古いファイルのらくらく表を Gson が無視する。商品の `kaikakeTekiyouId`・ルールの `rakurakuTekiyouId` は
-    外部キー違反になるので取込時に null にする（`withoutRakuraku()`、④ で列ごと消す）
-  - `AccountHierarchyComponents.kt` → `YayoiCategoryOrder.kt`（らくらく科目画面専用だった階層表示を削除）
-  - `assets/product_master.csv` の空の `rakuraku_account_id` 列を削除。旧コードは 5 列目（実は yayoi_account_id・全行空）を
-    `kaikakeTekiyouId` に入れていたが、その読み込みも削除
-- 2026-09-29 ③ 実機確認済み（ユーザー）。④ 完了・実機で移行確認済み：
-  - 移行前バックアップ：`C:\Users\toshiro\GreenFrameOCR-backups\20260929-before-v40\`（DB 3 ファイル・v39・integrity ok）
-  - 移行前に実データを数えた結果、らくらく摘要を指す学習は 0 件（商品・通帳ルール・明細の個別指定とも）。
-    v36 のコメントにある `linkMemoKey`（らくらく→あおいろの引き継ぎ）は実装されていなかった
-  - `MIGRATION_39_40`：`product_master`・`tekiyou_matching_rules`・`deposit_meisai` を残す列だけで作り直し、
-    らくらくの 2 表を DROP。実機で v40・integrity ok・foreign_key_check 空・件数（商品 115・ルール 39・明細 157）一致
-  - enum は `AOIRO` に改名。保存値 `BLUE_RETURN_PREP` は読み出し時に `AOIRO` に移す（実機で確認し、設定は弥生に戻した）
-- 2026-09-29 docs 更新：今の仕様を書いている 12 ファイル（APP_SPECIFICATION・functional-design・architecture・MANUAL・
-  PC_ACCOUNTING_INTEGRATION_SPEC・CSV_SPEC・DATABASE_SCHEMA・DICTIONARY・product-requirements・glossary・
-  repository-structure・known-issues）。履歴（`CHANGELOG.md`・`integration/REPLY-*`・`TASK_*`）と PC から同期している契約
-  （`integration/README.md` など）は書き換えていない
-  - `CSV_SPEC.md` の購買・預金 CSV はらくらく形式だったので削除。商品マスタ／学習データの共有 CSV はコードに無いので「未実装」と明記
-  - `DATABASE_SCHEMA.md` は v11 時代のまま全体が古いので、本文は触らず冒頭に注記だけ入れた
-  - `PC_ACCOUNTING_INTEGRATION_SPEC.md` も v33 時点の文書。らくらく部分を外し、冒頭に「連携の一次情報は `docs/integration/`」と注記
-  - MANUAL の「あおいろは購買のみ」「預金はあおいろでもらくらく CSV が出る」も古かったので直した
+- 2026-09-30 ① 完了・実機確認済み（ユーザー）。原因は `OutlinedTextField` が readOnly でもタップを内側の入力欄で
+  消費し、外側の `.clickable` に届かないこと。`DateOutlinedField`（`UiComponents.kt`）と同じ透明オーバーレイで拾う。
+  クリアボタンを塞がないよう、値があるときは右端 96dp を空ける。
+  同じ部品を使う購買の商品編集・預金ダイアログ・レシートの支払方法ルールが一度に直った
+- 2026-09-30 b・c 実装（DB v41）。移行前バックアップ：`C:\Users\toshiro\GreenFrameOCR-backups\20260930-before-v41\`
+  （`raw/` に実機の 3 ファイルそのまま、直下は WAL を書き戻した 1 ファイル・v40・integrity ok）。
+  実機で v41・integrity ok・foreign_key_check 空・件数一致（レシート 20・明細 32（出力済み 15）・支払方法ルール 3）
+  - 列：`general_receipt_items.override{AccountKey,AccountKeyName,MemoKey,MemoKeyName}`（預金明細と同じ名前）、
+    `general_receipts.paymentOverrideAccountKey{,Name}`。`receipt_payment_method_rules` は作り直して `yayoiAccountId` を null 可に
+  - 優先順は弥生・預金と同じ：明細の上書き → グループ。支払方法はレシートの上書き → ルール → 現金。
+    貸方の決め方は `AoiroChoboTransactionsBuilder.resolveReceiptPayment` に集め、画面表示もこれを使う
+  - グループのあおいろ設定を保存し直すと、そのグループのあおいろの個別上書きは消える（弥生の挙動に合わせた）
+  - c の弥生側：弥生の科目が無いルールは飛ばして次のルールを見る（前は「現金」が入っていたので、後ろの弥生ルールを隠していた）。
+    あおいろ側の「あおいろの科目が無いルールに当たったら科目なし」は変えていない
+  - `AoiroChoboLinkDao`（辞書の取り込み直しで外す／名前を補う）に新しい列を追加
+  - ついでに見つけたバグ：レシート詳細の編集保存が明細を列挙で組み直しており、個別上書き・`exportedAt` などを消していた。
+    `.copy()` に直した（`docs/known-issues.md` に記録）
+  - 撮影後の確認画面（`GeneralReceiptConfirmScreen`）にもあおいろの支払方法の上書きを付けた（Navigation から `isAoiro`）
+  - レシート一覧のカードは印字（`paymentMethodText`）しか出しておらず、上書きしても変わらないとユーザーが誤解した。
+    「印字 → 今効いている科目」を出すよう変更（上書きは色付き太字、あおいろで決まらないものは赤の「科目なし」）
+  - 実機確認（ユーザー）：レシート詳細の支払方法の上書き（反映・開き直しても保持）、一覧の表示、明細の個別変更、
+    撮影後の確認画面、支払方法ルールの「弥生未設定」、弥生 CSV の結果 すべて OK
+  - CLAUDE.md の DB バージョンを v41 に更新（ユーザー確認済み）
+- 2026-09-30 a 実装（ビルド成功・実機インストール済み・動作は未確認）。DB 変更なし
+  - `GeminiReceiptClient.matchReceiptItemsToAoiroAccounts`・`matchTekiyouToAoiroAccounts`（共通部 `matchToAoiroAccounts`）。
+    購買版と同じく科目は通し番号で答えさせる。行も名前ではなく通し番号（`itemId`）で答えさせる
+  - 送るのは未マッチだけ（購買のあおいろ版と同じ。弥生のレシートは既マッチも送るが、あおいろで承認すると個別変更が消えるので避けた）
+  - 候補の科目は農家の絞り込み（`AoiroChoboUsageRules.candidates`）を通したもの。摘要は `preselectedMemo` で 1 件に決まるときだけ埋める
+  - 保存は手で設定したときと同じ（レシートは `updateGroupAoiro`、預金は `clearAoiroOverridesForRule` + ルール更新）
+  - 提案確認ダイアログ `AiMatchingDialog` を `ProductListScreen.kt` から `AiMatchingDialog.kt` に出して 3 画面で共用
+  - プロンプトのヒントの科目名（販売金額・雇人費・農業共済掛金など）は農業所得用の決算書の名前で書いた。
+    PC の辞書の実際の名前と違えば AI は「リストの中で最も近いもの」を選ぶ指示にしている
+- 2026-09-30 ユーザー指示で方針変更（ビルド成功・実機インストール済み・動作は未確認）
+  - AI 提案は**科目だけ**（摘要は空欄のままでもよいため）。購買・預金・レシートとも。`preselectedMemo` は使う所が無くなったので削除
+  - あおいろの欄は**摘要が上・科目が下**で常に両方出す（`AoiroMemoAndAccountFields`）。摘要を選ぶと科目はその相手科目になる。
+    科目を先に選んだときは、その科目に属さない摘要だけ外す（摘要を自動では埋めない）。
+    2026-09-23 の「科目 → 摘要の順・摘要から科目を上書きしない」決定を置き換えた
+  - 摘要の選択画面：「今の科目で絞り込む」切り替え → 検索（摘要名・`searchKey` のローマ字）→ 一覧（摘要なし・要確定の印・絞り込みを外すと科目名付き）。
+    候補は PC がその用途に許す科目の摘要すべて（`AoiroLinkKind.tabMemos`）。JA 購買の商品編集も同じ部品（`AoiroLinkKind.purchase`）
+- レシートの帳簿の使い分けを相談（ユーザー）。ほぼ個人のカード払いなので、支払方法の科目で帳簿を決める方針：
+  現金 → 現金出納帳（現金/出金）、未払金 → 未払帳（未払/発生）、事業主借 → 振替伝票（振替・貸方＝事業主借の摘要）。
+  今の契約はカード払いを一律 `Unpaid` で送り「OCR は振替伝票を作らない」ので、PC への提案書が要る。
+  実機の辞書は現金/出金 55 件・未払/発生 3 件・振替 11 件（未払への名前置き換えが当たるのは 2 件だけ）
 
 ---
 
 ## 作業終了時の記録（セッション終了前に必ず埋めること）
 
 ### 今回完了したこと
-- ③ コード・画面の撤去（2026-09-29・実機確認済み）
-- ④ DB v40・enum 改名（2026-09-29・実機で移行確認済み）
-- docs の更新（2026-09-29）
-- CLAUDE.md の更新（ユーザー確認済み・2026-09-29）
+- ① 選択欄のタップ不具合（2026-09-30）
+- ② b・c（DB v41・実機で移行と画面操作を確認済み）
 
 ### 未完了・中断した理由
-- なし（完了。`.steering/20260929-らくらく撤去/` にアーカイブ）
+- ② a（預金・レシートの AI 提案をあおいろ対応）は未着手
 
 ### 次回セッションで最初にやること
-新しい作業を決める（候補：`DATABASE_SCHEMA.md`・`PC_ACCOUNTING_INTEGRATION_SPEC.md` を書き直すか廃止するか）。
+PC から REPLY-phone-2026-09-30 への返信が来ていれば読み、帳簿の使い分け（事業主借 → 振替伝票）に入る
 
 ### 新たに発覚した問題・制約
-- `DATABASE_SCHEMA.md`（v11 時代）と `PC_ACCOUNTING_INTEGRATION_SPEC.md`（v33 時点）は、らくらく以外の部分も今の実装と食い違う。
-  書き直すか廃止するかは未決定
+- レシート詳細の編集保存が明細の個別上書き・出力済みの印を消していた（修正済み・`docs/known-issues.md` に記録）

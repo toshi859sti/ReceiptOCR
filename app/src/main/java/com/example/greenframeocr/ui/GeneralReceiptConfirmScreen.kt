@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.YayoiAccount
@@ -37,6 +38,7 @@ data class EditableGeneralItem(
 @Composable
 fun GeneralReceiptConfirmScreen(
     viewModel: GeneralReceiptViewModel,
+    isAoiro: Boolean = false,
     onBack: () -> Unit,
     onSaved: () -> Unit
 ) {
@@ -54,6 +56,10 @@ fun GeneralReceiptConfirmScreen(
     var counterAccountName by remember { mutableStateOf<String?>(null) }
     var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var showPaymentAccountPicker by remember { mutableStateOf(false) }
+    // あおいろモードの支払方法の科目の上書き（弥生の counterAccountOverride とは別）
+    var aoiroPaymentOverrideKey by remember { mutableStateOf<String?>(null) }
+    var aoiroPaymentOverrideName by remember { mutableStateOf<String?>(null) }
+    var aoiroAccounts by remember { mutableStateOf<List<AoiroChoboAccount>>(emptyList()) }
 
     // ViewModel のデータで初期化（一度だけ）
     LaunchedEffect(pendingReceipt, pendingItems) {
@@ -91,17 +97,23 @@ fun GeneralReceiptConfirmScreen(
 
     LaunchedEffect(Unit) {
         yayoiAccounts = viewModel.loadYayoiAccounts()
+        if (isAoiro) aoiroAccounts = viewModel.loadAoiroVocab().accounts
     }
 
     // 支払方法テキスト・個別上書きが変わるたびに相手科目のプレビューを再計算
-    LaunchedEffect(paymentMethodText, counterAccountOverride) {
-        counterAccountName = viewModel.resolveCounterAccountNameForReceipt(
-            GeneralReceipt(
-                date = "",
-                paymentMethodText = paymentMethodText,
-                paymentAccountOverride = counterAccountOverride
-            )
+    LaunchedEffect(paymentMethodText, counterAccountOverride, aoiroPaymentOverrideKey) {
+        val preview = GeneralReceipt(
+            date = "",
+            paymentMethodText = paymentMethodText,
+            paymentAccountOverride = counterAccountOverride,
+            paymentOverrideAccountKey = aoiroPaymentOverrideKey,
+            paymentOverrideAccountKeyName = aoiroPaymentOverrideName
         )
+        counterAccountName = if (isAoiro) {
+            viewModel.resolveAoiroPaymentNameForReceipt(preview) ?: "未設定（科目なしで PC に送ります）"
+        } else {
+            viewModel.resolveCounterAccountNameForReceipt(preview)
+        }
     }
 
     Scaffold(
@@ -158,10 +170,11 @@ fun GeneralReceiptConfirmScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "支払方法の科目: ${counterAccountName ?: "…"}",
+                                text = (if (isAoiro) "支払方法の科目（あおいろ）: " else "支払方法の科目: ") +
+                                    (counterAccountName ?: "…"),
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (counterAccountOverride != null)
+                                color = if (if (isAoiro) aoiroPaymentOverrideKey != null else counterAccountOverride != null)
                                     MaterialTheme.colorScheme.tertiary
                                 else MaterialTheme.colorScheme.primary
                             )
@@ -329,7 +342,9 @@ fun GeneralReceiptConfirmScreen(
                             geminiUsed = geminiUsed,
                             registrationNumber = registrationNumber,
                             paymentMethodText = paymentMethodText,
-                            paymentAccountOverride = counterAccountOverride
+                            paymentAccountOverride = counterAccountOverride,
+                            paymentOverrideAccountKey = aoiroPaymentOverrideKey,
+                            paymentOverrideAccountKeyName = aoiroPaymentOverrideName
                         )
                         val items = editItems.map {
                             GeneralReceiptItem(
@@ -349,7 +364,20 @@ fun GeneralReceiptConfirmScreen(
         }
     }
 
-    if (showPaymentAccountPicker) {
+    if (showPaymentAccountPicker && isAoiro) {
+        AoiroPaymentOverrideDialog(
+            subject = paymentMethodText?.takeIf { it.isNotBlank() }?.let { "読取: $it" } ?: "",
+            accounts = aoiroAccounts,
+            currentKey = aoiroPaymentOverrideKey,
+            currentName = aoiroPaymentOverrideName,
+            onDismiss = { showPaymentAccountPicker = false },
+            onSave = { key, name ->
+                aoiroPaymentOverrideKey = key
+                aoiroPaymentOverrideName = name
+                showPaymentAccountPicker = false
+            }
+        )
+    } else if (showPaymentAccountPicker) {
         PaymentAccountPickerDialog(
             currentOverrideId = counterAccountOverride,
             accounts = yayoiAccounts,

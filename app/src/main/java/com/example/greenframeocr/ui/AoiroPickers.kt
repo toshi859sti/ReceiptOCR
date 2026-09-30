@@ -2,6 +2,7 @@ package com.example.greenframeocr.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,21 +23,21 @@ import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.util.AoiroChoboAccountRules
 import com.example.greenframeocr.util.RomajiSearch
 
-// あおいろ帳簿の科目・摘要を選ぶ部品。JA 購買の商品と通帳の摘要パターンで共用する。
+// あおいろ帳簿の科目・摘要を選ぶ部品。JA 購買の商品・通帳の摘要パターン・レシートの品目で共用する。
 // 用途ごとに違うのは「どの摘要を候補にするか」だけなので、それを memoCandidates で受け取る
 
 /**
- * あおいろモードの「科目 → 摘要」欄。
+ * あおいろモードの「摘要（上）・科目（下）」欄。両方を常に出す。
  *
- * 摘要は科目を選ぶまで出さない。科目に候補の摘要が無ければ、摘要なしで保存してよいことを伝える
- * （PC は UnmatchedMemo として受け、PC 側で摘要を決める）。
+ * 摘要から先に選ぶ（摘要は相手科目を 1 つ持つので、選べば科目も決まる）。摘要は空欄でもよい
+ * （PC は UnmatchedMemo として受け、PC 側で摘要を決める）。科目に候補の摘要が無ければそれを伝える。
  *
  * @param memoCandidates 科目キーからその用途の摘要候補を返す
  * @param memoTabLabel 摘要のタブ名（「買掛/仕入」「預金/出金」など）。候補が無いときの説明に使う
  * @param accountLabel 科目欄のラベル（預金は「相手科目」）
  */
 @Composable
-internal fun AoiroAccountAndMemoFields(
+internal fun AoiroMemoAndAccountFields(
     accounts: List<AoiroChoboAccount>,
     memos: List<AoiroChoboMemoTemplate>,
     memoCandidates: (String) -> List<AoiroChoboMemoTemplate>,
@@ -65,6 +66,21 @@ internal fun AoiroAccountAndMemoFields(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val memo = memoKey?.let { key -> memos.find { it.memoKey == key } }
+        PickerField(
+            label = "あおいろ摘要（$memoTabLabel）",
+            value = memo?.name ?: memoKey?.let { fallbackMemoName ?: it } ?: "摘要なし（PC で決める）",
+            hasValue = memoKey != null,
+            onPick = onPickMemo,
+            onClear = onClearMemo
+        )
+        memo?.let {
+            val detail = memoDetail(it)
+            if (detail.isNotEmpty()) {
+                Text(detail, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
         val accountName = accountKey?.let { key ->
             accounts.find { it.accountKey == key }?.name ?: fallbackAccountName ?: key
         }
@@ -75,32 +91,12 @@ internal fun AoiroAccountAndMemoFields(
             onPick = onPickAccount,
             onClear = onClearAccount
         )
-
-        if (accountKey != null) {
-            val candidates = memoCandidates(accountKey)
-            if (candidates.isEmpty() && memoKey == null) {
-                Text(
-                    "この科目には${memoTabLabel}の摘要がありません。摘要なしで PC に送り、PC 側で摘要を決めます。",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                val memo = memoKey?.let { key -> memos.find { it.memoKey == key } }
-                PickerField(
-                    label = "あおいろ摘要",
-                    value = memo?.name ?: memoKey?.let { fallbackMemoName ?: it } ?: "未選択",
-                    hasValue = memoKey != null,
-                    onPick = onPickMemo,
-                    onClear = onClearMemo
-                )
-                memo?.let {
-                    Text(
-                        memoDetail(it),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+        if (accountKey != null && memoKey == null && memoCandidates(accountKey).isEmpty()) {
+            Text(
+                "この科目には${memoTabLabel}の摘要がありません。摘要なしで PC に送り、PC 側で摘要を決めます。",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -113,21 +109,36 @@ internal fun PickerField(
     onPick: () -> Unit,
     onClear: () -> Unit
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = {},
-        readOnly = true,
-        label = { Text(label) },
-        trailingIcon = {
-            Row {
-                if (hasValue) {
-                    IconButton(onClick = onClear) { Icon(Icons.Default.Clear, "クリア") }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = {
+                Row {
+                    if (hasValue) {
+                        IconButton(onClick = onClear) { Icon(Icons.Default.Clear, "クリア") }
+                    }
+                    IconButton(onClick = onPick) { Icon(Icons.Default.ArrowDropDown, "選択") }
                 }
-                IconButton(onClick = onPick) { Icon(Icons.Default.ArrowDropDown, "選択") }
-            }
-        },
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onPick)
-    )
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        // OutlinedTextField は readOnly でもタップを内側の入力欄が受けてフォーカスするだけで、
+        // 外側の clickable まで届かない。透明なオーバーレイで拾う（DateOutlinedField と同じ）。
+        // クリアボタンを塞がないよう、値があるときは右端のアイコン 2 個分を空ける
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .padding(end = if (hasValue) 96.dp else 0.dp)
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onPick
+                )
+        )
+    }
 }
 
 /** 摘要が仕訳に持ち込む値（税率・事業割合）。PC は摘要側の事業割合を使う */
@@ -220,19 +231,38 @@ internal fun AoiroAccountPickerDialog(
 }
 
 /**
- * あおいろ摘要の選択。選んだ科目のその用途の摘要だけ（[memos] は絞った後の候補）。先頭に「摘要なし」を置く。
+ * あおいろ摘要の選択。上から「今の科目で絞り込む」の切り替え・検索欄・摘要の一覧。先頭に「摘要なし」を置く。
+ *
+ * 摘要を選ぶと、呼び出し側で科目をその摘要の相手科目にする（摘要は相手科目を 1 つ持つ）。
+ * 絞り込みを外すと、その用途の摘要をすべて出し、行ごとに相手科目を添える。
  * 事業割合だけ違う組の摘要には「要確定」を付ける（帳簿の金額が変わるので、ここで確定したものだけが使われる）。
+ *
+ * @param tabMemos その用途で使える摘要すべて（用途の分類・使ってよい相手科目で絞った後）
+ * @param accounts 相手科目の名前を引くための科目一覧
+ * @param currentAccountKey いま選ばれている科目。null なら絞り込みの切り替えは出さない
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AoiroMemoPickerDialog(
     subject: String,
     emptySubject: String = "新規商品",
-    memos: List<AoiroChoboMemoTemplate>,
+    tabMemos: List<AoiroChoboMemoTemplate>,
+    accounts: List<AoiroChoboAccount>,
+    currentAccountKey: String?,
     ratioSensitive: Set<String>,
     selectedKey: String?,
-    onSelect: (String?) -> Unit,
+    onSelect: (AoiroChoboMemoTemplate?) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val accountNames = remember(accounts) { accounts.associate { it.accountKey to it.name } }
+    var byAccount by remember { mutableStateOf(currentAccountKey != null) }
+    var searchQuery by remember { mutableStateOf("") }
+    val query = searchQuery.trim()
+    val filtered = tabMemos.filter { memo ->
+        (!byAccount || memo.counterAccountKey == currentAccountKey) &&
+            (query.isEmpty() || memo.name.contains(query, ignoreCase = true) ||
+                RomajiSearch.matches(memo.searchKey, query))
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -242,24 +272,56 @@ internal fun AoiroMemoPickerDialog(
             }
         },
         text = {
-            LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
-                item(key = "none") {
-                    PickerRow(
-                        selected = selectedKey == null,
-                        title = "摘要なし",
-                        subtitle = "PC 側で摘要を決める",
-                        onClick = { onSelect(null) }
+            Column(modifier = Modifier.heightIn(max = 460.dp)) {
+                if (currentAccountKey != null) {
+                    FilterChip(
+                        selected = byAccount,
+                        onClick = { byAccount = !byAccount },
+                        label = {
+                            Text(
+                                "今の科目（${accountNames[currentAccountKey] ?: currentAccountKey}）で絞り込む",
+                                fontSize = 12.sp
+                            )
+                        }
                     )
                 }
-                items(memos, key = { it.memoKey }) { memo ->
-                    PickerRow(
-                        selected = memo.memoKey == selectedKey,
-                        title = memo.name,
-                        subtitle = memoDetail(memo),
-                        tag = if (memo.memoKey in ratioSensitive) "要確定" else null,
-                        onClick = { onSelect(memo.memoKey) }
-                    )
-                }
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("検索（摘要名・検索文字）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, null) }
+                )
+                Text(
+                    text = "${filtered.size}件",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp)
+                )
+                // 切り替え・検索のたびに先頭に戻す（科目の選択と同じ）
+                key(byAccount, searchQuery) { LazyColumn {
+                    item(key = "none") {
+                        PickerRow(
+                            selected = selectedKey == null,
+                            title = "摘要なし",
+                            subtitle = "PC 側で摘要を決める（科目はそのまま）",
+                            onClick = { onSelect(null) }
+                        )
+                    }
+                    items(filtered, key = { it.memoKey }) { memo ->
+                        PickerRow(
+                            selected = memo.memoKey == selectedKey,
+                            title = memo.name,
+                            subtitle = listOfNotNull(
+                                memo.counterAccountKey.takeIf { !byAccount }?.let { accountNames[it] ?: it },
+                                memoDetail(memo).ifEmpty { null }
+                            ).joinToString("・"),
+                            tag = if (memo.memoKey in ratioSensitive) "要確定" else null,
+                            onClick = { onSelect(memo) }
+                        )
+                    }
+                } }
             }
         },
         confirmButton = {},

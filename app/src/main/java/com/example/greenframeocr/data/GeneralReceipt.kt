@@ -23,6 +23,9 @@ data class GeneralReceipt(
     val paymentMethodText: String? = null,
     // 相手科目（貸方勘定科目）の個別上書き。null=ReceiptPaymentMethodRuleでの自動判定に従う
     val paymentAccountOverride: Long? = null,
+    // 相手科目のあおいろ版の個別上書き（DB v41）。null = ReceiptPaymentMethodRule の accountKey に従う
+    val paymentOverrideAccountKey: String? = null,
+    val paymentOverrideAccountKeyName: String? = null,
     // AoiroChobo連携の externalId（"ocr:receipt:{uuid}"）の材料。
     // autoincrement の id はバックアップ復元や再インポートで意味が変わり得るため、
     // 行の同一性はこのUUIDで持つ（docs/integration/transaction-import.md §4）。

@@ -125,6 +125,29 @@ interface GeneralReceiptDao {
     @Query("UPDATE general_receipt_items SET yayoiAccountId = NULL WHERE canonicalKey = :canonicalKey")
     suspend fun clearOverridesForGroup(canonicalKey: String)
 
+    /** 明細 1 件のあおいろ科目・摘要を上書きする（accountKey=null でグループに戻す。摘要も一緒に外す） */
+    @Query("""
+        UPDATE general_receipt_items
+        SET overrideAccountKey = :accountKey, overrideAccountKeyName = :accountKeyName,
+            overrideMemoKey = :memoKey, overrideMemoKeyName = :memoKeyName
+        WHERE id = :itemId
+    """)
+    suspend fun updateAoiroOverrideForItem(
+        itemId: Long,
+        accountKey: String?,
+        accountKeyName: String?,
+        memoKey: String?,
+        memoKeyName: String?
+    )
+
+    /** グループのあおいろ設定を変えたとき、そのグループ内のあおいろ個別上書きを全解除する（弥生と同じ） */
+    @Query("""
+        UPDATE general_receipt_items
+        SET overrideAccountKey = NULL, overrideAccountKeyName = NULL, overrideMemoKey = NULL, overrideMemoKeyName = NULL
+        WHERE canonicalKey = :canonicalKey
+    """)
+    suspend fun clearAoiroOverridesForGroup(canonicalKey: String)
+
     // 類似グループ統合：OCR誤読等でcanonicalKeyが完全一致しなかった別グループを
     // 1つのグループに付け替える（個別上書きの値はそのまま持ち越す）
     @Query("UPDATE general_receipt_items SET canonicalKey = :targetKey WHERE canonicalKey = :sourceKey")
@@ -141,6 +164,10 @@ interface GeneralReceiptDao {
     // 相手科目（貸方勘定科目）の個別上書き。accountId=nullでReceiptPaymentMethodRuleでの自動判定に戻す
     @Query("UPDATE general_receipts SET paymentAccountOverride = :accountId WHERE id = :receiptId")
     suspend fun updatePaymentAccountOverride(receiptId: Long, accountId: Long?)
+
+    // 相手科目のあおいろ版の個別上書き。accountKey=null で支払方法のルールに戻す
+    @Query("UPDATE general_receipts SET paymentOverrideAccountKey = :accountKey, paymentOverrideAccountKeyName = :accountKeyName WHERE id = :receiptId")
+    suspend fun updatePaymentAccountKeyOverride(receiptId: Long, accountKey: String?, accountKeyName: String?)
 
     // 登録番号未登録の発行者名を一括リネーム（登録番号・店舗一覧の未登録発行者編集用）
     @Query("UPDATE general_receipts SET storeName = :newName WHERE storeName = :oldName")

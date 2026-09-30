@@ -70,6 +70,7 @@ fun GeneralItemMatchingScreen(
     val aiSuggestions by viewModel.aiSuggestions.collectAsState()
     val isAiMatching by viewModel.isAiMatching.collectAsState()
     val aiUsageStats by viewModel.aiUsageStats.collectAsState()
+    val aoiroAiSuggestions by viewModel.aoiroAiSuggestions.collectAsState()
     val similarGroupPairs by viewModel.similarGroupPairs.collectAsState()
     val isFindingSimilarGroups by viewModel.isFindingSimilarGroups.collectAsState()
     val numericPrefixCandidates by viewModel.numericPrefixCandidates.collectAsState()
@@ -90,10 +91,11 @@ fun GeneralItemMatchingScreen(
     var hasSearchedSimilarGroups by remember { mutableStateOf(false) }
     var hasSearchedNumericPrefixes by remember { mutableStateOf(false) }
 
-    // あおいろ帳簿：グループに あおいろ科目・摘要 を付ける。明細ごとの個別上書きはあおいろには無い（列が無い）
+    // あおいろ帳簿：グループに あおいろ科目・摘要 を付ける。明細ごとの個別上書きも弥生と同じようにできる（DB v41）
     val isAoiro = appPreferences.accountingSoftware == AccountingSoftware.AOIRO
     var aoiroVocab by remember { mutableStateOf<GeneralReceiptViewModel.AoiroVocab?>(null) }
     var aoiroEditTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
+    var aoiroItemEditTarget by remember { mutableStateOf<Pair<GeneralReceiptItem, GeneralItemGroup>?>(null) }
 
     LaunchedEffect(Unit) {
         val accounts = viewModel.loadYayoiAccounts()
@@ -105,13 +107,22 @@ fun GeneralItemMatchingScreen(
     fun isMatched(group: GeneralItemGroup) = if (isAoiro) group.accountKey != null else group.yayoiAccountId != null
 
     // 表示名は今の辞書から引く（PC で改名されていればそちら）。辞書から消えたキーは保存時の名前
-    fun aoiroLabel(group: GeneralItemGroup): String? {
-        val key = group.accountKey ?: return null
+    fun aoiroLabel(accountKey: String?, accountKeyName: String?, memoKey: String?, memoKeyName: String?): String? {
+        val key = accountKey ?: return null
         val vocab = aoiroVocab
-        val account = vocab?.accounts?.find { it.accountKey == key }?.name ?: group.accountKeyName ?: key
-        val memo = group.memoKey?.let { m -> vocab?.memos?.find { it.memoKey == m }?.name ?: group.memoKeyName ?: m }
+        val account = vocab?.accounts?.find { it.accountKey == key }?.name ?: accountKeyName ?: key
+        val memo = memoKey?.let { m -> vocab?.memos?.find { it.memoKey == m }?.name ?: memoKeyName ?: m }
         return if (memo != null) "$account ／ $memo" else account
     }
+
+    fun aoiroLabel(group: GeneralItemGroup): String? =
+        aoiroLabel(group.accountKey, group.accountKeyName, group.memoKey, group.memoKeyName)
+
+    /** 明細に効いている あおいろ科目・摘要（個別上書きがあればそれ、無ければグループ） */
+    fun aoiroItemLabel(item: GeneralReceiptItem, group: GeneralItemGroup): String? =
+        if (item.overrideAccountKey != null) {
+            aoiroLabel(item.overrideAccountKey, item.overrideAccountKeyName, item.overrideMemoKey, item.overrideMemoKeyName)
+        } else aoiroLabel(group)
 
     val matchedCount = itemGroups.count { isMatched(it) }
     val totalCount = itemGroups.size
@@ -185,8 +196,16 @@ fun GeneralItemMatchingScreen(
                 }
             }
 
-            // AI一括割り当てボタン（既マッチ済みグループも対象に含めて再提案できる）
-            // 常時表示にして見落としを防ぐ（折りたたみパネルの中は展開しないと見えないため）。弥生の科目を提案するのであおいろでは出さない
+            // AI一括割り当てボタン（弥生は既マッチ済みグループも対象に含めて再提案できる。あおいろは未マッチだけ）
+            // 常時表示にして見落としを防ぐ（折りたたみパネルの中は展開しないと見えないため）
+            if (itemGroups.isNotEmpty() && isAoiro) {
+                AiSuggestButton(
+                    label = if (unmatchedCount > 0) "未マッチ${unmatchedCount}件をAIで一括提案" else "未マッチの品目はありません",
+                    isLoading = isAiMatching,
+                    enabled = unmatchedCount > 0 && aoiroVocab != null,
+                    onClick = { aoiroVocab?.let { viewModel.suggestAoiroAccountsForItems(itemGroups, it) } }
+                )
+            }
             if (itemGroups.isNotEmpty() && !isAoiro) {
                 AiSuggestButton(
                     label = if (unmatchedCount > 0) "未マッチ${unmatchedCount}件を含む全${totalCount}件をAIで一括提案"
@@ -316,15 +335,20 @@ fun GeneralItemMatchingScreen(
                             viewModel = viewModel,
                             isAoiro = isAoiro,
                             aoiroLabel = if (isAoiro) aoiroLabel(group) else null,
+                            aoiroItemLabel = { item -> aoiroItemLabel(item, group) },
                             onToggleExpand = {
                                 expandedKeys = if (isExpanded) expandedKeys - group.canonicalKey
                                                else expandedKeys + group.canonicalKey
                             },
                             onEditGroup = { if (isAoiro) aoiroEditTarget = group else groupEditTarget = group },
                             onRenameGroup = { groupRenameTarget = group },
-                            onEditIndividual = if (isAoiro) null else { item ->
-                                itemEditTarget = item
-                                itemEditGroupDefaultName = yayoiAccounts.find { it.id == group.yayoiAccountId }?.accountName
+                            onEditIndividual = { item ->
+                                if (isAoiro) {
+                                    aoiroItemEditTarget = item to group
+                                } else {
+                                    itemEditTarget = item
+                                    itemEditGroupDefaultName = yayoiAccounts.find { it.id == group.yayoiAccountId }?.accountName
+                                }
                             }
                         )
                     }
@@ -345,6 +369,26 @@ fun GeneralItemMatchingScreen(
                 viewModel.clearAiSuggestions()
             },
             onDismiss = { viewModel.clearAiSuggestions() }
+        )
+    }
+
+    // AI提案結果ダイアログ（あおいろ）。承認するとグループの科目・摘要を保存し、グループ内の個別変更は外れる
+    aoiroAiSuggestions?.let { suggestions ->
+        AiMatchingDialog(
+            rows = suggestions.mapIndexed { i, s ->
+                AiSuggestionRow(
+                    productId = i.toLong(),
+                    productName = s.itemName,
+                    key = s,
+                    label = s.accountName,
+                    reason = s.reason
+                )
+            },
+            usageStats = aiUsageStats,
+            title = "AI 科目提案（あおいろ）",
+            emptyMessage = "未マッチの品目に対する提案が見つかりませんでした。",
+            onDismiss = { viewModel.clearAiSuggestions() },
+            onSave = { accepted -> viewModel.applyAoiroSuggestions(accepted.values.toList()) }
         )
     }
 
@@ -429,13 +473,38 @@ fun GeneralItemMatchingScreen(
             initialAccountKeyName = group.accountKeyName,
             initialMemoKey = group.memoKey,
             initialMemoKeyName = group.memoKeyName,
-            note = "この品目名のレシート明細すべてに使います（弥生の科目とは別）",
+            note = "この品目名のレシート明細すべてに使います（弥生の科目とは別）。保存すると明細ごとの個別変更は解除します",
             resetHint = "科目を外すと、この品目は「科目なし」で PC に送ります",
             extraNote = "クレジット等の支払いでは、同じ名前の「未払/発生」の摘要に置き換えて送ります（無ければ摘要なし）",
             onDismiss = { aoiroEditTarget = null },
             onSave = { s ->
                 viewModel.updateGroupAoiro(group.canonicalKey, s.accountKey, s.accountKeyName, s.memoKey, s.memoKeyName)
                 aoiroEditTarget = null
+            }
+        )
+    }
+
+    // 明細の個別変更（あおいろ）。科目を外すとグループの設定に戻る
+    aoiroItemEditTarget?.let { (item, group) ->
+        val vocab = aoiroVocab
+        AoiroLinkDialog(
+            title = "個別変更（あおいろ）",
+            subject = "${item.itemName}  ¥${"%,d".format(item.price)}",
+            kind = AoiroLinkKind.receiptItem,
+            accounts = vocab?.accounts.orEmpty(),
+            memos = vocab?.memos.orEmpty(),
+            usage = vocab?.usage.orEmpty(),
+            initialAccountKey = item.overrideAccountKey,
+            initialAccountKeyName = item.overrideAccountKeyName,
+            initialMemoKey = item.overrideMemoKey,
+            initialMemoKeyName = item.overrideMemoKeyName,
+            note = "保存するとグループ設定に関わらずこの明細にのみ適用されます",
+            resetHint = "科目を外すとグループの設定に戻ります（${aoiroLabel(group) ?: "グループも未設定"}）",
+            extraNote = "クレジット等の支払いでは、同じ名前の「未払/発生」の摘要に置き換えて送ります（無ければ摘要なし）",
+            onDismiss = { aoiroItemEditTarget = null },
+            onSave = { s ->
+                viewModel.updateItemAoiroOverride(item.id, s.accountKey, s.accountKeyName, s.memoKey, s.memoKeyName)
+                aoiroItemEditTarget = null
             }
         )
     }
@@ -780,10 +849,11 @@ private fun ItemGroupCard(
     viewModel: GeneralReceiptViewModel,
     isAoiro: Boolean = false,
     aoiroLabel: String? = null,   // あおいろモードのグループの「科目 ／ 摘要」（未設定なら null）
+    aoiroItemLabel: (GeneralReceiptItem) -> String? = { null },   // あおいろモードの明細に効いている「科目 ／ 摘要」
     onToggleExpand: () -> Unit,
     onEditGroup: () -> Unit,
     onRenameGroup: () -> Unit,
-    onEditIndividual: ((GeneralReceiptItem) -> Unit)?   // null = 明細の個別変更なし（あおいろ）
+    onEditIndividual: (GeneralReceiptItem) -> Unit
 ) {
     val isMatched = if (isAoiro) aoiroLabel != null else group.yayoiAccountId != null
 
@@ -914,14 +984,13 @@ private fun ItemGroupCard(
                         }
                         else -> {
                             items!!.forEach { item ->
-                                if (onEditIndividual == null) {
-                                    // あおいろ：明細はグループの設定に従う（個別変更なし）
+                                if (isAoiro) {
                                     GeneralItemLabelRow(
                                         itemName = item.itemName,
-                                        label = aoiroLabel,
-                                        isOverridden = false,
+                                        label = aoiroItemLabel(item),
+                                        isOverridden = item.overrideAccountKey != null,
                                         fontSize = fontSize,
-                                        onClick = null
+                                        onClick = { onEditIndividual(item) }
                                     )
                                 } else {
                                     GeneralItemRow(

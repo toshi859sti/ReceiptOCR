@@ -30,7 +30,7 @@ import com.example.greenframeocr.util.toCanonicalKey
         AoiroChoboAccountUsage::class,
         Passbook::class
     ],
-    version = 40,
+    version = 41,
     exportSchema = false
 )
 abstract class ReceiptDatabase : RoomDatabase() {
@@ -1171,6 +1171,41 @@ abstract class ReceiptDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v40 → v41：レシートのあおいろ個別上書きと、支払方法ルールの弥生科目の NOT NULL 解除。
+         *
+         * - `general_receipt_items` に科目・摘要の個別上書き（`deposit_meisai.override*` と同じ 4 列）
+         * - `general_receipts` に支払方法の科目の個別上書き（`paymentAccountOverride` のあおいろ版）
+         * - `receipt_payment_method_rules.yayoiAccountId` を null 可に。あおいろモードで足したルールは
+         *   これまで弥生の「現金」を入れていたが、既存の値はどれが本来の設定か見分けられないのでそのまま移す
+         *   （列の制約を変えるだけなので ALTER では足りず、v40 と同じく作り直す）
+         */
+        private val MIGRATION_40_41 = object : Migration(40, 41) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE general_receipt_items ADD COLUMN overrideAccountKey TEXT")
+                database.execSQL("ALTER TABLE general_receipt_items ADD COLUMN overrideAccountKeyName TEXT")
+                database.execSQL("ALTER TABLE general_receipt_items ADD COLUMN overrideMemoKey TEXT")
+                database.execSQL("ALTER TABLE general_receipt_items ADD COLUMN overrideMemoKeyName TEXT")
+                database.execSQL("ALTER TABLE general_receipts ADD COLUMN paymentOverrideAccountKey TEXT")
+                database.execSQL("ALTER TABLE general_receipts ADD COLUMN paymentOverrideAccountKeyName TEXT")
+
+                database.execSQL(
+                    "CREATE TABLE `receipt_payment_method_rules_new` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `keyword` TEXT NOT NULL, " +
+                        "`yayoiAccountId` INTEGER, `sortOrder` INTEGER NOT NULL, " +
+                        "`accountKey` TEXT, `accountKeyName` TEXT)"
+                )
+                database.execSQL(
+                    "INSERT INTO receipt_payment_method_rules_new (id, keyword, yayoiAccountId, sortOrder, " +
+                        "accountKey, accountKeyName) " +
+                        "SELECT id, keyword, yayoiAccountId, sortOrder, accountKey, accountKeyName " +
+                        "FROM receipt_payment_method_rules"
+                )
+                database.execSQL("DROP TABLE receipt_payment_method_rules")
+                database.execSQL("ALTER TABLE receipt_payment_method_rules_new RENAME TO receipt_payment_method_rules")
+            }
+        }
+
         private val MIGRATION_34_35 = object : Migration(34, 35) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE receipt_items ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
@@ -1595,7 +1630,7 @@ abstract class ReceiptDatabase : RoomDatabase() {
                     ReceiptDatabase::class.java,
                     "receipt_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41)
                     .build()
                 INSTANCE = instance
                 instance

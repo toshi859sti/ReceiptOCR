@@ -165,7 +165,7 @@ $accountsText
      *
      * 科目は accountKey（`hiryou` `acct-0007` など）ではなく、プロンプト内の通し番号で答えさせて手元で引き戻す。
      * キーの綴りを AI に写させると、似たキーへの取り違えや存在しないキーが混ざるため。
-     * 摘要は提案させない。摘要は科目を決めてから候補を絞って選ぶもの（AoiroChoboPurchaseRules）。
+     * 摘要は提案させない。摘要は空欄のまま PC で決めることもあるので、農家が選ぶ（AoiroChoboPurchaseRules）。
      *
      * @param accounts 候補の科目（借方に使ってよい科目だけを渡す）
      * @param memoNamesByAccount 科目ごとの買掛/仕入の摘要名。AI が科目の使い道を掴むためのヒント
@@ -299,6 +299,159 @@ $accountsText
         } catch (e: Exception) {
             Log.e("GeminiReceiptClient", "parseAoiroMatchResponse error: ${e.message}")
             MatchAoiroResult(emptyList(), null)
+        }
+    }
+
+    /** あおいろ科目の提案 1 件。[itemIndex] は渡した一覧の 0 始まりの位置 */
+    data class AoiroItemMatch(
+        val itemIndex: Int,
+        val accountKey: String,
+        val reason: String
+    )
+
+    data class MatchAoiroItemsResult(
+        val matches: List<AoiroItemMatch>,
+        val usageStats: AiUsageStats?
+    )
+
+    /**
+     * レシートの品目グループにあおいろ帳簿の科目を提案させる（[matchProductsToAoiroAccounts] のレシート版）。
+     * 送るのは先頭 60 件まで。
+     *
+     * @param accounts 候補の科目（品目の借方に使ってよい科目だけを渡す）
+     * @param memoNamesByAccount 科目ごとの現金/出金の摘要名（科目の使い道のヒント）
+     */
+    suspend fun matchReceiptItemsToAoiroAccounts(
+        itemNames: List<String>,
+        accounts: List<com.example.greenframeocr.data.AoiroChoboAccount>,
+        memoNamesByAccount: Map<String, List<String>>,
+        apiKey: String
+    ): MatchAoiroItemsResult = matchToAoiroAccounts(
+        task = "以下の、店のレシート・領収書に書かれた品目に対して、提示された勘定科目の中から最も適切なものを1つ割り当ててください。",
+        hints = """
+- 品目名から判断する（燃料 → 動力光熱費、肥料 → 肥料費、農薬 → 農薬衛生費、種・苗 → 種苗費、
+  マルチ・ビニール・ひも・資材 → 諸材料費、小型の農機具や工具 → 農具費、修理・部品 → 修繕費）
+- 農業に使うとは考えにくい私的な買い物（食料品・日用品など）は、リストに事業主貸があればそれにする
+- 資産の科目（償却資産のグループ）は、高額な機械・設備を買ったとき以外は使わない
+""".trim(),
+        itemsTitle = "品目",
+        itemLines = itemNames.take(60),
+        requireAll = false,
+        accounts = accounts,
+        memoNamesByAccount = memoNamesByAccount,
+        apiKey = apiKey
+    )
+
+    /**
+     * 通帳の摘要パターンにあおいろ帳簿の相手科目を提案させる（[matchTekiyouToAccounts] のあおいろ版）。
+     * 送るのは先頭 60 件まで。
+     *
+     * @param tekiyou (摘要, 入金か, 明細の件数)
+     * @param accounts 候補の科目（通帳の相手科目に使ってよい科目だけを渡す）
+     * @param memoNamesByAccount 科目ごとの預金/入金・預金/出金の摘要名（科目の使い道のヒント）
+     */
+    suspend fun matchTekiyouToAoiroAccounts(
+        tekiyou: List<Triple<String, Boolean, Int>>,
+        accounts: List<com.example.greenframeocr.data.AoiroChoboAccount>,
+        memoNamesByAccount: Map<String, List<String>>,
+        apiKey: String
+    ): MatchAoiroItemsResult = matchToAoiroAccounts(
+        task = "以下の、農協の通帳の摘要パターンすべてに対して、提示された勘定科目の中から相手科目として最も適切なものを1つ必ず割り当ててください。",
+        hints = """
+- 入金：農産物の販売代金 → 販売金額（売上）、補助金・共済金の受け取り → 雑収入、預金利息 → 事業主借
+- 出金：肥料・農薬・資材の代金 → それぞれの経費、燃料 → 動力光熱費、電気・ガス・水道 → 動力光熱費、
+  固定資産税 → 租税公課、農業共済 → 農業共済掛金、借入金の返済 → 借入金、給与 → 雇人費、
+  生活費の引き出し・所得税・住民税・国民年金など事業と関係のない支払い → 事業主貸
+- リストに無い科目名は使わず、リストの中で最も近いものを選ぶ
+""".trim(),
+        itemsTitle = "通帳摘要パターン",
+        itemLines = tekiyou.take(60).map { (text, isIncome, count) ->
+            "$text（${if (isIncome) "入金" else "出金"}・${count}件）"
+        },
+        requireAll = true,
+        accounts = accounts,
+        memoNamesByAccount = memoNamesByAccount,
+        apiKey = apiKey
+    )
+
+    /**
+     * あおいろ科目の提案の共通部分。行も科目もプロンプト内の通し番号で答えさせ、手元で引き戻す
+     * （名前や accountKey を AI に写させると、表記ゆれや取り違えが混ざるため。[matchProductsToAoiroAccounts] と同じ考え方）
+     */
+    private suspend fun matchToAoiroAccounts(
+        task: String,
+        hints: String,
+        itemsTitle: String,
+        itemLines: List<String>,
+        requireAll: Boolean,
+        accounts: List<com.example.greenframeocr.data.AoiroChoboAccount>,
+        memoNamesByAccount: Map<String, List<String>>,
+        apiKey: String
+    ): MatchAoiroItemsResult = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) throw GeminiApiKeyMissingException()
+
+        val itemsText = itemLines.mapIndexed { i, line -> "ID:${i + 1}  $line" }.joinToString("\n")
+        val numbered = accounts.take(100)
+        val accountsText = numbered.mapIndexed { i, acc ->
+            val group = acc.displayGroup?.let { "（$it）" } ?: ""
+            val memos = memoNamesByAccount[acc.accountKey].orEmpty()
+            val memoText = if (memos.isEmpty()) "" else "  摘要: ${memos.joinToString("、")}"
+            "ID:${i + 1}  ${acc.name}$group$memoText"
+        }.joinToString("\n")
+        val coverage = if (requireAll) {
+            "- すべての行に対して必ず1件ずつ割り当ててください（省略不可）"
+        } else {
+            "- 適切な科目が見つからない場合はそのエントリを省略してください"
+        }
+
+        val prompt = """
+あなたは農業経営の青色申告（青色申告決算書・農業所得用）に詳しい会計専門家です。
+$task
+
+# 割り当てのヒント
+$hints
+
+# $itemsTitle（${itemLines.size}件）
+$itemsText
+
+# 勘定科目リスト（${numbered.size}件）
+$accountsText
+
+# 回答形式（JSON）
+- itemId は必ず上記の${itemsTitle}の ID（数字）を使用してください
+- accountId は必ず上記の勘定科目リストの ID（数字）を使用してください
+$coverage
+- reason は30文字以内の日本語で記述してください
+
+{
+  "matches": [
+    {"itemId": 行ID, "accountId": 科目ID, "reason": "割り当て理由"}
+  ]
+}
+""".trimIndent()
+
+        val body = postGenerateContent(prompt, apiKey) ?: return@withContext MatchAoiroItemsResult(emptyList(), null)
+        try {
+            val root = JSONObject(body)
+            val usageStats = parseUsageStats(root)
+            val text = root.getJSONArray("candidates")
+                .getJSONObject(0)
+                .getJSONObject("content")
+                .getJSONArray("parts")
+                .getJSONObject(0)
+                .getString("text")
+            val arr = JSONObject(text).getJSONArray("matches")
+            val matches = (0 until arr.length()).mapNotNull { i ->
+                val obj = arr.getJSONObject(i)
+                val itemIndex = obj.optInt("itemId", 0) - 1
+                if (itemIndex !in itemLines.indices) return@mapNotNull null
+                val account = numbered.getOrNull(obj.optInt("accountId", 0) - 1) ?: return@mapNotNull null
+                AoiroItemMatch(itemIndex, account.accountKey, obj.optString("reason", ""))
+            }.distinctBy { it.itemIndex }
+            MatchAoiroItemsResult(matches, usageStats)
+        } catch (e: Exception) {
+            Log.e("GeminiReceiptClient", "matchToAoiroAccounts parse error: ${e.message}")
+            MatchAoiroItemsResult(emptyList(), null)
         }
     }
 

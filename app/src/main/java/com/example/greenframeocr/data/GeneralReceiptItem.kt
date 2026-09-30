@@ -26,6 +26,12 @@ data class GeneralReceiptItem(
     // null = グループのデフォルトに従う、非null = この行だけ個別に指定
     val yayoiAccountId: Long? = null,
     val isExcluded: Boolean = false,
+    // あおいろの科目・摘要の個別上書き（yayoiAccountId のあおいろ版。DB v41）。
+    // null = グループ（general_item_master）の設定に従う。摘要は科目と一緒に上書き・解除する
+    val overrideAccountKey: String? = null,
+    val overrideAccountKeyName: String? = null,
+    val overrideMemoKey: String? = null,
+    val overrideMemoKeyName: String? = null,
     // itemNameの正規化キー（スペース除去・文字種統一）。品目別マッチングのグルーピングに使用。
     // INSERT/UPDATE前に必ず withComputedKey() で設定すること
     val canonicalKey: String = "",
