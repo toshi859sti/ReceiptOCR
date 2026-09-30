@@ -6,8 +6,8 @@ import androidx.room.Query
 /**
  * 学習テーブルが持つ AoiroChobo の紐付け（`accountKey` / `memoKey`）をまとめて扱う。
  *
- * 紐付けは 5 つのテーブルに散っている（商品名・通帳パターン・レシート品目・支払方法・
- * 預金の個別上書き）。`vocabulary.json` の取込は「name が変わったキーの紐付けを外す」を
+ * 紐付けは複数のテーブルに散っている（商品名・通帳パターン・レシート品目・支払方法・
+ * 預金とレシートの個別上書き）。`vocabulary.json` の取込は「name が変わったキーの紐付けを外す」を
  * **キー単位**で行う必要があるので、テーブルごとに DAO を呼び分けるのではなくここに集める。
  *
  * 外すのは学習の行そのものではなく `accountKey` / `memoKey` の列だけ。弥生用の
@@ -27,6 +27,8 @@ interface AoiroChoboLinkDao {
         UNION SELECT DISTINCT accountKey, accountKeyName FROM receipt_payment_method_rules WHERE accountKey IS NOT NULL
         UNION SELECT DISTINCT overrideAccountKey, overrideAccountKeyName FROM deposit_meisai WHERE overrideAccountKey IS NOT NULL
         UNION SELECT DISTINCT aoiroAccountKey, aoiroAccountKeyName FROM passbooks WHERE aoiroAccountKey IS NOT NULL
+        UNION SELECT DISTINCT overrideAccountKey, overrideAccountKeyName FROM general_receipt_items WHERE overrideAccountKey IS NOT NULL
+        UNION SELECT DISTINCT paymentOverrideAccountKey, paymentOverrideAccountKeyName FROM general_receipts WHERE paymentOverrideAccountKey IS NOT NULL
         """
     )
     suspend fun getLinkedAccountKeys(): List<LinkKeyName>
@@ -74,6 +76,24 @@ interface AoiroChoboLinkDao {
     )
     suspend fun clearAccountKeyInDepositOverrides(accountKey: String)
 
+    @Query(
+        """
+        UPDATE general_receipt_items
+        SET overrideAccountKey = NULL, overrideAccountKeyName = NULL,
+            overrideMemoKey = NULL, overrideMemoKeyName = NULL
+        WHERE overrideAccountKey = :accountKey
+        """
+    )
+    suspend fun clearAccountKeyInReceiptItemOverrides(accountKey: String)
+
+    @Query(
+        """
+        UPDATE general_receipts SET paymentOverrideAccountKey = NULL, paymentOverrideAccountKeyName = NULL
+        WHERE paymentOverrideAccountKey = :accountKey
+        """
+    )
+    suspend fun clearAccountKeyInReceiptPaymentOverrides(accountKey: String)
+
     /** 通帳のあおいろ口座。学習ではないが、口座科目の作り替えで外す扱いは同じ */
     @Query("UPDATE passbooks SET aoiroAccountKey = NULL, aoiroAccountKeyName = NULL WHERE aoiroAccountKey = :accountKey")
     suspend fun clearAccountKeyInPassbooks(accountKey: String)
@@ -85,6 +105,8 @@ interface AoiroChoboLinkDao {
         clearAccountKeyInItems(accountKey)
         clearAccountKeyInPaymentRules(accountKey)
         clearAccountKeyInDepositOverrides(accountKey)
+        clearAccountKeyInReceiptItemOverrides(accountKey)
+        clearAccountKeyInReceiptPaymentOverrides(accountKey)
     }
 
     /** 名前を控えていなかった紐付けに、いま見えている名前を記録する（次回以降の変化検出のため） */
@@ -103,6 +125,12 @@ interface AoiroChoboLinkDao {
     @Query("UPDATE deposit_meisai SET overrideAccountKeyName = :name WHERE overrideAccountKey = :accountKey AND overrideAccountKeyName IS NULL")
     suspend fun fillAccountKeyNameInDepositOverrides(accountKey: String, name: String)
 
+    @Query("UPDATE general_receipt_items SET overrideAccountKeyName = :name WHERE overrideAccountKey = :accountKey AND overrideAccountKeyName IS NULL")
+    suspend fun fillAccountKeyNameInReceiptItemOverrides(accountKey: String, name: String)
+
+    @Query("UPDATE general_receipts SET paymentOverrideAccountKeyName = :name WHERE paymentOverrideAccountKey = :accountKey AND paymentOverrideAccountKeyName IS NULL")
+    suspend fun fillAccountKeyNameInReceiptPaymentOverrides(accountKey: String, name: String)
+
     @Query("UPDATE passbooks SET aoiroAccountKeyName = :name WHERE aoiroAccountKey = :accountKey AND aoiroAccountKeyName IS NULL")
     suspend fun fillAccountKeyNameInPassbooks(accountKey: String, name: String)
 
@@ -113,6 +141,8 @@ interface AoiroChoboLinkDao {
         fillAccountKeyNameInItems(accountKey, name)
         fillAccountKeyNameInPaymentRules(accountKey, name)
         fillAccountKeyNameInDepositOverrides(accountKey, name)
+        fillAccountKeyNameInReceiptItemOverrides(accountKey, name)
+        fillAccountKeyNameInReceiptPaymentOverrides(accountKey, name)
     }
 
     // ---- 摘要キー ----
@@ -123,6 +153,7 @@ interface AoiroChoboLinkDao {
         UNION SELECT DISTINCT memoKey, memoKeyName FROM tekiyou_matching_rules WHERE memoKey IS NOT NULL
         UNION SELECT DISTINCT memoKey, memoKeyName FROM general_item_master WHERE memoKey IS NOT NULL
         UNION SELECT DISTINCT overrideMemoKey, overrideMemoKeyName FROM deposit_meisai WHERE overrideMemoKey IS NOT NULL
+        UNION SELECT DISTINCT overrideMemoKey, overrideMemoKeyName FROM general_receipt_items WHERE overrideMemoKey IS NOT NULL
         """
     )
     suspend fun getLinkedMemoKeys(): List<LinkKeyName>
@@ -139,11 +170,15 @@ interface AoiroChoboLinkDao {
     @Query("UPDATE deposit_meisai SET overrideMemoKey = NULL, overrideMemoKeyName = NULL WHERE overrideMemoKey = :memoKey")
     suspend fun clearMemoKeyInDepositOverrides(memoKey: String)
 
+    @Query("UPDATE general_receipt_items SET overrideMemoKey = NULL, overrideMemoKeyName = NULL WHERE overrideMemoKey = :memoKey")
+    suspend fun clearMemoKeyInReceiptItemOverrides(memoKey: String)
+
     suspend fun clearMemoKeyEverywhere(memoKey: String) {
         clearMemoKeyInProducts(memoKey)
         clearMemoKeyInMatchingRules(memoKey)
         clearMemoKeyInItems(memoKey)
         clearMemoKeyInDepositOverrides(memoKey)
+        clearMemoKeyInReceiptItemOverrides(memoKey)
     }
 
     @Query("UPDATE product_master SET memoKeyName = :name WHERE memoKey = :memoKey AND memoKeyName IS NULL")
@@ -158,11 +193,15 @@ interface AoiroChoboLinkDao {
     @Query("UPDATE deposit_meisai SET overrideMemoKeyName = :name WHERE overrideMemoKey = :memoKey AND overrideMemoKeyName IS NULL")
     suspend fun fillMemoKeyNameInDepositOverrides(memoKey: String, name: String)
 
+    @Query("UPDATE general_receipt_items SET overrideMemoKeyName = :name WHERE overrideMemoKey = :memoKey AND overrideMemoKeyName IS NULL")
+    suspend fun fillMemoKeyNameInReceiptItemOverrides(memoKey: String, name: String)
+
     suspend fun fillMemoKeyNameEverywhere(memoKey: String, name: String) {
         fillMemoKeyNameInProducts(memoKey, name)
         fillMemoKeyNameInMatchingRules(memoKey, name)
         fillMemoKeyNameInItems(memoKey, name)
         fillMemoKeyNameInDepositOverrides(memoKey, name)
+        fillMemoKeyNameInReceiptItemOverrides(memoKey, name)
     }
 
     // ---- 未確定の件数（取込結果ダイアログ用） ----

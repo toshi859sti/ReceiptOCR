@@ -323,6 +323,7 @@ fun ReceiptNavGraph(
         // 一般レシート確認・編集画面
         composable(Screen.GeneralReceiptConfirm.route) {
             GeneralReceiptConfirmScreen(
+                isAoiro = appPreferences.accountingSoftware == AccountingSoftware.AOIRO,
                 viewModel = generalReceiptViewModel,
                 onBack = { navController.popBackStack() },
                 onSaved = {
