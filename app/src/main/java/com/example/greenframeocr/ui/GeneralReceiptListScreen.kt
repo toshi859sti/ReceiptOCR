@@ -1196,7 +1196,7 @@ fun AoiroPaymentOverrideDialog(
                     )
                 }
                 Text(
-                    "科目を外して保存すると、支払方法のルールで決まる科目に戻ります（どれにも当たらなければ現金）",
+                    "科目を外して保存すると、支払方法のルールで決まる科目に戻ります（どれにも当たらなければ既定の科目）",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

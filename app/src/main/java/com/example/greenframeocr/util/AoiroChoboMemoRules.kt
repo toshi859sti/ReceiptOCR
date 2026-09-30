@@ -10,6 +10,12 @@ import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 object AoiroChoboMemoRules {
 
     /**
+     * 摘要を選んだときに決まる科目。ふつうの摘要は相手科目（`counterAccountKey`）、
+     * 振替の摘要は借方の科目（`debitAccountKey`。レシートでは品目の経費科目。貸方は支払方法の科目）
+     */
+    fun accountKeyOf(memo: AoiroChoboMemoTemplate): String? = memo.counterAccountKey ?: memo.debitAccountKey
+
+    /**
      * PC の摘要画面のタブ（docs/integration/REPLY-pc-2026-09-23b.md §4）。
      *
      * 現金・預金のタブは `ledgerType` を見ず、`showInCash` / `showInBank` だけで絞る。

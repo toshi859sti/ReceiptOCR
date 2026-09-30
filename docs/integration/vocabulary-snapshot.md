@@ -413,8 +413,9 @@ AoiroChobo は複数の預金口座を「スロット」で管理する。
 
 | 条件 | フィルタ |
 |---|---|
-| 帳簿 | `Purchase`→`ledgerType == "AP"` / `Receipt` クレカ→`"Unpaid"` / **`Receipt` 現金→`"Cash"` かつ `showInCash`** / **`Deposit`→`"Cash"` かつ `showInBank`** |
+| 帳簿 | `Purchase`→`ledgerType == "AP"` / **`Receipt` は貸方（支払方法）の科目で分ける**：`ledgerAffinity == Cash`→`"Cash"` かつ `showInCash`、`ledgerAffinity == Unpaid`→`"Unpaid"`、それ以外（事業主借など）→`"Transfer"`（[transaction-import.md](transaction-import.md) §5） / **`Deposit`→`"Cash"` かつ `showInBank`** |
 | 方向 | `direction` == `In` / `Out`。**お金の向きではなく帳簿上の発生／解消**：現金・預金は `In`＝入金・`Out`＝出金、売掛・買掛・未払は `In`＝債権債務の発生（売上・購入）・`Out`＝解消（入金・支払）。`Deposit` は元金額の符号で判定 |
+| 振替（`Receipt` の `Transfer` だけ） | `direction` は見ない（振替は空文字）。代わりに `debitAccountKey == 品目の経費科目` かつ `creditAccountKey == 貸方の科目`。`Purchase` / `Deposit` では振替の摘要を候補にしない |
 
 ⚠ **2026-09-23 訂正：`ledgerType == "Bank"` の摘要は実在しない。** 預金出納帳の摘要も `ledgerType = "Cash"` で
 持ち、`showInBank` で出し分けている（PC の摘要登録画面の「預金」タブも `showInBank && direction` だけで絞る）。
@@ -422,7 +423,13 @@ AoiroChobo は複数の預金口座を「スロット」で管理する。
 `"Bank"` は列挙値としては残っている（将来使う余地）ので、`Deposit` の候補は
 「`ledgerType ∈ {Cash, Bank}` かつ `showInBank`」と書いておけば両方に耐える。
 実データ（2026 本番・有効 107 件）：`Cash` 77 件のうち `showInBank` 75・`showInCash` 72（両方 70）。
-| 常に除外 | `ledgerType == "Transfer"`（OCR は振替伝票を生成しない） |
+
+⚠ **2026-09-30 変更：振替の摘要を候補に入れた**（minor（9））。以前は「常に除外：`ledgerType == "Transfer"`
+（OCR は振替伝票を生成しない）」だった。農家はレシートの多くを個人のクレカで払い、仕訳は「経費 / 事業主借」になる。
+PC の辞書もこれを振替伝票の摘要（電気料金（家計より支払）・農薬 など）で持っている。
+振替の摘要を選んでも、税率の決め方は非振替と同じ（§4.7。PC は摘要から税率を採らない）。
+`debit.taxRate` はレシートの税率マーク → 借方科目の `defaultTaxCategory`、`credit.taxRate`（事業主借）は `null`。
+事業割合は PC が摘要の `businessRatio`（借方側）を採る。`creditBusinessRatio` は使わない。
 
 推奨フロー（§4.2）＝「商品名→科目を先に解決 → その相手科目 `accountKey` で
 `memoTemplates` を逆引き」だと、候補は最初から `counterAccountKey == 一致科目` の 0〜3 件に絞られる。

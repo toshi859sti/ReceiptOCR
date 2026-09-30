@@ -177,8 +177,13 @@
 | 購買（JA伝票） | 商品の経費科目 | `kaikake`（買掛金・固定） | `amount` | 買掛摘要の `memoKey`（無ければ null・商品名は `note`） | `AP` |
 | 通帳 入金 | 預金口座科目（スロット） | ルールの相手科目 | `abs(amount)` | 預金摘要の `memoKey`（無ければ null・原文は `note`） | `Bank` |
 | 通帳 出金 | ルールの相手科目 | 預金口座科目（スロット） | `abs(amount)` | 同上 | `Bank` |
-| レシート（現金払い） | 品目の経費科目 | `genkin`（現金） | `price` | 逆引きできれば `memoKey`・大半は null（品目名は `note`） | `Cash` |
-| レシート（クレカ/電子マネー） | 品目の経費科目 | `mibarai` 等（未払金・事業主借） | `price` | 逆引きできれば `memoKey`・大半は null（品目名は `note`） | `Unpaid` |
+| レシート（貸方＝`ledgerAffinity` が `Cash` の科目。現金） | 品目の経費科目 | 支払方法の科目（`genkin` 等） | `price` | 現金出金の摘要の `memoKey`（無ければ null・品目名は `note`） | `Cash` |
+| レシート（貸方＝`ledgerAffinity` が `Unpaid` の科目。未払金） | 品目の経費科目 | 支払方法の科目（`mibarai` 等） | `price` | 未払発生の摘要の `memoKey`（無ければ null・品目名は `note`） | `Unpaid` |
+| レシート（貸方＝それ以外。事業主借など） | 品目の経費科目 | 支払方法の科目（`zigyounusikari` 等） | `price` | 振替の摘要の `memoKey`（無ければ null・品目名は `note`） | `Transfer` |
+
+レシートの `ledgerType` は**貸方（支払方法）の科目の `ledgerAffinity`** で決める。クレカ・電子マネーで
+払っても、貸方が事業主借なら `Transfer`（振替伝票）になる（2026-09-30 minor（9））。
+キーの綴りで分けない。返品・値引きで借方／貸方を入れ替えるときは、**入れ替える前の貸方**で決める。
 
 `ledgerType` は「その仕訳を所有する帳簿」のヒント。省略された場合は PC が借方／貸方科目の
 `ledgerAffinity` から推定する。

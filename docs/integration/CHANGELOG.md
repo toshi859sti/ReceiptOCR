@@ -6,6 +6,32 @@
 
 ---
 
+## schemaVersion 2 — 2026-09-30 minor（9）（Receipt の帳簿を支払方法の科目で決める・振替の摘要を解禁）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の依頼
+（[REPLY-phone-2026-09-30.md](REPLY-phone-2026-09-30.md)）への対応。回答は [REPLY-pc-2026-09-30.md](REPLY-pc-2026-09-30.md)。
+
+- **Receipt の `ledgerType` を貸方（支払方法）の科目の `ledgerAffinity` で決める**
+  （[README.md](README.md) §3・[transaction-import.md](transaction-import.md) §5）。
+  `Cash` → `Cash`、`Unpaid` → `Unpaid`、それ以外（事業主借など）→ **`Transfer`**。
+  以前はクレカ・電子マネーなら貸方が事業主借でも `Unpaid` だった。「経費 / 事業主借」を `Unpaid` で入れると、
+  未払帳（未払金の科目で拾う）にも振替伝票（`Transfer` で拾う）にも出ない仕訳になっていた。
+  返品・値引きは入れ替える前の貸方で決める。貸方が預金・買掛金になる支払方法は扱わない。
+- **`Transfer` の Receipt では振替の摘要を候補にする**（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.5）。
+  「常に除外：`ledgerType == "Transfer"`（OCR は振替伝票を生成しない）」を外した。候補は
+  `debitAccountKey == 品目の経費科目` かつ `creditAccountKey == 貸方の科目`。無ければ `UnmatchedMemo`。
+- 税率・事業割合の決め方は変わらない（§4.7）。税率はスマホが決めて送り（事業主借の側は `null`）、
+  事業割合は PC が摘要の `businessRatio` を採る。
+- `ledgerType = Transfer` の行は今の取込で振替伝票に入る（受け入れ側の変更は要らなかった）。
+- **PC にガードを足した**（transaction-import §5）。`ledgerType` の帳簿の科目が借方にも貸方にも無い行は
+  「要確認」に回し、確定するときはそのときの科目から帳簿を決め直す。旧契約の送り方
+  （「経費 / 事業主借」を `Unpaid`）で届いても、登録すると振替伝票に入る。
+- §5 の「推定が両方非該当なら要確認」を実装に合わせて削った（推定しただけでは要確認にしない）。
+
+スマホ側への影響：Receipt の `ledgerType` の決め方と、摘要候補のフィルタを変えること。
+
+---
+
 ## schemaVersion 2 — 2026-09-25 minor（8）（通帳を複数に・Deposit の `externalId` に通帳を入れる）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の依頼

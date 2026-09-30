@@ -171,14 +171,25 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 | Purchase | `AP` | 商品の経費科目 | 買掛金 |
 | Deposit 入金（元 amount ≥ 0） | `Bank` | 預金口座科目（スロット） | ルールの相手科目 |
 | Deposit 出金（元 amount < 0） | `Bank` | ルールの相手科目 | 預金口座科目（スロット） |
-| Receipt 現金払い | `Cash` | 品目の経費科目 | 現金 |
-| Receipt クレカ・電子マネー | `Unpaid` | 品目の経費科目 | 未払金 / 事業主借 等 |
+| Receipt 貸方が `ledgerAffinity == Cash`（現金） | `Cash` | 品目の経費科目 | 支払方法の科目 |
+| Receipt 貸方が `ledgerAffinity == Unpaid`（未払金） | `Unpaid` | 品目の経費科目 | 支払方法の科目 |
+| Receipt 貸方がそれ以外（事業主借など） | `Transfer` | 品目の経費科目 | 支払方法の科目 |
+
+- **Receipt の `ledgerType` は貸方（支払方法）の科目の `ledgerAffinity` で決める**（2026-09-30 minor（9））。
+  支払手段（クレカ・電子マネー）ではない。返品・値引き（§7）は借方／貸方を入れ替える**前**の貸方で決める。
+- Receipt の貸方が預金（`Bank`）・買掛金（`AP`）になる支払方法は扱わない。Receipt は `bankSlotNo` を持てない（§6）。
+- **`ledgerType` と科目が合わない行は「要確認」**（2026-09-30 PC 実装）。`Cash`/`Bank`/`AR`/`AP`/`Unpaid` を
+  指定したのに、その帳簿の科目（`ledgerAffinity` が同じ科目）が借方にも貸方にも無い行のこと。
+  例：「経費 / 事業主借」を `Unpaid`。帳簿ページは科目で仕訳を拾うので、そのまま入れるとどの帳簿にも出ない。
+  確定するときは、そのときの科目から下の推定で帳簿を決め直す（例の行は振替伝票に入る）。
+  `Transfer` の指定は科目を問わずそのまま使う。
 
 - **預金口座科目**は `bankSlotNo` に対応する `vocabulary.accounts[]` の科目。
   スマホは `credit`/`debit` の該当側に、その科目の `accountKey` を入れる。
 - `ledgerType` を省略した場合、PC は「借方・貸方のうち `ledgerAffinity` が
   `Cash`/`Bank`/`AR`/`AP`/`Unpaid` の科目」からその帳簿を決める。両方該当・両方非該当なら
-  `Transfer` 扱い＋「要確認」。
+  `Transfer`。推定した行は、推定だけを理由に「要確認」にはしない（以前は「要確認」と書いていたが、
+  PC は実装していなかった。2026-09-30 に文書を実装に合わせた）。
 
 ---
 

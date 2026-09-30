@@ -1196,7 +1196,7 @@ private fun ProductEditDialog(
             selectedKey = selectedMemoKey,
             onSelect = { memo ->
                 selectedMemoKey = memo?.memoKey
-                memo?.counterAccountKey?.let { selectedAccountKey = it }
+                memo?.let(AoiroChoboMemoRules::accountKeyOf)?.let { selectedAccountKey = it }
                 showAoiroMemoPicker = false
             },
             onDismiss = { showAoiroMemoPicker = false }

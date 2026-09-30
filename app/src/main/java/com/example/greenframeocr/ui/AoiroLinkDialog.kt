@@ -65,14 +65,25 @@ class AoiroLinkKind(
             accountLabel = "相手科目（あおいろ）"
         )
 
-        /** レシートの品目グループの借方 */
-        val receiptItem = AoiroLinkKind(
-            usage = AoiroChoboUsageRules.Usage.RECEIPT,
-            allAccounts = AoiroChoboReceiptRules::accountCandidates,
-            memoCandidates = AoiroChoboReceiptRules::memoCandidates,
-            memoTabLabel = "現金/出金",
-            accountLabel = "あおいろ科目"
-        )
+        /**
+         * レシートの品目の借方。摘要は [payment]（支払方法の科目）で決まる帳簿のものから選ぶ
+         * （[AoiroChoboReceiptRules.ledgerOf]）。品目グループには既定の支払方法、明細の個別変更にはそのレシートの支払方法を渡す。
+         * 支払方法が決まらなければ現金出納帳の摘要にする
+         */
+        fun receiptItem(payment: AoiroChoboAccount?): AoiroLinkKind {
+            val ledger = AoiroChoboReceiptRules.ledgerOf(payment) ?: AoiroChoboReceiptRules.Ledger.CASH
+            return AoiroLinkKind(
+                usage = AoiroChoboUsageRules.Usage.RECEIPT,
+                allAccounts = AoiroChoboReceiptRules::accountCandidates,
+                memoCandidates = { key, memos ->
+                    AoiroChoboReceiptRules.memoCandidates(key, ledger, payment?.accountKey, memos)
+                },
+                memoTabLabel = if (ledger == AoiroChoboReceiptRules.Ledger.TRANSFER) {
+                    "${ledger.memoTabLabel}・貸方 ${payment?.name}"
+                } else ledger.memoTabLabel,
+                accountLabel = "あおいろ科目"
+            )
+        }
 
         /** JA 購買の商品の借方（商品編集ダイアログで使う） */
         val purchase = AoiroLinkKind(
@@ -207,7 +218,7 @@ fun AoiroLinkDialog(
             selectedKey = memoKey,
             onSelect = { memo ->
                 memoKey = memo?.memoKey
-                memo?.counterAccountKey?.let { accountKey = it }
+                memo?.let(AoiroChoboMemoRules::accountKeyOf)?.let { accountKey = it }
                 showMemoPicker = false
             },
             onDismiss = { showMemoPicker = false }

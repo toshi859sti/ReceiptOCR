@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AccountingSoftware
+import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralItemGroup
 import com.example.greenframeocr.data.GeneralReceiptItem
@@ -38,6 +39,7 @@ import com.example.greenframeocr.util.RomajiSearch
 import com.example.greenframeocr.util.NumericPrefixCandidate
 import com.example.greenframeocr.util.SimilarGroupPair
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
+import kotlinx.coroutines.launch
 
 // 科目名の表示色。グループのデフォルトでマッチした分は緑系、個別に上書きした分は赤系で固定
 // （テーマプリセットによってprimary/tertiaryの色味が変わるため、区別のため固定色にしている）
@@ -95,7 +97,9 @@ fun GeneralItemMatchingScreen(
     val isAoiro = appPreferences.accountingSoftware == AccountingSoftware.AOIRO
     var aoiroVocab by remember { mutableStateOf<GeneralReceiptViewModel.AoiroVocab?>(null) }
     var aoiroEditTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
-    var aoiroItemEditTarget by remember { mutableStateOf<Pair<GeneralReceiptItem, GeneralItemGroup>?>(null) }
+    // 明細の個別変更。摘要の帳簿はそのレシートの支払方法で決まるので、開くときに引いておく
+    var aoiroItemEditTarget by remember { mutableStateOf<Triple<GeneralReceiptItem, GeneralItemGroup, AoiroChoboAccount?>?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         val accounts = viewModel.loadYayoiAccounts()
@@ -344,7 +348,9 @@ fun GeneralItemMatchingScreen(
                             onRenameGroup = { groupRenameTarget = group },
                             onEditIndividual = { item ->
                                 if (isAoiro) {
-                                    aoiroItemEditTarget = item to group
+                                    scope.launch {
+                                        aoiroItemEditTarget = Triple(item, group, viewModel.aoiroPaymentAccountForReceipt(item.receiptId))
+                                    }
                                 } else {
                                     itemEditTarget = item
                                     itemEditGroupDefaultName = yayoiAccounts.find { it.id == group.yayoiAccountId }?.accountName
@@ -459,13 +465,14 @@ fun GeneralItemMatchingScreen(
         )
     }
 
-    // グループのあおいろ科目・摘要ダイアログ
+    // グループのあおいろ科目・摘要ダイアログ。摘要は既定の支払方法の帳簿のもの（事業主借なら振替の摘要）
     aoiroEditTarget?.let { group ->
         val vocab = aoiroVocab
+        val defaultPayment = vocab?.let { viewModel.aoiroDefaultPayment(it.accounts) }
         AoiroLinkDialog(
             title = "あおいろ科目・摘要",
             subject = "${group.itemName}（${group.count}件）",
-            kind = AoiroLinkKind.receiptItem,
+            kind = AoiroLinkKind.receiptItem(defaultPayment),
             accounts = vocab?.accounts.orEmpty(),
             memos = vocab?.memos.orEmpty(),
             usage = vocab?.usage.orEmpty(),
@@ -475,7 +482,8 @@ fun GeneralItemMatchingScreen(
             initialMemoKeyName = group.memoKeyName,
             note = "この品目名のレシート明細すべてに使います（弥生の科目とは別）。保存すると明細ごとの個別変更は解除します",
             resetHint = "科目を外すと、この品目は「科目なし」で PC に送ります",
-            extraNote = "クレジット等の支払いでは、同じ名前の「未払/発生」の摘要に置き換えて送ります（無ければ摘要なし）",
+            extraNote = "摘要は、既定の支払方法（${defaultPayment?.name ?: "未設定"}）の帳簿のものです。" +
+                "支払方法が違うレシートでは、その帳簿の同じ名前の摘要に置き換えて送ります（無ければ摘要なし）",
             onDismiss = { aoiroEditTarget = null },
             onSave = { s ->
                 viewModel.updateGroupAoiro(group.canonicalKey, s.accountKey, s.accountKeyName, s.memoKey, s.memoKeyName)
@@ -484,13 +492,13 @@ fun GeneralItemMatchingScreen(
         )
     }
 
-    // 明細の個別変更（あおいろ）。科目を外すとグループの設定に戻る
-    aoiroItemEditTarget?.let { (item, group) ->
+    // 明細の個別変更（あおいろ）。科目を外すとグループの設定に戻る。摘要はそのレシートの支払方法の帳簿のもの
+    aoiroItemEditTarget?.let { (item, group, payment) ->
         val vocab = aoiroVocab
         AoiroLinkDialog(
             title = "個別変更（あおいろ）",
             subject = "${item.itemName}  ¥${"%,d".format(item.price)}",
-            kind = AoiroLinkKind.receiptItem,
+            kind = AoiroLinkKind.receiptItem(payment),
             accounts = vocab?.accounts.orEmpty(),
             memos = vocab?.memos.orEmpty(),
             usage = vocab?.usage.orEmpty(),
@@ -500,7 +508,7 @@ fun GeneralItemMatchingScreen(
             initialMemoKeyName = item.overrideMemoKeyName,
             note = "保存するとグループ設定に関わらずこの明細にのみ適用されます",
             resetHint = "科目を外すとグループの設定に戻ります（${aoiroLabel(group) ?: "グループも未設定"}）",
-            extraNote = "クレジット等の支払いでは、同じ名前の「未払/発生」の摘要に置き換えて送ります（無ければ摘要なし）",
+            extraNote = "このレシートの支払方法（${payment?.name ?: "未設定"}）の帳簿の摘要から選びます",
             onDismiss = { aoiroItemEditTarget = null },
             onSave = { s ->
                 viewModel.updateItemAoiroOverride(item.id, s.accountKey, s.accountKeyName, s.memoKey, s.memoKeyName)

@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.util.AoiroChoboAccountRules
+import com.example.greenframeocr.util.AoiroChoboMemoRules
 import com.example.greenframeocr.util.RomajiSearch
 
 // あおいろ帳簿の科目・摘要を選ぶ部品。JA 購買の商品・通帳の摘要パターン・レシートの品目で共用する。
@@ -259,7 +260,7 @@ internal fun AoiroMemoPickerDialog(
     var searchQuery by remember { mutableStateOf("") }
     val query = searchQuery.trim()
     val filtered = tabMemos.filter { memo ->
-        (!byAccount || memo.counterAccountKey == currentAccountKey) &&
+        (!byAccount || AoiroChoboMemoRules.accountKeyOf(memo) == currentAccountKey) &&
             (query.isEmpty() || memo.name.contains(query, ignoreCase = true) ||
                 RomajiSearch.matches(memo.searchKey, query))
     }
@@ -314,7 +315,7 @@ internal fun AoiroMemoPickerDialog(
                             selected = memo.memoKey == selectedKey,
                             title = memo.name,
                             subtitle = listOfNotNull(
-                                memo.counterAccountKey.takeIf { !byAccount }?.let { accountNames[it] ?: it },
+                                AoiroChoboMemoRules.accountKeyOf(memo).takeIf { !byAccount }?.let { accountNames[it] ?: it },
                                 memoDetail(memo).ifEmpty { null }
                             ).joinToString("・"),
                             tag = if (memo.memoKey in ratioSensitive) "要確定" else null,

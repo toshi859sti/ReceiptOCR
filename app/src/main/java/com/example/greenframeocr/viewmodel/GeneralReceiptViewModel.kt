@@ -326,7 +326,8 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                 accounts = vocabDao.getAllAccounts(),
                 memos = vocabDao.getAllMemoTemplates(),
                 vocabMeta = meta,
-                appVersion = appVersion
+                appVersion = appVersion,
+                defaultPaymentKey = prefs.aoiroReceiptDefaultPaymentKey
             )
         }
 
@@ -349,15 +350,30 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
      * 辞書から消えた上書き・ルールの科目も null
      */
     suspend fun resolveAoiroPaymentNameForReceipt(receipt: GeneralReceipt): String? =
-        withContext(Dispatchers.IO) {
-            val accounts = db.aoiroChoboVocabDao().getAllAccounts()
-            AoiroChoboTransactionsBuilder.resolveReceiptPayment(
-                receipt,
-                db.receiptPaymentMethodRuleDao().getAll(),
-                accounts.associateBy { it.accountKey },
-                AoiroChoboTransactionsBuilder.cashAccount(accounts)
-            ).second
-        }
+        withContext(Dispatchers.IO) { resolveAoiroPayment(receipt).second }
+
+    /** このレシートのあおいろの支払方法の科目（出力と同じ決め方）。明細の個別変更で摘要の帳簿を決めるのに使う */
+    suspend fun aoiroPaymentAccountForReceipt(receiptId: Long): AoiroChoboAccount? =
+        withContext(Dispatchers.IO) { dao.getReceiptById(receiptId)?.let { resolveAoiroPayment(it).first } }
+
+    private suspend fun resolveAoiroPayment(receipt: GeneralReceipt): Pair<AoiroChoboAccount?, String?> {
+        val accounts = db.aoiroChoboVocabDao().getAllAccounts()
+        return AoiroChoboTransactionsBuilder.resolveReceiptPayment(
+            receipt,
+            db.receiptPaymentMethodRuleDao().getAll(),
+            accounts.associateBy { it.accountKey },
+            AoiroChoboTransactionsBuilder.defaultPayment(accounts, prefs.aoiroReceiptDefaultPaymentKey)
+        )
+    }
+
+    /** あおいろ：支払方法のルールに当たらないときの科目（`accountKey`）。null = 現金 */
+    var aoiroReceiptDefaultPaymentKey: String?
+        get() = prefs.aoiroReceiptDefaultPaymentKey
+        set(value) { prefs.aoiroReceiptDefaultPaymentKey = value }
+
+    /** 既定の支払方法の科目（選んでいなければ現金）。今の辞書に無ければ null */
+    fun aoiroDefaultPayment(accounts: List<AoiroChoboAccount>): AoiroChoboAccount? =
+        AoiroChoboTransactionsBuilder.defaultPayment(accounts, prefs.aoiroReceiptDefaultPaymentKey)
 
     /**
      * 一覧用：レシート id → 今効いている支払方法の科目名（出力と同じ決め方）。
@@ -371,9 +387,9 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         if (isAoiro) {
             val accounts = db.aoiroChoboVocabDao().getAllAccounts()
             val byKey = accounts.associateBy { it.accountKey }
-            val cash = AoiroChoboTransactionsBuilder.cashAccount(accounts)
+            val fallback = aoiroDefaultPayment(accounts)
             receipts.associate { r ->
-                r.id to AoiroChoboTransactionsBuilder.resolveReceiptPayment(r, rules, byKey, cash).second
+                r.id to AoiroChoboTransactionsBuilder.resolveReceiptPayment(r, rules, byKey, fallback).second
             }
         } else {
             val accountsById = db.yayoiAccountDao().getAll().associateBy { it.id }
@@ -536,8 +552,13 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             _aiError.value = "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください"
             return
         }
+        // 摘要名のヒントは、品目グループの摘要と同じく既定の支払方法の帳簿のもの
+        val defaultPayment = aoiroDefaultPayment(vocab.accounts)
+        val ledger = AoiroChoboReceiptRules.ledgerOf(defaultPayment) ?: AoiroChoboReceiptRules.Ledger.CASH
         val memoNames = accounts.associate { a ->
-            a.accountKey to AoiroChoboReceiptRules.memoCandidates(a.accountKey, vocab.memos).map { it.name }
+            a.accountKey to AoiroChoboReceiptRules.memoCandidates(
+                a.accountKey, ledger, defaultPayment?.accountKey, vocab.memos
+            ).map { it.name }
         }
         viewModelScope.launch {
             _isAiMatching.value = true
