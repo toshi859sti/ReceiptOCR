@@ -2,6 +2,7 @@ package com.example.greenframeocr.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -113,21 +114,36 @@ internal fun PickerField(
     onPick: () -> Unit,
     onClear: () -> Unit
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = {},
-        readOnly = true,
-        label = { Text(label) },
-        trailingIcon = {
-            Row {
-                if (hasValue) {
-                    IconButton(onClick = onClear) { Icon(Icons.Default.Clear, "クリア") }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = {
+                Row {
+                    if (hasValue) {
+                        IconButton(onClick = onClear) { Icon(Icons.Default.Clear, "クリア") }
+                    }
+                    IconButton(onClick = onPick) { Icon(Icons.Default.ArrowDropDown, "選択") }
                 }
-                IconButton(onClick = onPick) { Icon(Icons.Default.ArrowDropDown, "選択") }
-            }
-        },
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onPick)
-    )
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        // OutlinedTextField は readOnly でもタップを内側の入力欄が受けてフォーカスするだけで、
+        // 外側の clickable まで届かない。透明なオーバーレイで拾う（DateOutlinedField と同じ）。
+        // クリアボタンを塞がないよう、値があるときは右端のアイコン 2 個分を空ける
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .padding(end = if (hasValue) 96.dp else 0.dp)
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onPick
+                )
+        )
+    }
 }
 
 /** 摘要が仕訳に持ち込む値（税率・事業割合）。PC は摘要側の事業割合を使う */
