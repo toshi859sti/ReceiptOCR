@@ -28,17 +28,4 @@ object AoiroChoboDepositRules {
         val tab = tabOf(isIncome)
         return memos.filter { tab.contains(it) && it.counterAccountKey == accountKey }.sortedBy { it.displayOrder }
     }
-
-    /**
-     * 科目を選んだ直後に摘要を先に埋めておいてよいか。考え方は [AoiroChoboPurchaseRules.preselectedMemo] と同じ
-     * （候補がちょうど 1 件で、事業割合だけ違う組に入っていないときだけ）。
-     */
-    fun preselectedMemo(
-        accountKey: String,
-        isIncome: Boolean,
-        memos: List<AoiroChoboMemoTemplate>
-    ): AoiroChoboMemoTemplate? {
-        val only = memoCandidates(accountKey, isIncome, memos).singleOrNull() ?: return null
-        return only.takeUnless { it.memoKey in AoiroChoboMemoRules.ratioSensitiveMemoKeys(memos) }
-    }
 }

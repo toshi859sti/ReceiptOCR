@@ -70,6 +70,7 @@ fun GeneralItemMatchingScreen(
     val aiSuggestions by viewModel.aiSuggestions.collectAsState()
     val isAiMatching by viewModel.isAiMatching.collectAsState()
     val aiUsageStats by viewModel.aiUsageStats.collectAsState()
+    val aoiroAiSuggestions by viewModel.aoiroAiSuggestions.collectAsState()
     val similarGroupPairs by viewModel.similarGroupPairs.collectAsState()
     val isFindingSimilarGroups by viewModel.isFindingSimilarGroups.collectAsState()
     val numericPrefixCandidates by viewModel.numericPrefixCandidates.collectAsState()
@@ -195,8 +196,16 @@ fun GeneralItemMatchingScreen(
                 }
             }
 
-            // AI一括割り当てボタン（既マッチ済みグループも対象に含めて再提案できる）
-            // 常時表示にして見落としを防ぐ（折りたたみパネルの中は展開しないと見えないため）。弥生の科目を提案するのであおいろでは出さない
+            // AI一括割り当てボタン（弥生は既マッチ済みグループも対象に含めて再提案できる。あおいろは未マッチだけ）
+            // 常時表示にして見落としを防ぐ（折りたたみパネルの中は展開しないと見えないため）
+            if (itemGroups.isNotEmpty() && isAoiro) {
+                AiSuggestButton(
+                    label = if (unmatchedCount > 0) "未マッチ${unmatchedCount}件をAIで一括提案" else "未マッチの品目はありません",
+                    isLoading = isAiMatching,
+                    enabled = unmatchedCount > 0 && aoiroVocab != null,
+                    onClick = { aoiroVocab?.let { viewModel.suggestAoiroAccountsForItems(itemGroups, it) } }
+                )
+            }
             if (itemGroups.isNotEmpty() && !isAoiro) {
                 AiSuggestButton(
                     label = if (unmatchedCount > 0) "未マッチ${unmatchedCount}件を含む全${totalCount}件をAIで一括提案"
@@ -360,6 +369,26 @@ fun GeneralItemMatchingScreen(
                 viewModel.clearAiSuggestions()
             },
             onDismiss = { viewModel.clearAiSuggestions() }
+        )
+    }
+
+    // AI提案結果ダイアログ（あおいろ）。承認するとグループの科目・摘要を保存し、グループ内の個別変更は外れる
+    aoiroAiSuggestions?.let { suggestions ->
+        AiMatchingDialog(
+            rows = suggestions.mapIndexed { i, s ->
+                AiSuggestionRow(
+                    productId = i.toLong(),
+                    productName = s.itemName,
+                    key = s,
+                    label = s.accountName,
+                    reason = s.reason
+                )
+            },
+            usageStats = aiUsageStats,
+            title = "AI 科目提案（あおいろ）",
+            emptyMessage = "未マッチの品目に対する提案が見つかりませんでした。",
+            onDismiss = { viewModel.clearAiSuggestions() },
+            onSave = { accepted -> viewModel.applyAoiroSuggestions(accepted.values.toList()) }
         )
     }
 

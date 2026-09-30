@@ -21,12 +21,6 @@ object AoiroChoboReceiptRules {
     fun memoCandidates(accountKey: String, memos: List<AoiroChoboMemoTemplate>): List<AoiroChoboMemoTemplate> =
         memos.filter { MemoTab.CASH_OUT.contains(it) && it.counterAccountKey == accountKey }.sortedBy { it.displayOrder }
 
-    /** 考え方は [AoiroChoboPurchaseRules.preselectedMemo] と同じ */
-    fun preselectedMemo(accountKey: String, memos: List<AoiroChoboMemoTemplate>): AoiroChoboMemoTemplate? {
-        val only = memoCandidates(accountKey, memos).singleOrNull() ?: return null
-        return only.takeUnless { it.memoKey in AoiroChoboMemoRules.ratioSensitiveMemoKeys(memos) }
-    }
-
     /** 契約 §4.5 が支払方法（貸方）の候補に挙げる科目：現金・未払金・事業主借 */
     private val PAYMENT_KEYS = listOf("genkin", "mibarai", "zigyounusikari")
 

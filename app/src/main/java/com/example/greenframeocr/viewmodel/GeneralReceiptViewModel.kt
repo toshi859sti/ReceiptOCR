@@ -20,7 +20,9 @@ import com.example.greenframeocr.data.ReceiptDatabase
 import com.example.greenframeocr.data.ReceiptItemPreview
 import com.example.greenframeocr.data.ReceiptPaymentMethodRule
 import com.example.greenframeocr.data.YayoiAccount
+import com.example.greenframeocr.util.AoiroChoboReceiptRules
 import com.example.greenframeocr.util.AoiroChoboTransactionsBuilder
+import com.example.greenframeocr.util.AoiroChoboUsageRules
 import com.example.greenframeocr.util.CsvUtils
 import com.example.greenframeocr.util.GeminiApiException
 import com.example.greenframeocr.util.GeminiApiKeyMissingException
@@ -125,6 +127,18 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     )
     private val _aiSuggestions = MutableStateFlow<List<AiSuggestion>>(emptyList())
     val aiSuggestions: StateFlow<List<AiSuggestion>> = _aiSuggestions
+
+    /** あおいろの AI 提案 1 件。AI が決めるのは科目だけで、摘要は空欄にして農家が選ぶ（空欄のままでもよい） */
+    data class AoiroAiSuggestion(
+        val canonicalKey: String,
+        val itemName: String,
+        val accountKey: String,
+        val accountName: String,
+        val reason: String
+    )
+    /** null = 提案ダイアログを出さない。空リスト = 提案なし */
+    private val _aoiroAiSuggestions = MutableStateFlow<List<AoiroAiSuggestion>?>(null)
+    val aoiroAiSuggestions: StateFlow<List<AoiroAiSuggestion>?> = _aoiroAiSuggestions
 
     private val _aiUsageStats = MutableStateFlow<GeminiReceiptClient.AiUsageStats?>(null)
     val aiUsageStats: StateFlow<GeminiReceiptClient.AiUsageStats?> = _aiUsageStats
@@ -507,7 +521,74 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
+    /**
+     * 未マッチの品目グループに、あおいろの科目を AI に提案させる（弥生版 [suggestAccountsForItems] のあおいろ版）。
+     * 弥生版と違って既に科目のあるグループは送らない（JA 購買・預金のあおいろ版と同じ。承認すると個別変更が消えるため）
+     */
+    fun suggestAoiroAccountsForItems(groups: List<GeneralItemGroup>, vocab: AoiroVocab) {
+        val unmatched = groups.filter { it.accountKey == null }.take(60)
+        if (unmatched.isEmpty()) {
+            _aiError.value = "未マッチの品目がありません"
+            return
+        }
+        val accounts = AoiroChoboUsageRules.candidates(AoiroChoboUsageRules.Usage.RECEIPT, vocab.accounts, vocab.usage)
+        if (accounts.isEmpty()) {
+            _aiError.value = "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください"
+            return
+        }
+        val memoNames = accounts.associate { a ->
+            a.accountKey to AoiroChoboReceiptRules.memoCandidates(a.accountKey, vocab.memos).map { it.name }
+        }
+        viewModelScope.launch {
+            _isAiMatching.value = true
+            _aiError.value = null
+            try {
+                val result = GeminiReceiptClient.matchReceiptItemsToAoiroAccounts(
+                    itemNames = unmatched.map { it.itemName },
+                    accounts = accounts,
+                    memoNamesByAccount = memoNames,
+                    apiKey = prefs.geminiApiKey
+                )
+                val byKey = vocab.accounts.associateBy { it.accountKey }
+                _aoiroAiSuggestions.value = result.matches.mapNotNull { m ->
+                    val group = unmatched.getOrNull(m.itemIndex) ?: return@mapNotNull null
+                    val account = byKey[m.accountKey] ?: return@mapNotNull null
+                    AoiroAiSuggestion(
+                        canonicalKey = group.canonicalKey,
+                        itemName = group.itemName,
+                        accountKey = account.accountKey,
+                        accountName = account.name,
+                        reason = m.reason
+                    )
+                }
+                _aiUsageStats.value = result.usageStats
+                result.usageStats?.let { prefs.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
+            } catch (e: GeminiApiKeyMissingException) {
+                _aiError.value = e.message
+            } catch (e: GeminiQuotaExhaustedException) {
+                _aiError.value = e.message
+            } catch (e: GeminiRateLimitException) {
+                _aiError.value = e.message
+            } catch (e: GeminiApiException) {
+                _aiError.value = e.message
+            } catch (e: Exception) {
+                _aiError.value = "エラー: ${e.message}"
+            } finally {
+                _isAiMatching.value = false
+            }
+        }
+    }
+
+    /** 承認したあおいろの提案を品目グループに保存する（手で設定したときと同じく、グループ内の個別変更は外れる） */
+    fun applyAoiroSuggestions(accepted: List<AoiroAiSuggestion>) {
+        accepted.forEach { s ->
+            updateGroupAoiro(s.canonicalKey, s.accountKey, s.accountName, null, null)
+        }
+        clearAiSuggestions()
+    }
+
     fun clearAiSuggestions() {
+        _aoiroAiSuggestions.value = null
         _aiSuggestions.value = emptyList()
         _aiUsageStats.value = null
         _aiError.value = null

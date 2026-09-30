@@ -742,20 +742,19 @@ fun ProductListScreen(
         )
     }
 
-    // AI提案ダイアログ（あおいろ）。承認した科目に、自動で埋めてよい摘要があれば一緒に保存する
+    // AI提案ダイアログ（あおいろ）。AI が決めるのは科目だけ。摘要は空欄にして農家が選ぶ（空欄のままでもよい）
     if (showAiMatchingDialog && accountingSoftware == AccountingSoftware.AOIRO) {
-        val rows = remember(aoiroSuggestions, allProducts, aoiroAccounts, aoiroMemos) {
+        val rows = remember(aoiroSuggestions, allProducts, aoiroAccounts) {
             val productByName = allProducts.associateBy { it.canonicalName }
             val accountByKey = aoiroAccounts.associateBy { it.accountKey }
             aoiroSuggestions.mapNotNull { s ->
                 val product = productByName[s.productName] ?: return@mapNotNull null
                 val account = accountByKey[s.accountKey] ?: return@mapNotNull null
-                val memo = AoiroChoboPurchaseRules.preselectedMemo(account.accountKey, aoiroMemos)
                 AiSuggestionRow(
                     productId = product.id,
                     productName = product.canonicalName,
                     key = account.accountKey,
-                    label = memo?.let { "${account.name} ／ ${it.name}" } ?: account.name,
+                    label = account.name,
                     reason = s.reason
                 )
             }
@@ -769,13 +768,12 @@ fun ProductListScreen(
                     acceptedMap.forEach { (productId, accountKey) ->
                         val product = allProducts.find { it.id == productId } ?: return@forEach
                         val account = aoiroAccounts.find { it.accountKey == accountKey } ?: return@forEach
-                        val memo = AoiroChoboPurchaseRules.preselectedMemo(accountKey, aoiroMemos)
                         database.productMasterDao().update(
                             product.copy(
                                 accountKey = accountKey,
                                 accountKeyName = account.name,
-                                memoKey = memo?.memoKey,
-                                memoKeyName = memo?.name
+                                memoKey = null,
+                                memoKeyName = null
                             )
                         )
                     }
@@ -822,183 +820,6 @@ fun ProductListScreen(
     }
 }
 
-/**
- * AI 提案 1 件。[key] は保存に使う科目の識別子（弥生は科目 id、あおいろは accountKey）、
- * [label] は「→」の右に出す科目の表示
- */
-private data class AiSuggestionRow<K>(
-    val productId: Long,
-    val productName: String,
-    val key: K,
-    val label: String,
-    val reason: String
-)
-
-/**
- * AI提案確認ダイアログ（弥生・あおいろ共通）
- * onSave: Map<productId, key> — 承認した提案のみ保存
- */
-@Composable
-private fun <K> AiMatchingDialog(
-    rows: List<AiSuggestionRow<K>>,
-    usageStats: GeminiReceiptClient.AiUsageStats?,
-    onDismiss: () -> Unit,
-    onSave: (Map<Long, K>) -> Unit
-) {
-    // 提案ごとに「承認するか」のチェック状態を管理
-    data class SuggestionState(
-        val row: AiSuggestionRow<K>,
-        val accepted: Boolean = true
-    ) {
-        val productName get() = row.productName
-        val reason get() = row.reason
-    }
-
-    val states = remember(rows) {
-        rows.map { androidx.compose.runtime.mutableStateOf(SuggestionState(it)) }
-    }
-
-    val acceptedCount = states.count { it.value.accepted }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Column {
-                Text("AI 科目提案", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                if (states.isEmpty()) {
-                    Text("提案なし", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "${states.size}件の提案（${acceptedCount}件承認中）",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton(
-                                onClick = { states.forEach { it.value = it.value.copy(accepted = true) } },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) { Text("全承認", fontSize = 12.sp) }
-                            TextButton(
-                                onClick = { states.forEach { it.value = it.value.copy(accepted = false) } },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) { Text("全解除", fontSize = 12.sp) }
-                        }
-                    }
-                }
-            }
-        },
-        text = {
-            if (states.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "未マッチング品目に対する提案が見つかりませんでした。\n勘定科目リストを見直してください。",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 440.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(states.size) { idx ->
-                        val state by states[idx]
-                        Surface(
-                            color = if (state.accepted)
-                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                            else
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                            shape = MaterialTheme.shapes.small
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { states[idx].value = state.copy(accepted = !state.accepted) }
-                                    .padding(horizontal = 8.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Checkbox(
-                                    checked = state.accepted,
-                                    onCheckedChange = { states[idx].value = state.copy(accepted = it) },
-                                    modifier = Modifier.size(20.dp).padding(top = 2.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        state.productName,
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 13.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Text(
-                                            "→",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Text(
-                                            state.row.label,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                    if (state.reason.isNotEmpty()) {
-                                        Text(
-                                            state.reason,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Column(horizontalAlignment = Alignment.End) {
-                if (usageStats != null) {
-                    Text(
-                        text = usageStats.toDisplayString(),
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                }
-                Row {
-                    TextButton(onClick = onDismiss) { Text("キャンセル") }
-                    TextButton(
-                        onClick = {
-                            val accepted = states
-                                .filter { it.value.accepted }
-                                .associate { it.value.row.productId to it.value.row.key }
-                            onSave(accepted)
-                        },
-                        enabled = acceptedCount > 0
-                    ) { Text("${acceptedCount}件を保存") }
-                }
-            }
-        },
-        dismissButton = null
-    )
-}
 
 /**
  * あおいろモードの一覧に出す「科目 ／ 摘要」。科目が無ければ null（＝未設定として赤で出る）。
@@ -1233,11 +1054,11 @@ private fun ProductEditDialog(
                 // 弥生勘定科目 / あおいろ
                 when (accountingSoftware) {
                     AccountingSoftware.AOIRO -> {
-                        AoiroAccountAndMemoFields(
+                        AoiroMemoAndAccountFields(
                             accounts = aoiroAccounts,
                             memos = aoiroMemos,
-                            memoCandidates = { AoiroChoboPurchaseRules.memoCandidates(it, aoiroMemos) },
-                            memoTabLabel = "買掛/仕入",
+                            memoCandidates = { AoiroLinkKind.purchase.memoCandidates(it, aoiroMemos) },
+                            memoTabLabel = AoiroLinkKind.purchase.memoTabLabel,
                             accountKey = selectedAccountKey,
                             memoKey = selectedMemoKey,
                             fallbackAccountName = product?.accountKeyName,
@@ -1342,18 +1163,21 @@ private fun ProductEditDialog(
         )
     }
 
-    // あおいろ科目の選択。選び直したら摘要は作り直す（摘要は科目に属する）
+    // あおいろ科目の選択。選び直したら、その科目に属さない摘要は外す（摘要を勝手に埋めはしない）
     if (showAoiroAccountPicker) {
         AoiroAccountPickerDialog(
             subject = name,
             accounts = AoiroChoboUsageRules.candidates(AoiroChoboUsageRules.Usage.PURCHASE, aoiroAccounts, aoiroUsage),
-            allAccounts = AoiroChoboPurchaseRules.accountCandidates(aoiroAccounts),
-            memoCandidates = { AoiroChoboPurchaseRules.memoCandidates(it, aoiroMemos) },
+            allAccounts = AoiroLinkKind.purchase.allAccounts(aoiroAccounts),
+            memoCandidates = { AoiroLinkKind.purchase.memoCandidates(it, aoiroMemos) },
             selectedKey = selectedAccountKey,
             onSelect = { key ->
                 if (key != selectedAccountKey) {
                     selectedAccountKey = key
-                    selectedMemoKey = AoiroChoboPurchaseRules.preselectedMemo(key, aoiroMemos)?.memoKey
+                    val memo = selectedMemoKey
+                    if (memo != null && AoiroLinkKind.purchase.memoCandidates(key, aoiroMemos).none { it.memoKey == memo }) {
+                        selectedMemoKey = null
+                    }
                 }
                 showAoiroAccountPicker = false
             },
@@ -1361,14 +1185,18 @@ private fun ProductEditDialog(
         )
     }
 
-    if (showAoiroMemoPicker && selectedAccountKey != null) {
+    // あおいろ摘要の選択。摘要を選んだら科目はその摘要の相手科目にする
+    if (showAoiroMemoPicker) {
         AoiroMemoPickerDialog(
             subject = name,
-            memos = AoiroChoboPurchaseRules.memoCandidates(selectedAccountKey!!, aoiroMemos),
+            tabMemos = remember(aoiroAccounts, aoiroMemos) { AoiroLinkKind.purchase.tabMemos(aoiroAccounts, aoiroMemos) },
+            accounts = aoiroAccounts,
+            currentAccountKey = selectedAccountKey,
             ratioSensitive = remember(aoiroMemos) { AoiroChoboMemoRules.ratioSensitiveMemoKeys(aoiroMemos) },
             selectedKey = selectedMemoKey,
-            onSelect = { key ->
-                selectedMemoKey = key
+            onSelect = { memo ->
+                selectedMemoKey = memo?.memoKey
+                memo?.counterAccountKey?.let { selectedAccountKey = it }
                 showAoiroMemoPicker = false
             },
             onDismiss = { showAoiroMemoPicker = false }

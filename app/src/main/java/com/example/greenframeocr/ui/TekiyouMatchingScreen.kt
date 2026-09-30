@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.*
 import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AppPreferences
+import com.example.greenframeocr.util.AoiroChoboDepositRules
+import com.example.greenframeocr.util.AoiroChoboUsageRules
 import com.example.greenframeocr.util.GeminiApiException
 import com.example.greenframeocr.util.RomajiSearch
 import com.example.greenframeocr.util.GeminiApiKeyMissingException
@@ -87,6 +89,8 @@ fun TekiyouMatchingScreen(
     var showAiTekiyouDialog by remember { mutableStateOf(false) }
     var aiTekiyouSuggestions by remember { mutableStateOf<List<GeminiReceiptClient.TekiyouMatchSuggestion>>(emptyList()) }
     var aiTekiyouUsageStats by remember { mutableStateOf<GeminiReceiptClient.AiUsageStats?>(null) }
+    // あおいろの AI 提案。null = ダイアログを出さない、空 = 提案なし
+    var aoiroAiSuggestions by remember { mutableStateOf<List<AiSuggestionRow<AoiroLinkSelection>>?>(null) }
     var isAiMatching by remember { mutableStateOf(false) }
     var aiMatchingError by remember { mutableStateOf<String?>(null) }
 
@@ -164,6 +168,64 @@ fun TekiyouMatchingScreen(
     LaunchedEffect(Unit) {
         updateRulesFromMeisai(database)
         loadData()
+    }
+
+    // AI科目提案（あおいろ）。未マッチの摘要パターンに相手科目を提案させ、承認したものだけ保存する
+    fun startAoiroAiMatching() {
+        val unmatched = matchingRules.filter { it.accountKey == null }.take(60)
+        if (unmatched.isEmpty()) {
+            aiMatchingError = "未マッチングの摘要がありません"
+            return
+        }
+        val accounts = AoiroChoboUsageRules.candidates(AoiroChoboUsageRules.Usage.DEPOSIT, aoiroAccounts, aoiroUsage)
+        if (accounts.isEmpty()) {
+            aiMatchingError = "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください"
+            return
+        }
+        // 摘要名は入金・出金の両方を渡す（パターンごとに向きが違うため）
+        val memoNames = accounts.associate { a ->
+            a.accountKey to (AoiroChoboDepositRules.memoCandidates(a.accountKey, true, aoiroMemos) +
+                AoiroChoboDepositRules.memoCandidates(a.accountKey, false, aoiroMemos)).map { it.name }.distinct()
+        }
+        isAiMatching = true
+        aiMatchingError = null
+        scope.launch {
+            try {
+                val result = GeminiReceiptClient.matchTekiyouToAoiroAccounts(
+                    tekiyou = unmatched.map { Triple(it.normalizedTekiyou, it.isDeposit, it.matchCount) },
+                    accounts = accounts,
+                    memoNamesByAccount = memoNames,
+                    apiKey = appPreferences.geminiApiKey
+                )
+                val byKey = aoiroAccounts.associateBy { it.accountKey }
+                aoiroAiSuggestions = result.matches.mapNotNull { m ->
+                    val rule = unmatched.getOrNull(m.itemIndex) ?: return@mapNotNull null
+                    val account = byKey[m.accountKey] ?: return@mapNotNull null
+                    // AI が決めるのは相手科目だけ。摘要は空欄にして農家が選ぶ（空欄のままでもよい）
+                    AiSuggestionRow(
+                        productId = rule.id.toLong(),
+                        productName = "${rule.normalizedTekiyou}（${if (rule.isDeposit) "入金" else "出金"}）",
+                        key = AoiroLinkSelection(account.accountKey, account.name, null, null),
+                        label = account.name,
+                        reason = m.reason
+                    )
+                }
+                aiTekiyouUsageStats = result.usageStats
+                result.usageStats?.let { appPreferences.addTokenUsage(it.promptTokens, it.candidatesTokens, it.totalTokens) }
+            } catch (e: GeminiApiKeyMissingException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiQuotaExhaustedException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiRateLimitException) {
+                aiMatchingError = e.message
+            } catch (e: GeminiApiException) {
+                aiMatchingError = e.message
+            } catch (e: Exception) {
+                aiMatchingError = "エラー: ${e.message}"
+            } finally {
+                isAiMatching = false
+            }
+        }
     }
 
     // AI科目提案
@@ -279,7 +341,15 @@ fun TekiyouMatchingScreen(
                 }
             }
 
-            // AI科目提案ボタン（弥生モードのみ、常時表示で見落としを防ぐ）
+            // AI科目提案ボタン（常時表示で見落としを防ぐ）
+            if (accountingSoftware == AccountingSoftware.AOIRO) {
+                val unmatchedForAi = matchingRules.count { it.accountKey == null }
+                AiSuggestButton(
+                    label = if (unmatchedForAi > 0) "未マッチ${unmatchedForAi}件をAIで一括提案" else "AI科目提案",
+                    isLoading = isAiMatching,
+                    onClick = { startAoiroAiMatching() }
+                )
+            }
             if (accountingSoftware == AccountingSoftware.YAYOI) {
                 val unmatchedForAi = matchingRules.count { it.yayoiAccountId == null }
                 AiSuggestButton(
@@ -504,6 +574,37 @@ fun TekiyouMatchingScreen(
             title = { Text("AI提案エラー") },
             text = { Text(aiMatchingError ?: "") },
             confirmButton = { TextButton(onClick = { aiMatchingError = null }) { Text("OK") } }
+        )
+    }
+
+    // AI摘要マッチングダイアログ（あおいろ）。保存は手で相手科目を設定したときと同じ（グループの個別変更は外れる）
+    aoiroAiSuggestions?.let { rows ->
+        AiMatchingDialog(
+            rows = rows,
+            usageStats = aiTekiyouUsageStats,
+            title = "AI 科目提案（通帳摘要・あおいろ）",
+            emptyMessage = "未マッチング摘要に対する提案が見つかりませんでした。",
+            onDismiss = { aoiroAiSuggestions = null },
+            onSave = { accepted ->
+                scope.launch {
+                    accepted.forEach { (ruleId, s) ->
+                        val id = ruleId.toInt()
+                        database.depositMeisaiDao().clearAoiroOverridesForRule(id)
+                        database.tekiyouMatchingRuleDao().getById(id)?.let {
+                            database.tekiyouMatchingRuleDao().update(
+                                it.copy(
+                                    accountKey = s.accountKey,
+                                    accountKeyName = s.accountKeyName,
+                                    memoKey = s.memoKey,
+                                    memoKeyName = s.memoKeyName
+                                )
+                            )
+                        }
+                    }
+                    loadData()
+                }
+                aoiroAiSuggestions = null
+            }
         )
     }
 

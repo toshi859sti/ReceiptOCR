@@ -325,8 +325,10 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
 6. 未マッチの摘要はまとめて Gemini に科目を提案させられる（「AIで一括提案」）
 
 あおいろモードでは 3〜5 の列が `accountKey`/`memoKey`（ルール）・`overrideAccountKey`/`overrideMemoKey`（明細）になり、
-`AoiroDepositLinkDialog` で相手科目 → 摘要の順に選ぶ（候補は `util/AoiroChoboDepositRules.kt`）。
-グループを保存し直すと明細のあおいろ上書きもリセットされる（`clearAoiroOverridesForRule()`）。AI 提案は弥生モードだけ。
+`AoiroLinkDialog` で摘要（上）・相手科目（下）を選ぶ。摘要を選ぶと相手科目はその摘要の相手科目になる（候補は `util/AoiroChoboDepositRules.kt`）。
+グループを保存し直すと明細のあおいろ上書きもリセットされる（`clearAoiroOverridesForRule()`）。AI 提案はあおいろモードにもある
+（`GeminiReceiptClient.matchTekiyouToAoiroAccounts`。未マッチのパターンだけを送り、行も科目も通し番号で答えさせて手元で `accountKey` に戻す。
+AI が決めるのは科目だけで、摘要は空欄にする。レシートの品目グループ・JA 購買の商品も同じ：`matchReceiptItemsToAoiroAccounts`）。
 
 ---
 
