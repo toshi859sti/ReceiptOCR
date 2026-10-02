@@ -6,6 +6,23 @@
 
 ---
 
+## schemaVersion 2 — 2026-10-02 minor（11）（税率の決め方に摘要を入れる）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の意見（2026-10-02・回答
+[REPLY-pc-2026-10-02.md](REPLY-pc-2026-10-02.md) に引用）への対応。
+
+- **経費・収入の側の `taxRate` の決め方を「税率マーク → 摘要の `taxRate` → 科目の `defaultTaxCategory` → `null`」にした**
+  （[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7・§4.5、[matching-rules.md](matching-rules.md) §1・§4、README §0-9・決定表 L）。
+  以前は摘要を飛ばしていたが、`defaultTaxCategory` は 8% と 10% を分けられない。経費の税率は簡易課税なので税額に効かない。
+- 税率マークは将来の枠。**今は読まなくてよい**。
+- 収入科目は今までどおり科目の既定を使わない（摘要 0 件なら `null`）。
+- PC の実装は変わらない（送られた `taxRate` をそのまま仕訳に入れる）。
+- PC の 9/30 回答 §5・10/01 回答 §4・§7 の「摘要の `taxRate` は見なくてよい」は取り消し。
+
+スマホ側への影響：無し。今の送り方（摘要の `taxRate`）が契約どおりになった。
+
+---
+
 ## schemaVersion 2 — 2026-10-01 minor（10）（摘要の「レシート共通」を足す）
 
 `schemaVersion` は据え置き（**2 のまま**）。`memoTemplates[]` にフィールドを 1 つ足す（前方互換）。スマホ側の依頼

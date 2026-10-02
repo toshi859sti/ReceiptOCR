@@ -81,8 +81,8 @@
    摘要名（`name`）は参照キーにしない（同名が存在し得る・改名され得る）。`memoName` は任意のエコー。
    スマホが文字列を生成しない。逆引き 0 件は `null`＋`UnmatchedMemo`。OCR の生テキスト（商品名・
    但し書き・通帳メモ）は `note`（メモ欄）に入れる。決定表 N・[transaction-import.md](transaction-import.md)。
-9. **税率・事業割合・インボイスは商品名から予測しない**。税率＝科目の `defaultTaxCategory` フォールバック
-   （レシートの税率マークがあればそちら）、事業割合＝常に `100` で出す（PC は解決できた `memoKey` の
+9. **税率・事業割合・インボイスは商品名から予測しない**。税率＝レシートの税率マーク → 摘要の `taxRate` →
+   科目の `defaultTaxCategory`（経費科目だけ）の順、事業割合＝常に `100` で出す（PC は解決できた `memoKey` の
    摘要の事業割合で置き換える）、インボイス＝レシート
    現物の登録番号 `T\d{13}` の有無。決定表 L・[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7。
 
@@ -228,7 +228,7 @@ AoiroChobo 側のコード（`debit.taxRate` / `credit.taxRate` に入れる値�
 | F | 個別上書き・除外・集計行 | スマホ側で適用済みにする（上書き反映・`isExcluded` 除外・小計/合計行を出さない） | §1 責務 5 |
 | G | 返品・マイナス金額 | 金額は常に正。返品は借方／貸方を入れ替えて出す（例：Dr 買掛金 / Cr 経費科目）。`meta.isReturn = true` | §3 |
 | H | 文字コード・バージョン | JSON・UTF-8 (BOM なし)・LF。`schemaVersion` 必須 | 全体 |
-| L | 科目以外の項目の出所 | 商品名から予測できるのは科目だけ。税率＝科目の `defaultTaxCategory` フォールバック／事業割合＝スマホは触らず `100` 固定（PC は `memoKey` の摘要の値を採る）／インボイス＝レシート現物の `T\d{13}` 検出／摘要＝自由文字列。`memoTemplates` 逆引きはラベル候補出し専用に格下げ | [vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7 |
+| L | 科目以外の項目の出所 | 商品名から予測できるのは科目だけ。税率＝税率マーク → 摘要の `taxRate` → 科目の `defaultTaxCategory`（2026-10-02 minor（11））／事業割合＝スマホは触らず `100` 固定（PC は `memoKey` の摘要の値を採る）／インボイス＝レシート現物の `T\d{13}` 検出／摘要＝自由文字列。`memoTemplates` 逆引きはラベル候補出し専用に格下げ | [vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7 |
 | M | 通帳・JA伝票のマッチング | LLM でなくルールエンジン（決定論・オフライン・課金なし）。ルールは「確定例 → 再コンパイル」で自動生成。手書きは opt-in。LLM は未ヒット行の初回サジェスト専用の任意プラグイン | [matching-rules.md](matching-rules.md) |
 | N | 摘要は閉じた語彙 | `memoKey` は `vocabulary.memoTemplates[].memoKey` か `null` の二択。スマホは文字列を作らない。逆引き 0 件は `null`＋`UnmatchedMemo` → PC で辞書から選択 or 新規登録。生テキスト（商品名・但し書き・通帳メモ）は `note`（メモ欄・自由文字）へ | [transaction-import.md](transaction-import.md) §「摘要は閉じた語彙」 |
 | O | 未解決行の受け皿 | PC は取込ステージングテーブル `ImportedTransaction` に全行を保存し、確定した行だけ `JournalEntry` 化する（`JournalEntry` の科目列は非 NULL FK なので未解決行を直接保存できない）。「要確認」の状態はこのテーブルが保持 | [transaction-import.md](transaction-import.md) §10 |
