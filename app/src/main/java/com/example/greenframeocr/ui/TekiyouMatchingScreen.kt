@@ -58,7 +58,10 @@ fun TekiyouMatchingScreen(
     var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
 
     // State
-    var matchingRules by remember { mutableStateOf<List<MatchingRuleWithTekiyou>>(emptyList()) }
+    // 摘要パターン（摘要 → 科目）は全年で 1 つ。画面は選んだ年に明細があるパターンだけを、その年の件数で出す
+    var allRules by remember { mutableStateOf<List<MatchingRuleWithTekiyou>>(emptyList()) }
+    // 年 → パターン → その年の明細数（パターン＝正規化した摘要＋入金 _D／出金 _W）
+    var patternCountsByYear by remember { mutableStateOf<Map<String, Map<String, Int>>>(emptyMap()) }
     var isLoading by remember { mutableStateOf(true) }
     var showEditDialog by remember { mutableStateOf(false) }
     var selectedRule by remember { mutableStateOf<MatchingRuleWithTekiyou?>(null) }
@@ -95,6 +98,29 @@ fun TekiyouMatchingScreen(
     var aiMatchingError by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
+
+    // 年の絞り込み（null = 全年）。初期値は通帳データ画面と同じく作業年、その年が無ければ最新の年。
+    // 「作業年で固定」が ON の間は作業年から動かさない
+    val workingCalendarYear = remember { appPreferences.workingCalendarYear.toString() }
+    val lockYearToWorking = remember { appPreferences.lockYearToWorking }
+    val availableYears = remember(patternCountsByYear) { patternCountsByYear.keys.sortedDescending() }
+    var selectedYear by remember(availableYears) {
+        mutableStateOf(
+            when {
+                lockYearToWorking -> workingCalendarYear
+                availableYears.contains(workingCalendarYear) -> workingCalendarYear
+                else -> availableYears.firstOrNull()
+            }
+        )
+    }
+    // 年を選んでいるときは、その年に明細があるパターンだけ（件数はその年の分）。全年なら明細の無いパターンも出す
+    val matchingRules = remember(allRules, patternCountsByYear, selectedYear) {
+        val year = selectedYear
+        if (year == null) allRules else {
+            val counts = patternCountsByYear[year].orEmpty()
+            allRules.mapNotNull { rule -> counts[rule.pattern]?.let { rule.copy(matchCount = it) } }
+        }
+    }
 
     fun isRuleMatched(rule: MatchingRuleWithTekiyou) = isRuleMatchedFor(rule, accountingSoftware)
 
@@ -141,7 +167,7 @@ fun TekiyouMatchingScreen(
     fun loadData() {
         scope.launch {
             isLoading = true
-            matchingRules = database.tekiyouMatchingRuleDao().getAllWithTekiyou()
+            allRules = database.tekiyouMatchingRuleDao().getAllWithTekiyou()
             val allYayoi = database.yayoiAccountDao().getAll().filter { it.isEnabled }
             yayoiAccountList = allYayoi
             if (isAoiro) {
@@ -150,11 +176,16 @@ fun TekiyouMatchingScreen(
                 aoiroUsage = database.aoiroChoboAccountUsageDao().getAll()
             }
             val allMeisai = database.depositMeisaiDao().getAll()
-            activePatterns = allMeisai.map { meisai ->
+            fun patternOf(meisai: DepositMeisai): String {
                 val normalized = normalizeTekiyou(meisai.tekiyou)
                 val suffix = if (meisai.amount >= 0) "_D" else "_W"
-                normalized + suffix
-            }.toSet()
+                return normalized + suffix
+            }
+            activePatterns = allMeisai.map(::patternOf).toSet()
+            patternCountsByYear = allMeisai
+                .filter { Regex("\\d{4}").matches(it.transactionDate.take(4)) }
+                .groupBy { it.transactionDate.take(4) }
+                .mapValues { (_, list) -> list.groupingBy(::patternOf).eachCount() }
             // 展開中のグループのアイテムを再読み込み
             val updated = mutableMapOf<Int, List<DepositMeisaiWithOverride>>()
             for (ruleId in expandedRuleIds) {
@@ -301,6 +332,17 @@ fun TekiyouMatchingScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            // 年の絞り込み。摘要パターンの設定は全年で共通なので、変えるとほかの年の同じ摘要にも効く
+            if (availableYears.isNotEmpty()) {
+                YearFilterRow(
+                    years = availableYears,
+                    selectedYear = selectedYear,
+                    locked = lockYearToWorking,
+                    onSelect = { selectedYear = it },
+                    note = "相手科目・摘要の設定は、ほかの年の同じ摘要にも使われます"
+                )
+            }
+
             // 統計情報
             Card(
                 modifier = Modifier
@@ -486,7 +528,10 @@ fun TekiyouMatchingScreen(
                                 selectedRule = rule
                                 showEditDialog = true
                             },
-                            meisaiItems = meisaiByRuleId[rule.id],
+                            // 年で絞っているときはその年の明細だけ
+                            meisaiItems = meisaiByRuleId[rule.id]?.let { list ->
+                                selectedYear?.let { y -> list.filter { it.transactionDate.startsWith(y) } } ?: list
+                            },
                             onEditIndividual = { meisai ->
                                 selectedMeisai = meisai
                                 selectedMeisaiGroupYayoiAccountName = if (isAoiro)

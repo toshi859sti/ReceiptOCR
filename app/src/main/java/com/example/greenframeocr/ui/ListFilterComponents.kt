@@ -16,6 +16,10 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -205,6 +209,63 @@ fun AiSuggestButton(
             Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text(label, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+/**
+ * 年の絞り込み（[selectedYear] が null なら全年）。[locked]（設定の「作業年で固定」）の間は変えられない。
+ * [note] は横に添える説明（設定は全年で共通、など）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun YearFilterRow(
+    years: List<String>,
+    selectedYear: String?,
+    locked: Boolean,
+    onSelect: (String?) -> Unit,
+    note: String? = null
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ExposedDropdownMenuBox(
+            expanded = expanded && !locked,
+            onExpandedChange = { if (!locked) expanded = it },
+            modifier = Modifier.width(148.dp)
+        ) {
+            OutlinedTextField(
+                value = selectedYear?.let { "${it}年" } ?: "全年",
+                onValueChange = {},
+                readOnly = true,
+                enabled = !locked,
+                label = { Text(if (locked) "年（作業年で固定）" else "年", fontSize = 11.sp) },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && !locked) },
+                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                singleLine = true,
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+            )
+            ExposedDropdownMenu(expanded = expanded && !locked, onDismissRequest = { expanded = false }) {
+                (listOf<String?>(null) + years).forEach { year ->
+                    DropdownMenuItem(
+                        text = { Text(year?.let { "${it}年" } ?: "全年") },
+                        onClick = { onSelect(year); expanded = false }
+                    )
+                }
+            }
+        }
+        if (note != null) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                note,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }

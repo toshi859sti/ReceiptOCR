@@ -196,7 +196,8 @@ fun GeneralItemMatchingScreen(
                     years = availableYears,
                     selectedYear = selectedYear,
                     locked = lockYearToWorking,
-                    onSelect = { selectedYear = it }
+                    onSelect = { selectedYear = it },
+                    note = "科目・摘要の設定は、ほかの年の同じ品名にも使われます"
                 )
             }
 
@@ -782,60 +783,6 @@ private fun NumericPrefixCleanupDialog(
 }
 
 // ─── 共通コンポーネント ──────────────────────────────────────────────────────
-
-/**
- * 年の絞り込み（[selectedYear] が null なら全年）。[locked]（設定の「作業年で固定」）の間は変えられない。
- * 横に「設定はほかの年の同じ品名にも使われる」ことを添える
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun YearFilterRow(
-    years: List<String>,
-    selectedYear: String?,
-    locked: Boolean,
-    onSelect: (String?) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        ExposedDropdownMenuBox(
-            expanded = expanded && !locked,
-            onExpandedChange = { if (!locked) expanded = it },
-            modifier = Modifier.width(148.dp)
-        ) {
-            OutlinedTextField(
-                value = selectedYear?.let { "${it}年" } ?: "全年",
-                onValueChange = {},
-                readOnly = true,
-                enabled = !locked,
-                label = { Text(if (locked) "年（作業年で固定）" else "年", fontSize = 11.sp) },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && !locked) },
-                modifier = Modifier.menuAnchor().fillMaxWidth(),
-                singleLine = true,
-                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
-            )
-            ExposedDropdownMenu(expanded = expanded && !locked, onDismissRequest = { expanded = false }) {
-                (listOf<String?>(null) + years).forEach { year ->
-                    DropdownMenuItem(
-                        text = { Text(year?.let { "${it}年" } ?: "全年") },
-                        onClick = { onSelect(year); expanded = false }
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "科目・摘要の設定は、ほかの年の同じ品名にも使われます",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
-        )
-    }
-}
 
 @Composable
 private fun StatColumn(label: String, value: String, valueColor: Color = Color.Unspecified) {
