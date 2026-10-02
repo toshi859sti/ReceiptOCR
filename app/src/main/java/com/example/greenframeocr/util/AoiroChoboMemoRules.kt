@@ -40,23 +40,4 @@ object AoiroChoboMemoRules {
 
         fun contains(memo: AoiroChoboMemoTemplate): Boolean = match(memo)
     }
-
-    /**
-     * 自動で選んではいけない摘要の memoKey。
-     *
-     * PC は memoKey が解決できたら**摘要側の businessRatio を仕訳に入れる**（REPLY-pc-2026-09-23b.md §1・答えB）。
-     * 相手科目・税率が同じで事業割合だけ違う摘要（電気料金 40% ／ 電気料金（事業専用）100%）を
-     * 取り違えると帳簿の金額が変わるので、そういう組に属する摘要はユーザーに確定させる。
-     *
-     * 判定：同じ `ledgerType × direction × counterAccountKey × taxRate` の中で businessRatio が
-     * 1つでも違えば、その組の全員が対象。振替（相手科目を持たない）は対象外。
-     */
-    fun ratioSensitiveMemoKeys(memos: List<AoiroChoboMemoTemplate>): Set<String> =
-        memos.asSequence()
-            .filter { it.ledgerType != "Transfer" }
-            .groupBy { listOf(it.ledgerType, it.direction, it.counterAccountKey, it.taxRate) }
-            .values
-            .filter { group -> group.map { it.businessRatio }.distinct().size > 1 }
-            .flatMap { group -> group.map { it.memoKey } }
-            .toSet()
 }

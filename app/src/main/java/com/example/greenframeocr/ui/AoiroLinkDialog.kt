@@ -232,7 +232,6 @@ fun AoiroLinkDialog(
             tabMemos = remember(accounts, memos) { kind.tabMemos(accounts, memos) },
             accounts = accounts,
             currentAccountKey = accountKey,
-            ratioSensitive = remember(memos) { AoiroChoboMemoRules.ratioSensitiveMemoKeys(memos) },
             selectedKey = memoKey,
             onSelect = { memo ->
                 memoKey = memo?.memoKey

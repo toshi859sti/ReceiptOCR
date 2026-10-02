@@ -1192,7 +1192,6 @@ private fun ProductEditDialog(
             tabMemos = remember(aoiroAccounts, aoiroMemos) { AoiroLinkKind.purchase.tabMemos(aoiroAccounts, aoiroMemos) },
             accounts = aoiroAccounts,
             currentAccountKey = selectedAccountKey,
-            ratioSensitive = remember(aoiroMemos) { AoiroChoboMemoRules.ratioSensitiveMemoKeys(aoiroMemos) },
             selectedKey = selectedMemoKey,
             onSelect = { memo ->
                 selectedMemoKey = memo?.memoKey

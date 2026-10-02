@@ -169,7 +169,7 @@ private val BS_SEARCH_W = 96.dp    // 資産・負債：84 + 132 + 110 + 96 = 42
 private val PL_SEARCH_W = 96.dp    // 収入・支出：84 + 132 + 96 + 64 + 64 = 440
 private val TAX_W = 64.dp          // 「課税のみ」「課税以外」が 1 行に収まる幅（60dp では折り返す）
 
-// 摘要名は「要確定」の印と並べても 1 行に収まる幅（印の付く摘要は本番で最長 10 文字）
+// 摘要名の列の幅（本番の摘要名が 1 行に収まる）
 private val MEMO_NAME_W = 190.dp
 
 @Composable
@@ -262,7 +262,6 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
     val selected = subTabs[subIndex.coerceAtMost(subTabs.lastIndex)]
 
     val accountNames = remember(accounts) { accounts.associate { it.accountKey to it.name } }
-    val ratioSensitive = remember(memos) { AoiroChoboMemoRules.ratioSensitiveMemoKeys(memos) }
     val shown = remember(memos, selected) {
         memos.filter { selected.contains(it) }.sortedBy { it.displayOrder }
     }
@@ -281,18 +280,6 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
                 },
                 selectedIndex = subIndex,
                 onSelect = { subIndex = it }
-            )
-        }
-
-        if (shown.any { it.memoKey in ratioSensitive }) {
-            Text(
-                text = "「要確定」は相手科目・税率が同じで事業割合だけ違う摘要です。" +
-                    "取り違えると経費の額が変わるので、アプリが自動で選ばず、初回はあなたが選びます。",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
@@ -320,7 +307,7 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
                 "借方科目" to 130.dp, "借方\n税率" to 60.dp, "借方\n事業割合" to 64.dp,
                 "貸方科目" to 130.dp, "貸方\n税率" to 60.dp, "貸方\n事業割合" to 64.dp)
             PcTable(columns = columns, headerColor = MemoHeaderColor, rows = shown, scrollKey = selected, rowKey = { it.memoKey }) { m ->
-                MemoNameCell(m, m.memoKey in ratioSensitive)
+                MemoNameCell(m)
                 Cell(m.searchKey, 96.dp)
                 Cell(nameOf(m.debitAccountKey), 130.dp)
                 OptionalCell(AoiroChoboAccountRules.taxRateLabel(m.taxRate), 60.dp)
@@ -336,7 +323,7 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
                 sharedHeader?.let { add(it to 56.dp) }
             }
             PcTable(columns = columns, headerColor = MemoHeaderColor, rows = shown, scrollKey = selected, rowKey = { it.memoKey }) { m ->
-                MemoNameCell(m, m.memoKey in ratioSensitive)
+                MemoNameCell(m)
                 Cell(m.searchKey, 96.dp)
                 Cell(nameOf(m.counterAccountKey), 130.dp)
                 OptionalCell(AoiroChoboAccountRules.taxRateLabel(m.taxRate), 60.dp)
@@ -351,7 +338,7 @@ private fun MemoTable(memos: List<AoiroChoboMemoTemplate>, accounts: List<AoiroC
 }
 
 @Composable
-private fun MemoNameCell(memo: AoiroChoboMemoTemplate, isRatioSensitive: Boolean) {
+private fun MemoNameCell(memo: AoiroChoboMemoTemplate) {
     Row(
         modifier = Modifier
             .width(MEMO_NAME_W)
@@ -369,17 +356,6 @@ private fun MemoNameCell(memo: AoiroChoboMemoTemplate, isRatioSensitive: Boolean
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        if (isRatioSensitive) {
-            Text(
-                text = "要確定",
-                modifier = Modifier
-                    .padding(start = 4.dp)
-                    .background(Color(0xFFFFE0B2), RoundedCornerShape(3.dp))
-                    .padding(horizontal = 3.dp),
-                fontSize = 10.sp,
-                color = Color(0xFF8A4B00)
-            )
-        }
     }
 }
 
