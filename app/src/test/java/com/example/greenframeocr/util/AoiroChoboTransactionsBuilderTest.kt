@@ -630,11 +630,22 @@ class AoiroChoboTransactionsBuilderTest {
     }
 
     @Test
-    fun `登録番号があれば meta に載せる`() {
-        val e = buildReceipt(row(receipt(registrationNumber = "T1234567890123"), receiptItem("A", 100), 0, null))
-            .file.entries.single()
+    fun `登録番号があれば meta に載せてインボイスあり・無ければインボイス無し`() {
+        val result = buildReceipt(row(receipt(registrationNumber = "T1234567890123"), receiptItem("A", 100), 0, null))
+        val e = result.file.entries.single()
         assertEquals("T1234567890123", e.meta.registrationNumber)
-        assertEquals(null, buildReceipt(row(receipt(), receiptItem("A", 100), 0, null)).file.entries.single().meta.registrationNumber)
+        assertEquals(true, e.hasInvoice)
+        assertTrue(result.json.contains("\"hasInvoice\": true"))
+
+        val none = buildReceipt(row(receipt(), receiptItem("A", 100), 0, null)).file.entries.single()
+        assertEquals(null, none.meta.registrationNumber)
+        assertEquals(false, none.hasInvoice)
+    }
+
+    @Test
+    fun `購買と預金はインボイスを判断しないので null（PC の既定）`() {
+        assertEquals(null, build(PurchaseRow(item("軽油", 5500), product("douryoku"))).file.entries.single().hasInvoice)
+        assertEquals(null, buildDeposit(DepositRow(meisai("ﾃﾞﾝｷ", -3000), einou, null)).file.entries.single().hasInvoice)
     }
 
     @Test

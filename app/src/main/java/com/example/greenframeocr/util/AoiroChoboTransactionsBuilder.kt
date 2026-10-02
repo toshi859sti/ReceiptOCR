@@ -127,6 +127,8 @@ object AoiroChoboTransactionsBuilder {
         val memoKey: String?,
         val memoName: String?,
         val note: String?,
+        /** 契約 §8。レシートだけ登録番号の有無で true/false。購買・預金は判断できないので null（PC の既定） */
+        val hasInvoice: Boolean? = null,
         val matchStatus: String,
         val confidence: String?,
         val meta: Meta
@@ -508,6 +510,8 @@ object AoiroChoboTransactionsBuilder {
             memoKey = sentMemo?.memoKey,
             memoName = sentMemo?.let { memoName },
             note = item.itemName.ifBlank { null },
+            // 登録番号が読めていればインボイスあり。読めていなければ無し（読み落としは PC で直せる。簡易課税なので税額には効かない）
+            hasInvoice = row.receipt.registrationNumber.isNotBlank(),
             matchStatus = status,
             confidence = null,
             meta = Meta(
