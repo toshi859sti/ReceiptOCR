@@ -30,6 +30,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.AppPreferences
@@ -560,7 +563,6 @@ private fun List<GeneralReceiptItem>.toEditableItems(): List<EditableItem> =
 
 // ─── オートコンプリート入力欄（過去の入力実績から候補表示。店舗名／品目名で共用） ─────
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AutocompleteTextField(
     value: String,
@@ -575,11 +577,11 @@ private fun AutocompleteTextField(
         if (value.isBlank()) emptyList()
         else suggestions.filter { it != value && it.contains(value) }.take(5)
     }
-    ExposedDropdownMenuBox(
-        expanded = expanded && filtered.isNotEmpty(),
-        onExpandedChange = { },
-        modifier = modifier
-    ) {
+    var fieldWidthPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    // 候補は入力中に出すので、フォーカスを取らない DropdownMenu にする。ExposedDropdownMenu は
+    // フォーカスを奪い、候補が出たあとのキー入力（バックスペースなど）が入力欄に届かなくなる
+    Box(modifier = modifier) {
         OutlinedTextField(
             value = value,
             onValueChange = {
@@ -590,12 +592,14 @@ private fun AutocompleteTextField(
             singleLine = true,
             colors = colors,
             modifier = Modifier
-                .menuAnchor()
                 .fillMaxWidth()
+                .onGloballyPositioned { fieldWidthPx = it.size.width }
         )
-        ExposedDropdownMenu(
+        DropdownMenu(
             expanded = expanded && filtered.isNotEmpty(),
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = false),
+            modifier = Modifier.width(with(density) { fieldWidthPx.toDp() })
         ) {
             filtered.forEach { suggestion ->
                 DropdownMenuItem(
