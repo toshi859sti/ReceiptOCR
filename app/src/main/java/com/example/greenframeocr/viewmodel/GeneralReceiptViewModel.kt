@@ -12,6 +12,7 @@ import com.example.greenframeocr.data.AoiroChoboAccountUsage
 import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralItemGroup
+import com.example.greenframeocr.data.GeneralItemGroupYearCount
 import com.example.greenframeocr.data.GeneralItemMaster
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
@@ -85,6 +86,10 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
 
     val itemGroups: StateFlow<List<GeneralItemGroup>> =
         dao.getItemGroups().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** グループ×年の明細数。商品名・但し書きリストを年で絞るのに使う（グループの設定そのものは全年で 1 つ） */
+    val itemGroupYearCounts: StateFlow<List<GeneralItemGroupYearCount>> =
+        dao.getItemGroupYearCounts().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // 品目名（＝但し書き）手入力時のオートコンプリート候補。canonicalKeyで正規化グルーピング済みの
     // itemGroupsをそのまま使う（表記ゆれを吸収済み・件数の多い順）
@@ -326,7 +331,8 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
                 accounts = vocabDao.getAllAccounts(),
                 memos = vocabDao.getAllMemoTemplates(),
                 vocabMeta = meta,
-                appVersion = appVersion
+                appVersion = appVersion,
+                defaultPaymentKey = prefs.aoiroReceiptDefaultPaymentKey
             )
         }
 
@@ -349,15 +355,30 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
      * 辞書から消えた上書き・ルールの科目も null
      */
     suspend fun resolveAoiroPaymentNameForReceipt(receipt: GeneralReceipt): String? =
-        withContext(Dispatchers.IO) {
-            val accounts = db.aoiroChoboVocabDao().getAllAccounts()
-            AoiroChoboTransactionsBuilder.resolveReceiptPayment(
-                receipt,
-                db.receiptPaymentMethodRuleDao().getAll(),
-                accounts.associateBy { it.accountKey },
-                AoiroChoboTransactionsBuilder.cashAccount(accounts)
-            ).second
-        }
+        withContext(Dispatchers.IO) { resolveAoiroPayment(receipt).second }
+
+    /** このレシートのあおいろの支払方法の科目（出力と同じ決め方）。明細の個別変更で摘要の帳簿を決めるのに使う */
+    suspend fun aoiroPaymentAccountForReceipt(receiptId: Long): AoiroChoboAccount? =
+        withContext(Dispatchers.IO) { dao.getReceiptById(receiptId)?.let { resolveAoiroPayment(it).first } }
+
+    private suspend fun resolveAoiroPayment(receipt: GeneralReceipt): Pair<AoiroChoboAccount?, String?> {
+        val accounts = db.aoiroChoboVocabDao().getAllAccounts()
+        return AoiroChoboTransactionsBuilder.resolveReceiptPayment(
+            receipt,
+            db.receiptPaymentMethodRuleDao().getAll(),
+            accounts.associateBy { it.accountKey },
+            AoiroChoboTransactionsBuilder.defaultPayment(accounts, prefs.aoiroReceiptDefaultPaymentKey)
+        )
+    }
+
+    /** あおいろ：支払方法のルールに当たらないときの科目（`accountKey`）。null = 現金 */
+    var aoiroReceiptDefaultPaymentKey: String?
+        get() = prefs.aoiroReceiptDefaultPaymentKey
+        set(value) { prefs.aoiroReceiptDefaultPaymentKey = value }
+
+    /** 既定の支払方法の科目（選んでいなければ現金）。今の辞書に無ければ null */
+    fun aoiroDefaultPayment(accounts: List<AoiroChoboAccount>): AoiroChoboAccount? =
+        AoiroChoboTransactionsBuilder.defaultPayment(accounts, prefs.aoiroReceiptDefaultPaymentKey)
 
     /**
      * 一覧用：レシート id → 今効いている支払方法の科目名（出力と同じ決め方）。
@@ -371,9 +392,9 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         if (isAoiro) {
             val accounts = db.aoiroChoboVocabDao().getAllAccounts()
             val byKey = accounts.associateBy { it.accountKey }
-            val cash = AoiroChoboTransactionsBuilder.cashAccount(accounts)
+            val fallback = aoiroDefaultPayment(accounts)
             receipts.associate { r ->
-                r.id to AoiroChoboTransactionsBuilder.resolveReceiptPayment(r, rules, byKey, cash).second
+                r.id to AoiroChoboTransactionsBuilder.resolveReceiptPayment(r, rules, byKey, fallback).second
             }
         } else {
             val accountsById = db.yayoiAccountDao().getAll().associateBy { it.id }
@@ -536,8 +557,9 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             _aiError.value = "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください"
             return
         }
+        // 摘要名のヒントは、品目グループの摘要と同じくレシート共通のもの
         val memoNames = accounts.associate { a ->
-            a.accountKey to AoiroChoboReceiptRules.memoCandidates(a.accountKey, vocab.memos).map { it.name }
+            a.accountKey to AoiroChoboReceiptRules.groupMemoCandidates(a.accountKey, vocab.memos).map { it.name }
         }
         viewModelScope.launch {
             _isAiMatching.value = true
@@ -687,6 +709,9 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope.launch(Dispatchers.IO) { dao.deleteReceipt(receipt) }
     }
 
+    /** レシートの明細（変更を追う）。詳細画面で科目・摘要を変えたあと、表示をすぐ合わせるのに使う */
+    fun itemsForReceiptFlow(receiptId: Long) = dao.getItemsByReceiptId(receiptId)
+
     suspend fun getItemsForReceipt(receiptId: Long): List<GeneralReceiptItem> =
         withContext(Dispatchers.IO) { dao.getItemsByReceiptIdOnce(receiptId) }
 
@@ -702,9 +727,28 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             updatedItems.forEach { item ->
                 val keyed = item.copy(receiptId = receipt.id).withComputedKey()
                 if (item.id == 0L) dao.insertItem(keyed)
-                else dao.updateItem(keyed)
+                else {
+                    // 既存の明細の item.canonicalKey は改名前のまま。改名でグループが変わったら設定を引き継ぐ
+                    if (keyed.canonicalKey != item.canonicalKey) carryOverGroupSettings(item.canonicalKey, keyed.canonicalKey)
+                    dao.updateItem(keyed)
+                }
             }
         }
+    }
+
+    /**
+     * 品目名を直して別のグループ（canonicalKey）に移った明細の科目設定を引き継ぐ。
+     * 移り先にまだ設定（弥生の科目・あおいろの科目）が無ければ、移る前のグループの設定を写す。
+     * 移り先に設定があればそちらを使う（既にある品目に合流したのと同じ）。明細の個別変更は明細側に残る
+     */
+    private suspend fun carryOverGroupSettings(fromKey: String, toKey: String) {
+        if (toKey.isBlank()) return
+        val masterDao = db.generalItemMasterDao()
+        val from = masterDao.getByKey(fromKey) ?: return
+        if (from.yayoiAccountId == null && from.accountKey == null) return
+        val to = masterDao.getByKey(toKey)
+        if (to != null && (to.yayoiAccountId != null || to.accountKey != null)) return
+        masterDao.upsert(from.copy(canonicalKey = toKey))
     }
 
     /** 個別上書き（item.yayoiAccountId）があればそちら優先、なければグループのデフォルトを使う */
@@ -778,15 +822,16 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     suspend fun loadPaymentMethodRules(): List<ReceiptPaymentMethodRule> =
         withContext(Dispatchers.IO) { db.receiptPaymentMethodRuleDao().getAll() }
 
-    fun savePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
-        viewModelScope.launch(Dispatchers.IO) {
+    // 書き終わってから一覧を読み直せるよう suspend にしている（launch だと読み直しが先に走り、古い行が表示されることがあった）
+    suspend fun savePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
+        withContext(Dispatchers.IO) {
             if (rule.id == 0L) db.receiptPaymentMethodRuleDao().insert(rule)
             else db.receiptPaymentMethodRuleDao().update(rule)
         }
     }
 
-    fun deletePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
-        viewModelScope.launch(Dispatchers.IO) { db.receiptPaymentMethodRuleDao().delete(rule) }
+    suspend fun deletePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
+        withContext(Dispatchers.IO) { db.receiptPaymentMethodRuleDao().delete(rule) }
     }
 
     /** レシート単位の相手科目個別上書き。accountId=nullでルール判定に戻す */

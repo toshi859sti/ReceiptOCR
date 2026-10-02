@@ -96,6 +96,9 @@ class AppPreferences(context: Context) {
         private const val KEY_ACCOUNTING_SOFTWARE = "accounting_software"
         private const val DEFAULT_ACCOUNTING_SOFTWARE = "YAYOI"
 
+        // あおいろ：レシートの支払方法のルールに当たらないときの科目
+        private const val KEY_AOIRO_RECEIPT_DEFAULT_PAYMENT_KEY = "aoiro_receipt_default_payment_key"
+
         // 一覧文字サイズ
         private const val KEY_LIST_FONT_SIZE = "list_font_size"
         const val DEFAULT_LIST_FONT_SIZE = 14f
@@ -194,6 +197,17 @@ class AppPreferences(context: Context) {
             return migrated
         }
         set(value) = prefs.edit().putString(KEY_ACCOUNTING_SOFTWARE, value.name).apply()
+
+    /**
+     * あおいろ：レシートの支払方法のルールに当たらないときの貸方の科目（`accountKey`）。null = 現金。
+     * 個人のカード・財布で払う農家は事業主借にする（帳簿は振替伝票になる）
+     */
+    var aoiroReceiptDefaultPaymentKey: String?
+        get() = prefs.getString(KEY_AOIRO_RECEIPT_DEFAULT_PAYMENT_KEY, null)
+        set(value) = prefs.edit().apply {
+            if (value == null) remove(KEY_AOIRO_RECEIPT_DEFAULT_PAYMENT_KEY)
+            else putString(KEY_AOIRO_RECEIPT_DEFAULT_PAYMENT_KEY, value)
+        }.apply()
 
     // ダークモード
     var darkMode: AppDarkMode

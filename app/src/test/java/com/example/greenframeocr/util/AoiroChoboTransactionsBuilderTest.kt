@@ -175,12 +175,38 @@ class AoiroChoboTransactionsBuilderTest {
     }
 
     @Test
-    fun `摘要の無い科目は UnmatchedMemo で、税率は PC に任せる`() {
+    fun `摘要の無い科目は UnmatchedMemo で、税率は科目の既定（課税は10%）`() {
         val e = build(PurchaseRow(item("軽油", 5500), product("douryoku"))).file.entries.single()
         assertEquals("UnmatchedMemo", e.matchStatus)
         assertEquals("douryoku", e.debit.accountKey)
         assertEquals(null, e.memoKey)
-        assertEquals(null, e.debit.taxRate)
+        assertEquals("Taxable", account("douryoku").defaultTaxCategory)
+        assertEquals("10", e.debit.taxRate)
+        assertEquals(null, e.credit.taxRate)
+    }
+
+    @Test
+    fun `摘要の無い通帳の行：出金の経費は科目の既定、入金の収入は null`() {
+        val out = buildDeposit(DepositRow(meisai("ｷﾖｳｻｲ", -3000), einou, rule("nougyou"))).file.entries.single()
+        assertEquals("nougyou", out.debit.accountKey)
+        assertEquals("non", out.debit.taxRate)      // 農業共済掛金は非課税
+        assertEquals(null, out.credit.taxRate)
+
+        val income = buildDeposit(DepositRow(meisai("ﾉｳｷﾖｳ", 50000), einou, rule("suitou"))).file.entries.single()
+        assertEquals("suitou", income.credit.accountKey)
+        assertEquals(null, income.credit.taxRate)    // 収入科目は科目の既定を使わない（契約 §4.7）
+        assertEquals(null, income.debit.taxRate)
+    }
+
+    @Test
+    fun `摘要の無いレシートの行は経費科目の既定の税率`() {
+        val e = buildReceipt(row(receipt(), receiptItem("軍手", 220), 0, group("sagyou"))).file.entries.single()
+        assertEquals("UnmatchedMemo", e.matchStatus)
+        assertEquals("10", e.debit.taxRate)
+        assertEquals(null, e.credit.taxRate)
+        // 科目が決まらなければ税率も無い
+        val none = buildReceipt(row(receipt(), receiptItem("謎", 100), 0, null)).file.entries.single()
+        assertEquals(null, none.debit.taxRate)
     }
 
     @Test
@@ -463,7 +489,8 @@ class AoiroChoboTransactionsBuilderTest {
     )
 
     private fun cashMemo(accountKey: String, name: String? = null) =
-        AoiroChoboReceiptRules.memoCandidates(accountKey, memos).single { name == null || it.name == name }
+        AoiroChoboReceiptRules.memoCandidates(accountKey, AoiroChoboReceiptRules.Ledger.CASH, "genkin", memos)
+            .single { name == null || it.name == name }
 
     /** 端末の既定のルール（DatabaseInitializer）にあおいろの科目を付けたもの */
     private val paymentRules = listOf(
@@ -472,8 +499,10 @@ class AoiroChoboTransactionsBuilderTest {
         ReceiptPaymentMethodRule(id = 3, keyword = "PayPay", yayoiAccountId = 2, sortOrder = 2)
     )
 
-    private fun buildReceipt(vararg rows: AoiroChoboTransactionsBuilder.ReceiptRow) =
-        AoiroChoboTransactionsBuilder.buildReceipt(rows.toList(), paymentRules, accounts, memos, meta, appVersion = "1.0")
+    private fun buildReceipt(
+        vararg rows: AoiroChoboTransactionsBuilder.ReceiptRow,
+        memos: List<AoiroChoboMemoTemplate> = this.memos
+    ) = AoiroChoboTransactionsBuilder.buildReceipt(rows.toList(), paymentRules, accounts, memos, meta, appVersion = "1.0")
 
     private fun row(r: GeneralReceipt, item: GeneralReceiptItem, index: Int, g: GeneralItemMaster?) =
         AoiroChoboTransactionsBuilder.ReceiptRow(r, item, index, g)
@@ -511,21 +540,51 @@ class AoiroChoboTransactionsBuilderTest {
     }
 
     @Test
-    fun `クレジット払いは未払金で、同じ摘要が未払にあれば置き換える・無ければ摘要なし`() {
+    fun `クレジット払いは未払金で、レシート共通でない現金の摘要は名前が同じでも置き換えず摘要なし`() {
         val r = receipt("クレジット払い")
         val repair = buildReceipt(row(r, receiptItem("修理", 5500), 0, group("syuuzen", cashMemo("syuuzen")))).file.entries.single()
         assertEquals("Unpaid", repair.ledgerType)
         assertEquals("mibarai", repair.credit.accountKey)
+        // 未払/発生に同じ名前の「修理代」があっても置き換えない（事業割合が違うことがある・契約 minor（10））
+        assertTrue(memos.any { AoiroChoboMemoRules.MemoTab.UNPAID_IN.contains(it) && it.counterAccountKey == "syuuzen" })
+        assertEquals("UnmatchedMemo", repair.matchStatus)
+        assertEquals(null, repair.memoKey)
+        assertEquals(null, repair.memoName)
+    }
+
+    @Test
+    fun `明細の個別変更で選んだ未払の摘要はそのまま送る`() {
         val unpaidRepair = memos.single {
             AoiroChoboMemoRules.MemoTab.UNPAID_IN.contains(it) && it.counterAccountKey == "syuuzen"
         }
-        assertEquals(unpaidRepair.memoKey, repair.memoKey)
-        assertEquals("Matched", repair.matchStatus)
+        val item = receiptItem("修理", 5500).copy(
+            overrideAccountKey = "syuuzen", overrideAccountKeyName = "修繕費",
+            overrideMemoKey = unpaidRepair.memoKey, overrideMemoKeyName = unpaidRepair.name
+        )
+        val e = buildReceipt(row(receipt("クレジット払い"), item, 0, group("syuuzen", cashMemo("syuuzen")))).file.entries.single()
+        assertEquals(unpaidRepair.memoKey, e.memoKey)
+        assertEquals("Matched", e.matchStatus)
+    }
 
-        val material = buildReceipt(row(r, receiptItem("結束バンド", 330), 0, group("syozairyou", cashMemo("syozairyou"))))
-            .file.entries.single()
-        assertEquals("UnmatchedMemo", material.matchStatus)
-        assertEquals(null, material.memoKey)
+    @Test
+    fun `レシート共通の摘要は現金・未払・振替のどれでも同じ memoKey で送る`() {
+        val common = cashMemo("syozairyou").copy(paymentCommon = true)
+        val withCommon = memos.map { if (it.memoKey == common.memoKey) common else it }
+        val g = group("syozairyou", common)
+        val cash = receipt("現金")
+        val card = receipt("クレジット", uuid = "11111111-2222-3333-4444-555555555555")
+        val household = receipt(uuid = "22222222-2222-3333-4444-555555555555")
+            .copy(paymentOverrideAccountKey = "zigyounusikari", paymentOverrideAccountKeyName = "事業主借")
+        val entries = buildReceipt(
+            row(cash, receiptItem("結束バンド", 330), 0, g),
+            row(card, receiptItem("結束バンド", 330), 0, g),
+            row(household, receiptItem("結束バンド", 330), 0, g),
+            memos = withCommon
+        ).file.entries
+        assertEquals(listOf("Cash", "Unpaid", "Transfer"), entries.map { it.ledgerType })
+        assertEquals(listOf("genkin", "mibarai", "zigyounusikari"), entries.map { it.credit.accountKey })
+        assertTrue(entries.all { it.memoKey == common.memoKey && it.matchStatus == "Matched" })
+        assertTrue(entries.all { it.credit.taxRate == null })
     }
 
     @Test
@@ -571,11 +630,22 @@ class AoiroChoboTransactionsBuilderTest {
     }
 
     @Test
-    fun `登録番号があれば meta に載せる`() {
-        val e = buildReceipt(row(receipt(registrationNumber = "T1234567890123"), receiptItem("A", 100), 0, null))
-            .file.entries.single()
+    fun `登録番号があれば meta に載せてインボイスあり・無ければインボイス無し`() {
+        val result = buildReceipt(row(receipt(registrationNumber = "T1234567890123"), receiptItem("A", 100), 0, null))
+        val e = result.file.entries.single()
         assertEquals("T1234567890123", e.meta.registrationNumber)
-        assertEquals(null, buildReceipt(row(receipt(), receiptItem("A", 100), 0, null)).file.entries.single().meta.registrationNumber)
+        assertEquals(true, e.hasInvoice)
+        assertTrue(result.json.contains("\"hasInvoice\": true"))
+
+        val none = buildReceipt(row(receipt(), receiptItem("A", 100), 0, null)).file.entries.single()
+        assertEquals(null, none.meta.registrationNumber)
+        assertEquals(false, none.hasInvoice)
+    }
+
+    @Test
+    fun `購買と預金はインボイスを判断しないので null（PC の既定）`() {
+        assertEquals(null, build(PurchaseRow(item("軽油", 5500), product("douryoku"))).file.entries.single().hasInvoice)
+        assertEquals(null, buildDeposit(DepositRow(meisai("ﾃﾞﾝｷ", -3000), einou, null)).file.entries.single().hasInvoice)
     }
 
     @Test

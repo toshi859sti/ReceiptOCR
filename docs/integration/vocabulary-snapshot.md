@@ -190,6 +190,7 @@ AoiroChobo の `MemoTemplate` テーブルのうち **`IsActive = 1` の行**。
   "hasInvoiceDefault": true,       // インボイス既定（適格請求書ありか）
   "showInCash": false,             // 現金出納帳の摘要ドロップダウンに出すか
   "showInBank": false,             // 預金出納帳の摘要ドロップダウンに出すか
+  "paymentCommon": false,          // レシート共通（minor（10））。現金/出金・未払/発生・振替で同じ memoKey のまま使える
   "bankSlotNo": null,              // 特定の預金スロット専用の摘要なら番号。通常 null
   "displayOrder": 1,               // AoiroChobo 内の並び順（同一 ledgerType 内。逆引きの同点処理にも使える）
   "isPreset": true                 // AoiroChobo のシード摘要か（ユーザー追加は false）
@@ -218,6 +219,7 @@ AoiroChobo の `MemoTemplate` テーブルのうち **`IsActive = 1` の行**。
 | `DefaultHasInvoice` | `hasInvoiceDefault` | |
 | `ShowInCash` | `showInCash` | |
 | `ShowInBank` | `showInBank` | |
+| `PaymentCommon`（minor（10）） | `paymentCommon` | 0/1 → bool。形が「現金の出金」でない行は 1 でも `false` で出す |
 | `DisplayOrder` | `displayOrder` | |
 | `IsPreset` | `isPreset` | |
 | `IsActive` | （出さない） | 常に 1（無効行は出力しない） |
@@ -241,6 +243,13 @@ AoiroChobo の `MemoTemplate` テーブルのうち **`IsActive = 1` の行**。
 - `ledgerType` が `AR` / `AP` / `Unpaid` の摘要では `showInCash` / `showInBank` は常に `false`。
 - `ledgerType` が `Transfer` の摘要は `direction = ""`、`counterAccountKey = null`、
   代わりに `debitAccountKey` / `creditAccountKey` を持つ。
+- **`paymentCommon == true`（レシート共通・minor（10））** の摘要は、現金/出金・未払/発生・振替の 3 帳簿で
+  **同じ `memoKey` のまま**使える。形は必ず `ledgerType == "Cash"`・`direction == "Out"`・`showInCash == true`・
+  `counterAccountKey` が経費の科目（`debitAccountKey` / `creditAccountKey` は `null`）。
+  借方＝`counterAccountKey`、貸方は帳簿が決める（現金／未払金／振替では取込行の `credit.accountKey`）。
+  払い方が決まる前に選ぶ摘要で、スマホのレシートの品目グループ用。PC の摘要登録の「レシート共通」タブで作る。
+  **未払帳・振替伝票で使われた摘要はレシート共通をやめられない**ので、使われた摘要の印があとから消えることは無い。
+  古い vocabulary には無いフィールドで、無ければ `false` として扱う。
 
 **スマホ側での使い方（推奨：科目を先に決めて摘要を逆引き）**
 
@@ -409,12 +418,13 @@ AoiroChobo は複数の預金口座を「スロット」で管理する。
 
 #### 摘要（`memoTemplates`）の候補
 
-**新しいフラグは無い**。既存フィールドで絞る：
+既存フィールドで絞る（minor（10） で `paymentCommon` が加わった。下の表の後の注記）：
 
 | 条件 | フィルタ |
 |---|---|
-| 帳簿 | `Purchase`→`ledgerType == "AP"` / `Receipt` クレカ→`"Unpaid"` / **`Receipt` 現金→`"Cash"` かつ `showInCash`** / **`Deposit`→`"Cash"` かつ `showInBank`** |
+| 帳簿 | `Purchase`→`ledgerType == "AP"` / **`Receipt` は貸方（支払方法）の科目で分ける**：`ledgerAffinity == Cash`→`"Cash"` かつ `showInCash`、`ledgerAffinity == Unpaid`→`"Unpaid"`、それ以外（事業主借など）→`"Transfer"`（[transaction-import.md](transaction-import.md) §5） / **`Deposit`→`"Cash"` かつ `showInBank`** |
 | 方向 | `direction` == `In` / `Out`。**お金の向きではなく帳簿上の発生／解消**：現金・預金は `In`＝入金・`Out`＝出金、売掛・買掛・未払は `In`＝債権債務の発生（売上・購入）・`Out`＝解消（入金・支払）。`Deposit` は元金額の符号で判定 |
+| 振替（`Receipt` の `Transfer` だけ） | `direction` は見ない（振替は空文字）。代わりに `debitAccountKey == 品目の経費科目` かつ `creditAccountKey == 貸方の科目`。`Purchase` / `Deposit` では振替の摘要を候補にしない |
 
 ⚠ **2026-09-23 訂正：`ledgerType == "Bank"` の摘要は実在しない。** 預金出納帳の摘要も `ledgerType = "Cash"` で
 持ち、`showInBank` で出し分けている（PC の摘要登録画面の「預金」タブも `showInBank && direction` だけで絞る）。
@@ -422,7 +432,33 @@ AoiroChobo は複数の預金口座を「スロット」で管理する。
 `"Bank"` は列挙値としては残っている（将来使う余地）ので、`Deposit` の候補は
 「`ledgerType ∈ {Cash, Bank}` かつ `showInBank`」と書いておけば両方に耐える。
 実データ（2026 本番・有効 107 件）：`Cash` 77 件のうち `showInBank` 75・`showInCash` 72（両方 70）。
-| 常に除外 | `ledgerType == "Transfer"`（OCR は振替伝票を生成しない） |
+
+⚠ **2026-09-30 変更：振替の摘要を候補に入れた**（minor（9））。以前は「常に除外：`ledgerType == "Transfer"`
+（OCR は振替伝票を生成しない）」だった。農家はレシートの多くを個人のクレカで払い、仕訳は「経費 / 事業主借」になる。
+PC の辞書もこれを振替伝票の摘要（電気料金（家計より支払）・農薬 など）で持っている。
+振替の摘要を選んでも、税率の決め方は非振替と同じ（§4.7。PC は送られた税率をそのまま使う）。
+`debit.taxRate` は §4.7 の順（税率マーク → 摘要の `taxRate` → 借方科目の `defaultTaxCategory`）、`credit.taxRate`（事業主借）は `null`
+（2026-10-02 minor（11）で摘要を 2 番目に入れた）。
+事業割合は PC が摘要の `businessRatio`（借方側）を採る。`creditBusinessRatio` は使わない。
+
+⚠ **2026-10-01 追加：レシート共通の摘要**（minor（10）。[REPLY-pc-2026-10-01.md](REPLY-pc-2026-10-01.md)）。
+レシートの品目グループには支払方法の違うレシートが混ざるので、帳簿ごとに別の摘要を選ぶと、払い方しだいで摘要が変わる・消える。
+`paymentCommon == true` の摘要は、`Receipt` のどの帳簿（`Cash` / `Unpaid` / `Transfer`）でも同じ `memoKey` のまま送ってよい。
+**`Purchase`（JA購買）と `Deposit`（通帳）の候補には入れない**（それぞれ買掛の摘要・預金の摘要で絞る。上の表のとおり）。
+PC の画面では「レシート共通」と呼ぶ（2026-10-02 に「支払共通」から改名。JA購買にも効くと読めるため。フィールド名 `paymentCommon` は据え置き）。
+
+| 候補にする場面 | フィルタ |
+|---|---|
+| 品目グループ（払い方が決まる前） | `paymentCommon == true`（`counterAccountKey == 品目の経費科目` で逆引き） |
+| 明細の個別変更（帳簿が決まった後） | 上の表の帳簿に合う摘要 ＋ `paymentCommon == true` の摘要 |
+
+- PC が `memoKey` の摘要を受けられる帳簿（取込の判定。transaction-import §5）：
+  `Cash` は `showInCash`、`Bank` は `showInBank`、`Unpaid` は `ledgerType == "Unpaid"` か `paymentCommon`、
+  `Transfer` は `ledgerType == "Transfer"` か `paymentCommon`、`AR` / `AP` は `ledgerType` 一致。
+  合わない行は PC で要確認に回る（「この帳簿で使えない摘要」）
+- レシート共通の摘要を `Transfer` で使うときも税率・事業割合の決め方は同じ。`debit.taxRate` は §4.7、`credit.taxRate`（事業主借）は `null`、
+  事業割合は PC が摘要の `businessRatio` を採る
+- 名前による置き換え（別の帳簿の同名の摘要を探す）はしない（§4.8）。使えない摘要は `memoKey = null`（`UnmatchedMemo`）で送る
 
 推奨フロー（§4.2）＝「商品名→科目を先に解決 → その相手科目 `accountKey` で
 `memoTemplates` を逆引き」だと、候補は最初から `counterAccountKey == 一致科目` の 0〜3 件に絞られる。
@@ -542,14 +578,27 @@ PC の現在：   acct-x7 = "研修費"
 | 項目 | 本当の出所 | スマホがやること |
 |---|---|---|
 | **科目**（`accountKey`） | 商品名・通帳摘要（ルール＋学習、必要なら LLM 補助） | 解決する。学習のキーは `accountKey` |
-| **インボイス**（`hasInvoice`） | **レシート現物**（登録番号 `T\d{13}` の有無） | OCR で判定（予測でなく事実）。`hasInvoiceDefault` は最後の手段 |
-| **税率**（`taxRate`） | 商品の性質（食品=8%）＞ その `accountKey` の `defaultTaxCategory` | AI/ルールで試行 → 科目既定にフォールバック → 不明なら `null`＋`matchStatus` |
+| **インボイス**（`hasInvoice`） | **レシート現物**（登録番号 `T\d{13}` の有無） | レシートは OCR で判定（予測でなく事実）。読めなければ `false`。購買・通帳は省略（PC が `true` 扱い）。`hasInvoiceDefault` では埋めない（[transaction-import.md](transaction-import.md) §8・minor（12）） |
+| **税率**（`taxRate`） | レシートの税率マーク ＞ **摘要の `taxRate`** ＞ その `accountKey` の `defaultTaxCategory` | 上から順に決める（下記「税率の決め方」）。不明なら `null`＋`matchStatus`。**PC は送られた値をそのまま使う** |
 | **事業割合**（`businessRatio`） | **その農家の家事按分方針**＝**摘要辞書の `businessRatio`**（商品と無関係） | **触らない。`100` 固定で出す**。**PC は `memoKey` が解決できたら摘要の `businessRatio` を採り、送られた値は使わない**（下記） |
 | **摘要**（`memoKey`） | 摘要辞書（逆引き）。**閉じた語彙** | 辞書の `memoKey` か `null`。生テキストは `note` へ。任意でラベル選好キャッシュ（下記） |
 
 **帰結：`memoTemplates` の逆引きは「記帳バンドルを取る」ためではなく、摘要ラベルの候補出し専用に
-格下げ。** 科目＋税率は `accountKey`（＋その `defaultTaxCategory`）から直接引ける。1 科目で税率が
-分かれる稀なケースだけ逆引きが効く。
+格下げ。** 科目は `accountKey` から直接引ける。税率は摘要が決まればその値の方が細かい（下記）。
+
+**税率の決め方（2026-10-02 改訂・minor（11）・[REPLY-pc-2026-10-02.md](REPLY-pc-2026-10-02.md)）。**
+経費・収入の側の `taxRate`（経費なら `debit.taxRate`、収入なら `credit.taxRate`）は上から順に決める。
+
+1. レシートの税率マーク（読めたとき。**未実装でよい**。将来の枠）
+2. `memoKey` が決まった摘要の `taxRate`（`Ambiguous` なら送った第一候補の値。振替の摘要でも借方は `taxRate`）
+3. その `accountKey` の `defaultTaxCategory` を [README.md](README.md) §4 の変換表で（`Taxable` → `"10"`）。**経費科目だけ**
+4. どれも無ければ `null`＋`matchStatus`
+
+- 収入科目は 3 を使わない（摘要 0 件なら `null`。[REPLY-phone-2026-09-22.md](REPLY-phone-2026-09-22.md) §8-3）
+- 経費・収入でない側（現金・未払金・事業主借など）は `null`
+- 以前は「税率マーク → 科目の既定」で摘要を飛ばしていたが、`defaultTaxCategory` は `Taxable` までで 8% と 10% を
+  分けられない。経費の税率は簡易課税なので税額に効かず、PC の手入力も摘要の税率を入れるので、摘要を 2 番目に入れた
+- PC は取込でも要確認でも**送られた `taxRate` をそのまま仕訳に入れる**（摘要から引き直さない）
 
 **事業割合は摘要が決める（2026-09-23 改訂・スマホ側と合意）。** 以前は「スマホは 100 で出し、
 按分は PC の年末『家事按分自動生成』がやる」としていたが、**その自動生成は PC に存在しない**。

@@ -6,6 +6,86 @@
 
 ---
 
+## schemaVersion 2 — 2026-10-02 minor（12）（`hasInvoice` を `source` ごとに決める）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の方針（2026-10-02）を契約にした。
+
+- **`Receipt`：登録番号（`T\d{13}`）が読めたら `true`、読めなければ `false`**（[transaction-import.md](transaction-import.md) §8）。
+  以前は「読めなければ `hasInvoiceDefault`」（[matching-rules.md](matching-rules.md) §4 の 7）だったが、摘要の既定は推測なので使わない。
+- **`Purchase` / `Deposit`：省略する**。スマホは JA の請求書・通帳の登録番号を読んでいない。PC は省略を `true` として記帳する。
+- 読み落としで `false` になっても、簡易課税なので税額には効かない。PC で取込後に直せる。
+- PC の実装は変わらない（`hasInvoice` が無ければ `true`）。
+
+スマホ側への影響：無し（この方針で実装済み）。
+
+---
+
+## schemaVersion 2 — 2026-10-02 minor（11）（税率の決め方に摘要を入れる）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の意見（2026-10-02・回答
+[REPLY-pc-2026-10-02.md](REPLY-pc-2026-10-02.md) に引用）への対応。
+
+- **経費・収入の側の `taxRate` の決め方を「税率マーク → 摘要の `taxRate` → 科目の `defaultTaxCategory` → `null`」にした**
+  （[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7・§4.5、[matching-rules.md](matching-rules.md) §1・§4、README §0-9・決定表 L）。
+  以前は摘要を飛ばしていたが、`defaultTaxCategory` は 8% と 10% を分けられない。経費の税率は簡易課税なので税額に効かない。
+- 税率マークは将来の枠。**今は読まなくてよい**。
+- 収入科目は今までどおり科目の既定を使わない（摘要 0 件なら `null`）。
+- PC の実装は変わらない（送られた `taxRate` をそのまま仕訳に入れる）。
+- PC の 9/30 回答 §5・10/01 回答 §4・§7 の「摘要の `taxRate` は見なくてよい」は取り消し。
+
+スマホ側への影響：無し。今の送り方（摘要の `taxRate`）が契約どおりになった。
+
+---
+
+## schemaVersion 2 — 2026-10-01 minor（10）（摘要の「レシート共通」を足す）
+
+`schemaVersion` は据え置き（**2 のまま**）。`memoTemplates[]` にフィールドを 1 つ足す（前方互換）。スマホ側の依頼
+（[REPLY-phone-2026-10-01.md](REPLY-phone-2026-10-01.md)）への対応。回答は [REPLY-pc-2026-10-01.md](REPLY-pc-2026-10-01.md)。
+
+- **`memoTemplates[].paymentCommon`（bool）を追加**（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.2・§4.5）。
+  `true` の摘要は現金/出金・未払/発生・振替の 3 帳簿で**同じ `memoKey` のまま**使える。形は必ず
+  `ledgerType == "Cash"`・`direction == "Out"`・`showInCash == true`・相手科目が経費。レシートの品目グループ用。
+  スマホ案の 2 つの印（`showInUnpaid` / `showInTransfer`）ではなく、3 帳簿セットの印 1 つにした。
+  PC の画面での呼び名は「**レシート共通**」（2026-10-02 に「支払共通」から改名。`Purchase` / `Deposit` には効かないため）
+  （部分的な共有では、支払方法の違うレシートが混ざる品目グループに使えないため）。
+- **未払帳・振替伝票で使われた摘要はレシート共通をやめられない**（PC の摘要登録が断る）。
+  あわせて現金と預金の共有も、使われた側の印は外せなくなった（2026-10-01 `edf5d58`）。
+- **PC の取込に、摘要の帳簿のガードを足した**（[transaction-import.md](transaction-import.md) §5）。`memoKey` の摘要が
+  その行の帳簿で使えなければ「要確認」（「この帳簿で使えない摘要」）。選び直すまで登録できない。
+- PC の未払帳・振替伝票の摘要の候補にレシート共通の摘要を足した。振替伝票では貸方に事業主借を既定で入れる。
+- 古い vocabulary にはフィールドが無い。無ければ `false` として扱う。
+- 書き出すと全摘要に `paymentCommon` が付くので、PC が変わっていなくても `contentHash` は変わる。
+
+スマホ側への影響：品目グループの摘要候補を `paymentCommon == true` にし、名前による置き換えをやめること。
+
+---
+
+## schemaVersion 2 — 2026-09-30 minor（9）（Receipt の帳簿を支払方法の科目で決める・振替の摘要を解禁）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の依頼
+（[REPLY-phone-2026-09-30.md](REPLY-phone-2026-09-30.md)）への対応。回答は [REPLY-pc-2026-09-30.md](REPLY-pc-2026-09-30.md)。
+
+- **Receipt の `ledgerType` を貸方（支払方法）の科目の `ledgerAffinity` で決める**
+  （[README.md](README.md) §3・[transaction-import.md](transaction-import.md) §5）。
+  `Cash` → `Cash`、`Unpaid` → `Unpaid`、それ以外（事業主借など）→ **`Transfer`**。
+  以前はクレカ・電子マネーなら貸方が事業主借でも `Unpaid` だった。「経費 / 事業主借」を `Unpaid` で入れると、
+  未払帳（未払金の科目で拾う）にも振替伝票（`Transfer` で拾う）にも出ない仕訳になっていた。
+  返品・値引きは入れ替える前の貸方で決める。貸方が預金・買掛金になる支払方法は扱わない。
+- **`Transfer` の Receipt では振替の摘要を候補にする**（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.5）。
+  「常に除外：`ledgerType == "Transfer"`（OCR は振替伝票を生成しない）」を外した。候補は
+  `debitAccountKey == 品目の経費科目` かつ `creditAccountKey == 貸方の科目`。無ければ `UnmatchedMemo`。
+- 税率・事業割合の決め方は変わらない（§4.7）。税率はスマホが決めて送り（事業主借の側は `null`）、
+  事業割合は PC が摘要の `businessRatio` を採る。
+- `ledgerType = Transfer` の行は今の取込で振替伝票に入る（受け入れ側の変更は要らなかった）。
+- **PC にガードを足した**（transaction-import §5）。`ledgerType` の帳簿の科目が借方にも貸方にも無い行は
+  「要確認」に回し、確定するときはそのときの科目から帳簿を決め直す。旧契約の送り方
+  （「経費 / 事業主借」を `Unpaid`）で届いても、登録すると振替伝票に入る。
+- §5 の「推定が両方非該当なら要確認」を実装に合わせて削った（推定しただけでは要確認にしない）。
+
+スマホ側への影響：Receipt の `ledgerType` の決め方と、摘要候補のフィルタを変えること。
+
+---
+
 ## schemaVersion 2 — 2026-09-25 minor（8）（通帳を複数に・Deposit の `externalId` に通帳を入れる）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の依頼

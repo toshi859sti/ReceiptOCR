@@ -19,13 +19,13 @@
 | 項目 | 本当の出所 | スマホの担当 |
 |---|---|---|
 | **科目**（`accountKey`） | 商品名・通帳摘要（ルール＋学習、必要なら LLM 補助） | 解決する |
-| **インボイス**（`hasInvoice`） | **レシート現物**（適格請求書登録番号 `T\d{13}` の有無） | OCR で判定（予測でなく事実）。プリセットの `hasInvoiceDefault` は最後の手段 |
-| **税率**（`taxRate`） | 商品の性質（食品=8%）＞ その `accountKey` の `defaultTaxCategory` | AI/ルールで試行 → 科目既定にフォールバック → 不明なら `null`＋`matchStatus` |
+| **インボイス**（`hasInvoice`） | **レシート現物**（適格請求書登録番号 `T\d{13}` の有無） | レシートは OCR で判定（予測でなく事実）。読めなければ `false`。購買・通帳は省略（PC が `true` 扱い）。`hasInvoiceDefault` では埋めない（§4 の 7） |
+| **税率**（`taxRate`） | レシートの税率マーク ＞ 摘要の `taxRate` ＞ その `accountKey` の `defaultTaxCategory` | 上から順に決める（§4 の 5・[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7）。不明なら `null`＋`matchStatus` |
 | **事業割合**（`businessRatio`） | **その農家の家事按分方針**＝摘要辞書の `businessRatio`（商品と無関係） | **触らない。`100` 固定で出す**。PC は `memoKey` が解決できたら**摘要の値を採る**（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7） |
 | **摘要**（`memoKey`） | 摘要辞書（科目からの逆引き） | **閉じた語彙**：辞書の `memoKey` か `null` の二択。生テキストは `note` へ。任意でラベル選好キャッシュ（§5） |
 
 **帰結**：摘要辞書（`memoTemplates`）の逆引きは「記帳バンドルを取る」ためではなく
-**摘要ラベルの候補出し専用**に格下げされる。科目＋税率は `accountKey` から直接引ける
+**摘要ラベルの候補出し専用**に格下げされる。科目は `accountKey` から直接引ける。税率は摘要が決まればその値を使う
 （[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7）。
 
 ---
@@ -70,12 +70,14 @@ LLM なしで成立する。
    1 件→その `memoKey`／複数→近い候補の `memoKey`＋`Ambiguous`／**0 件→`memoKey = null`＋`UnmatchedMemo`**。
    `memoKey` は辞書のキーか `null` の二択（スマホは文字列を作らない）。生テキストは `note` へ。
    ルールに `memoKey` を持たせておけば逆引きを飛ばして直接確定できる（定期取引向け）。
-5. **税率** ＝ その `accountKey` の `defaultTaxCategory` を [README.md](README.md) §4 の変換表で `taxRate` に。
-   食品など商品性質から 8% が明らかなケースはそちらを優先。逆引きが 1 件に決まったらその `taxRate` でもよい。
+5. **税率** ＝ レシートの税率マーク（未実装でよい）→ 4 で決まった摘要の `taxRate` →
+   その `accountKey` の `defaultTaxCategory` を [README.md](README.md) §4 の変換表で（経費科目だけ）→ `null`。
+   収入科目は摘要が無ければ `null`（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.7・2026-10-02 minor（11））。
 6. **事業割合** ＝ `100`（PC は解決できた `memoKey` の摘要の値で置き換える。§1）。
    ⚠ 事業割合だけ違う摘要（電気料金 40／電気料金（事業専用）100 など）が候補に並んだら、
    4 の「近い候補」で自動確定せず `Ambiguous` にするかユーザーに確定させる。
-7. **インボイス** ＝ レシート OCR の `T\d{13}` 検出結果。無ければ `hasInvoiceDefault` か `matchStatus`。
+7. **インボイス** ＝ レシートは OCR の `T\d{13}` 検出結果（無ければ `false`）。購買・通帳は省略（PC が `true` 扱い）。
+   `hasInvoiceDefault` では埋めない（[transaction-import.md](transaction-import.md) §8・2026-10-02 minor（12））。
 8. 科目がヒットなし → `matchStatus = "UnmatchedAccount"`、推定値があれば入れて PC の「要確認」へ。
 
 ---

@@ -10,6 +10,12 @@ import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 object AoiroChoboMemoRules {
 
     /**
+     * 摘要を選んだときに決まる科目。ふつうの摘要は相手科目（`counterAccountKey`）、
+     * 振替の摘要は借方の科目（`debitAccountKey`。レシートでは品目の経費科目。貸方は支払方法の科目）
+     */
+    fun accountKeyOf(memo: AoiroChoboMemoTemplate): String? = memo.counterAccountKey ?: memo.debitAccountKey
+
+    /**
      * PC の摘要画面のタブ（docs/integration/REPLY-pc-2026-09-23b.md §4）。
      *
      * 現金・預金のタブは `ledgerType` を見ず、`showInCash` / `showInBank` だけで絞る。
@@ -27,27 +33,11 @@ object AoiroChoboMemoRules {
         AP_OUT("買掛/支払", { it.ledgerType == "AP" && it.direction == "Out" }),
         UNPAID_IN("未払/発生", { it.ledgerType == "Unpaid" && it.direction == "In" }),
         UNPAID_OUT("未払/支払", { it.ledgerType == "Unpaid" && it.direction == "Out" }),
-        TRANSFER("振替", { it.ledgerType == "Transfer" });
+        TRANSFER("振替", { it.ledgerType == "Transfer" }),
+
+        /** レシート共通（契約 minor（10））。現金/出金の摘要の一部で、未払・振替のレシートにも同じ摘要で使える */
+        RECEIPT_COMMON("レシート共通", { it.paymentCommon });
 
         fun contains(memo: AoiroChoboMemoTemplate): Boolean = match(memo)
     }
-
-    /**
-     * 自動で選んではいけない摘要の memoKey。
-     *
-     * PC は memoKey が解決できたら**摘要側の businessRatio を仕訳に入れる**（REPLY-pc-2026-09-23b.md §1・答えB）。
-     * 相手科目・税率が同じで事業割合だけ違う摘要（電気料金 40% ／ 電気料金（事業専用）100%）を
-     * 取り違えると帳簿の金額が変わるので、そういう組に属する摘要はユーザーに確定させる。
-     *
-     * 判定：同じ `ledgerType × direction × counterAccountKey × taxRate` の中で businessRatio が
-     * 1つでも違えば、その組の全員が対象。振替（相手科目を持たない）は対象外。
-     */
-    fun ratioSensitiveMemoKeys(memos: List<AoiroChoboMemoTemplate>): Set<String> =
-        memos.asSequence()
-            .filter { it.ledgerType != "Transfer" }
-            .groupBy { listOf(it.ledgerType, it.direction, it.counterAccountKey, it.taxRate) }
-            .values
-            .filter { group -> group.map { it.businessRatio }.distinct().size > 1 }
-            .flatMap { group -> group.map { it.memoKey } }
-            .toSet()
 }

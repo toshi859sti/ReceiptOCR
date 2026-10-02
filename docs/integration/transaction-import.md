@@ -102,7 +102,7 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 | `memoKey` | ✔※ | 帳簿の「摘要」列。**`vocabulary.memoTemplates[].memoKey` のいずれかのみ**（閉じた語彙）。キー自体は必須だが、逆引き 0 件のときは `null`（`UnmatchedMemo`）。§「摘要は閉じた語彙」 |
 | `memoName` | — | `memoKey` に対応する `name` のエコー。PC は照合に使わない（取込サマリーの表示・契約テストの突き合わせ用）。`memoKey` が `null` なら `null` |
 | `note` | — | 帳簿の「メモ」列。**生テキスト（商品名・但し書き・通帳メモ）はここに入れる**。自由文字・長さ制限ゆるめ |
-| `hasInvoice` | — | 省略時 PC 側既定（現状 true 相当）。§「hasInvoice」 |
+| `hasInvoice` | — | `Receipt` は `true`/`false`、`Purchase`/`Deposit` は省略。省略時 PC 側既定（現状 true 相当）。§「hasInvoice」 |
 | `matchStatus` | ✔ | §「matchStatus」 |
 | `confidence` | — | OCR / マッチングの自己申告確度 |
 | `meta` | — | 参考情報一式。オブジェクトごと省略可 |
@@ -171,14 +171,38 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 | Purchase | `AP` | 商品の経費科目 | 買掛金 |
 | Deposit 入金（元 amount ≥ 0） | `Bank` | 預金口座科目（スロット） | ルールの相手科目 |
 | Deposit 出金（元 amount < 0） | `Bank` | ルールの相手科目 | 預金口座科目（スロット） |
-| Receipt 現金払い | `Cash` | 品目の経費科目 | 現金 |
-| Receipt クレカ・電子マネー | `Unpaid` | 品目の経費科目 | 未払金 / 事業主借 等 |
+| Receipt 貸方が `ledgerAffinity == Cash`（現金） | `Cash` | 品目の経費科目 | 支払方法の科目 |
+| Receipt 貸方が `ledgerAffinity == Unpaid`（未払金） | `Unpaid` | 品目の経費科目 | 支払方法の科目 |
+| Receipt 貸方がそれ以外（事業主借など） | `Transfer` | 品目の経費科目 | 支払方法の科目 |
+
+- **Receipt の `ledgerType` は貸方（支払方法）の科目の `ledgerAffinity` で決める**（2026-09-30 minor（9））。
+  支払手段（クレカ・電子マネー）ではない。返品・値引き（§7）は借方／貸方を入れ替える**前**の貸方で決める。
+- Receipt の貸方が預金（`Bank`）・買掛金（`AP`）になる支払方法は扱わない。Receipt は `bankSlotNo` を持てない（§6）。
+- **`ledgerType` と科目が合わない行は「要確認」**（2026-09-30 PC 実装）。`Cash`/`Bank`/`AR`/`AP`/`Unpaid` を
+  指定したのに、その帳簿の科目（`ledgerAffinity` が同じ科目）が借方にも貸方にも無い行のこと。
+  例：「経費 / 事業主借」を `Unpaid`。帳簿ページは科目で仕訳を拾うので、そのまま入れるとどの帳簿にも出ない。
+  確定するときは、そのときの科目から下の推定で帳簿を決め直す（例の行は振替伝票に入る）。
+  `Transfer` の指定は科目を問わずそのまま使う。
+- **`memoKey` の摘要がその帳簿で使えない行も「要確認」**（2026-10-01 minor（10） PC 実装）。
+  帳簿は上の「科目と合わなければ推定し直した帳簿」で判定する。使える摘要：
+
+  | 帳簿 | 使える摘要 |
+  |---|---|
+  | `Cash` | `showInCash`（レシート共通の摘要もこれに当たる） |
+  | `Bank` | `showInBank` |
+  | `Unpaid` | `ledgerType == "Unpaid"`、または `paymentCommon` |
+  | `Transfer` | `ledgerType == "Transfer"`、または `paymentCommon` |
+  | `AR` / `AP` | `ledgerType` が同じ |
+
+  例：レシート共通でない現金の摘要を `Transfer` で送った行。そのまま入れると帳簿の摘要の候補に無く、農家が選び直せない。
+  要確認画面では状態に「この帳簿で使えない摘要」と出て、摘要を選び直すまで登録できない。
 
 - **預金口座科目**は `bankSlotNo` に対応する `vocabulary.accounts[]` の科目。
   スマホは `credit`/`debit` の該当側に、その科目の `accountKey` を入れる。
 - `ledgerType` を省略した場合、PC は「借方・貸方のうち `ledgerAffinity` が
   `Cash`/`Bank`/`AR`/`AP`/`Unpaid` の科目」からその帳簿を決める。両方該当・両方非該当なら
-  `Transfer` 扱い＋「要確認」。
+  `Transfer`。推定した行は、推定だけを理由に「要確認」にはしない（以前は「要確認」と書いていたが、
+  PC は実装していなかった。2026-09-30 に文書を実装に合わせた）。
 
 ---
 
@@ -213,9 +237,17 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 
 ## 8. `hasInvoice`
 
-- スマホは `meta.registrationNumber`（インボイス登録番号 T+13桁）を渡すだけでよい。
-- `hasInvoice` を判断できるなら `true`/`false` を入れる。省略時は PC 側の既定（現状 true 相当）。
-- PC 側で取込後に編集可能。
+`source` ごとに決める（2026-10-02 minor（12））。
+
+| `source` | `hasInvoice` | 理由 |
+|---|---|---|
+| `Receipt` | 登録番号（`T\d{13}`）が読めたら `true`、読めなければ **`false`** | レシートに書いてあるかどうかの事実。`hasInvoiceDefault`（推測）では埋めない |
+| `Purchase` / `Deposit` | **省略する** | JA の請求書・通帳では登録番号を読んでいない。PC は省略を `true` として記帳する（JA は登録事業者、引き落としの請求書にも番号が載る） |
+
+- 読めた番号は `meta.registrationNumber` にも入れる。
+- OCR が番号を読み落とすと、実際はありでも `false` になる。簡易課税なので仕入れ側のインボイスの有無は税額に効かず、
+  PC で取込後に直せるので受け入れる。
+- 省略時の PC の既定は `true` 相当（摘要の `hasInvoiceDefault` は見ない）。
 
 ---
 

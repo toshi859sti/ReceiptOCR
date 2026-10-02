@@ -45,6 +45,12 @@ data class AoiroChoboMemoTemplate(
     val showInCash: Boolean = false,
     val showInBank: Boolean = false,
 
+    /**
+     * レシート共通（契約 2026-10-01 minor（10））。true なら現金/出金・未払/発生・振替のどれでも同じ memoKey のまま使える。
+     * 形は必ず現金/出金で相手科目が経費。レシート（`Receipt`）にだけ効く。古い vocabulary には無く false
+     */
+    val paymentCommon: Boolean = false,
+
     /** この摘要が特定の預金スロット専用ならその番号 */
     val bankSlotNo: Int? = null,
 

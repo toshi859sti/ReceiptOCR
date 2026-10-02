@@ -30,6 +30,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import com.example.greenframeocr.data.AccountingSoftware
 import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.AppPreferences
@@ -560,7 +563,6 @@ private fun List<GeneralReceiptItem>.toEditableItems(): List<EditableItem> =
 
 // ─── オートコンプリート入力欄（過去の入力実績から候補表示。店舗名／品目名で共用） ─────
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AutocompleteTextField(
     value: String,
@@ -575,11 +577,11 @@ private fun AutocompleteTextField(
         if (value.isBlank()) emptyList()
         else suggestions.filter { it != value && it.contains(value) }.take(5)
     }
-    ExposedDropdownMenuBox(
-        expanded = expanded && filtered.isNotEmpty(),
-        onExpandedChange = { },
-        modifier = modifier
-    ) {
+    var fieldWidthPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    // 候補は入力中に出すので、フォーカスを取らない DropdownMenu にする。ExposedDropdownMenu は
+    // フォーカスを奪い、候補が出たあとのキー入力（バックスペースなど）が入力欄に届かなくなる
+    Box(modifier = modifier) {
         OutlinedTextField(
             value = value,
             onValueChange = {
@@ -590,12 +592,14 @@ private fun AutocompleteTextField(
             singleLine = true,
             colors = colors,
             modifier = Modifier
-                .menuAnchor()
                 .fillMaxWidth()
+                .onGloballyPositioned { fieldWidthPx = it.size.width }
         )
-        ExposedDropdownMenu(
+        DropdownMenu(
             expanded = expanded && filtered.isNotEmpty(),
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = false),
+            modifier = Modifier.width(with(density) { fieldWidthPx.toDp() })
         ) {
             filtered.forEach { suggestion ->
                 DropdownMenuItem(
@@ -776,6 +780,10 @@ private fun ReceiptDetailDialog(
     var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var showPaymentAccountPicker by remember { mutableStateOf(false) }
     var aoiroAccounts by remember { mutableStateOf<List<AoiroChoboAccount>>(emptyList()) }
+    var aoiroVocab by remember { mutableStateOf<GeneralReceiptViewModel.AoiroVocab?>(null) }
+    // 明細を押したとき：まず「この明細だけ／同じ品目すべて」を選ぶ（linkChoice）→ 設定ダイアログ（linkTarget）
+    var linkChoice by remember { mutableStateOf<GeneralReceiptItem?>(null) }
+    var linkTarget by remember { mutableStateOf<ReceiptLinkTarget?>(null) }
     // 支払方法の科目の上書きはこの画面で変えられる。receipt は開いたときの値なので、
     // 編集の保存で古い上書きを書き戻さないよう今の値をここで持つ
     var yayoiPaymentOverride by remember { mutableStateOf(receipt.paymentAccountOverride) }
@@ -813,8 +821,35 @@ private fun ReceiptDetailDialog(
         editItems.addAll(loaded.toEditableItems())
         isLoading = false
         yayoiAccounts = viewModel.loadYayoiAccounts()
-        if (isAoiro) aoiroAccounts = viewModel.loadAoiroVocab().accounts
+        if (isAoiro) {
+            val vocab = viewModel.loadAoiroVocab()
+            aoiroVocab = vocab
+            aoiroAccounts = vocab.accounts
+        }
         reloadCounterAccountName()
+    }
+
+    // 明細ごとの科目・摘要。この画面で変えてもすぐ表示に出るよう、明細とグループは変更を追う
+    val liveItems by remember(receipt.id) { viewModel.itemsForReceiptFlow(receipt.id) }.collectAsState(initial = null)
+    val itemGroups by viewModel.itemGroups.collectAsState()
+    val groupsByKey = remember(itemGroups) { itemGroups.associateBy { it.canonicalKey } }
+    val liveItemsById = remember(liveItems) { liveItems.orEmpty().associateBy { it.id } }
+    // 編集の保存は元の行を copy するので、ここで変えた個別変更を古い値で書き戻さないよう元の行も合わせる
+    LaunchedEffect(liveItems) {
+        val items = liveItems
+        if (items != null && !isEditMode && !isLoading) originalItems = items
+    }
+
+    /** 明細に効いている科目（あおいろは「科目 ／ 摘要」）と、個別変更かどうか。設定できない明細は null */
+    fun linkLabelOf(item: GeneralReceiptItem): Pair<String?, Boolean> {
+        val group = groupsByKey[item.canonicalKey]
+        return if (isAoiro) {
+            aoiroItemLinkLabel(aoiroVocab, item, group) to (item.overrideAccountKey != null)
+        } else {
+            val overridden = item.yayoiAccountId != null
+            val accountId = item.yayoiAccountId ?: group?.yayoiAccountId
+            yayoiAccounts.find { it.id == accountId }?.accountName to overridden
+        }
     }
 
     val calculatedTotal = editItems.sumOf { it.priceStr.toIntOrNull() ?: 0 }
@@ -992,9 +1027,14 @@ private fun ReceiptDetailDialog(
                                 val itemColor = if (excluded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                                  else MaterialTheme.colorScheme.onSurface
                                 val itemDecoration = if (excluded) TextDecoration.LineThrough else TextDecoration.None
+                                // 科目・摘要は今の DB の行で出す。品目名が空・経費対象外の明細はグループが無いので設定できない
+                                val live = item.originalId?.let { liveItemsById[it] }
+                                val linkable = live != null && !live.isExcluded && live.itemName.isNotBlank() &&
+                                    groupsByKey.containsKey(live.canonicalKey)
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .then(if (linkable) Modifier.clickable { linkChoice = live } else Modifier)
                                         .padding(vertical = 6.dp)
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1018,8 +1058,31 @@ private fun ReceiptDetailDialog(
                                     }
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.End
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        if (linkable && live != null) {
+                                            val (label, overridden) = linkLabelOf(live)
+                                            Text(
+                                                text = (label ?: "未設定") + if (overridden) "（個別）" else "",
+                                                fontSize = (smallFontSize - 1f).coerceAtLeast(10f).sp,
+                                                color = when {
+                                                    overridden -> OverriddenAccountColor
+                                                    label != null -> MatchedAccountColor
+                                                    else -> MaterialTheme.colorScheme.error
+                                                },
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Icon(
+                                                Icons.Default.Edit,
+                                                contentDescription = "科目を設定",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 4.dp).size(14.dp)
+                                            )
+                                        } else {
+                                            Spacer(Modifier.weight(1f))
+                                        }
                                         Text(
                                             text = "¥${"%,d".format(item.priceStr.toIntOrNull() ?: 0)}",
                                             fontSize = bodyFontSize.sp,
@@ -1123,6 +1186,44 @@ private fun ReceiptDetailDialog(
     }
     }
 
+    // 明細の科目・摘要：この明細だけ（個別変更）か、同じ品目名の明細すべて（グループ）かを選ぶ
+    linkChoice?.let { item ->
+        val group = groupsByKey[item.canonicalKey]
+        AlertDialog(
+            onDismissRequest = { linkChoice = null },
+            title = { Text(if (isAoiro) "あおいろ科目・摘要の設定" else "勘定科目の設定") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(item.itemName, fontWeight = FontWeight.Medium)
+                    Text(
+                        "「同じ品目すべて」は商品名・但し書きリストのグループの設定です。保存すると、そのグループの明細ごとの個別変更は解除します",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedButton(
+                        onClick = { linkChoice = null; linkTarget = ReceiptLinkTarget.Item(item) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("この明細だけ") }
+                    OutlinedButton(
+                        onClick = { linkChoice = null; linkTarget = ReceiptLinkTarget.Group(item.canonicalKey) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("同じ品目すべて（全年で ${group?.count ?: 0}件）") }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { linkChoice = null }) { Text("キャンセル") } }
+        )
+    }
+    linkTarget?.let { target ->
+        ReceiptItemLinkEditor(
+            target = target,
+            isAoiro = isAoiro,
+            viewModel = viewModel,
+            onDismiss = { linkTarget = null },
+            onYayoiAccountsChanged = { yayoiAccounts = it }
+        )
+    }
+
     if (showPaymentAccountPicker && isAoiro) {
         AoiroPaymentOverrideDialog(
             subject = receipt.paymentMethodText?.takeIf { it.isNotBlank() }
@@ -1196,7 +1297,7 @@ fun AoiroPaymentOverrideDialog(
                     )
                 }
                 Text(
-                    "科目を外して保存すると、支払方法のルールで決まる科目に戻ります（どれにも当たらなければ現金）",
+                    "科目を外して保存すると、支払方法のルールで決まる科目に戻ります（どれにも当たらなければ既定の科目）",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

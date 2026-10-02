@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.util.AoiroChoboAccountRules
+import com.example.greenframeocr.util.AoiroChoboMemoRules
 import com.example.greenframeocr.util.RomajiSearch
 
 // あおいろ帳簿の科目・摘要を選ぶ部品。JA 購買の商品・通帳の摘要パターン・レシートの品目で共用する。
@@ -235,7 +236,7 @@ internal fun AoiroAccountPickerDialog(
  *
  * 摘要を選ぶと、呼び出し側で科目をその摘要の相手科目にする（摘要は相手科目を 1 つ持つ）。
  * 絞り込みを外すと、その用途の摘要をすべて出し、行ごとに相手科目を添える。
- * 事業割合だけ違う組の摘要には「要確定」を付ける（帳簿の金額が変わるので、ここで確定したものだけが使われる）。
+ * 行には税率・事業割合を添える（事業割合だけ違う摘要を取り違えると帳簿の金額が変わるため）。
  *
  * @param tabMemos その用途で使える摘要すべて（用途の分類・使ってよい相手科目で絞った後）
  * @param accounts 相手科目の名前を引くための科目一覧
@@ -249,7 +250,6 @@ internal fun AoiroMemoPickerDialog(
     tabMemos: List<AoiroChoboMemoTemplate>,
     accounts: List<AoiroChoboAccount>,
     currentAccountKey: String?,
-    ratioSensitive: Set<String>,
     selectedKey: String?,
     onSelect: (AoiroChoboMemoTemplate?) -> Unit,
     onDismiss: () -> Unit
@@ -259,7 +259,7 @@ internal fun AoiroMemoPickerDialog(
     var searchQuery by remember { mutableStateOf("") }
     val query = searchQuery.trim()
     val filtered = tabMemos.filter { memo ->
-        (!byAccount || memo.counterAccountKey == currentAccountKey) &&
+        (!byAccount || AoiroChoboMemoRules.accountKeyOf(memo) == currentAccountKey) &&
             (query.isEmpty() || memo.name.contains(query, ignoreCase = true) ||
                 RomajiSearch.matches(memo.searchKey, query))
     }
@@ -314,10 +314,9 @@ internal fun AoiroMemoPickerDialog(
                             selected = memo.memoKey == selectedKey,
                             title = memo.name,
                             subtitle = listOfNotNull(
-                                memo.counterAccountKey.takeIf { !byAccount }?.let { accountNames[it] ?: it },
+                                AoiroChoboMemoRules.accountKeyOf(memo).takeIf { !byAccount }?.let { accountNames[it] ?: it },
                                 memoDetail(memo).ifEmpty { null }
                             ).joinToString("・"),
-                            tag = if (memo.memoKey in ratioSensitive) "要確定" else null,
                             onClick = { onSelect(memo) }
                         )
                     }
@@ -334,7 +333,6 @@ private fun PickerRow(
     selected: Boolean,
     title: String,
     subtitle: String,
-    tag: String? = null,
     onClick: () -> Unit
 ) {
     Row(
@@ -350,16 +348,6 @@ private fun PickerRow(
             if (subtitle.isNotEmpty()) {
                 Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        }
-        tag?.let {
-            Text(
-                it,
-                fontSize = 11.sp,
-                color = Color(0xFF8A4B00),
-                modifier = Modifier
-                    .background(Color(0xFFFFE0B2), MaterialTheme.shapes.small)
-                    .padding(horizontal = 4.dp, vertical = 1.dp)
-            )
         }
     }
 }

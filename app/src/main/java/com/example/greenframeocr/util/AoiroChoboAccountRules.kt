@@ -114,4 +114,21 @@ object AoiroChoboAccountRules {
         "men" -> "免税"
         else -> value
     }
+
+    /**
+     * 経費の側の `taxRate`（契約 vocabulary-snapshot §4.7・minor（11））。税率マーク（未実装）→ 摘要の [memoTaxRate] →
+     * 科目の `defaultTaxCategory` の順。科目の既定は**経費科目だけ**（収入は摘要が無ければ null）。
+     * `Taxable` は 8% と 10% を分けられないので README §4 の表どおり 10% にする
+     */
+    fun expenseTaxRate(memoTaxRate: String?, account: AoiroChoboAccount?): String? =
+        memoTaxRate ?: account?.takeIf { it.accountType == "Expense" }?.let { defaultTaxRate(it.defaultTaxCategory) }
+
+    /** 科目の既定の課税区分 → `taxRate`（README §4）。NA・未設定・未知の値は null */
+    fun defaultTaxRate(category: String?): String? = when (category) {
+        "Taxable" -> "10"
+        "NonTaxable" -> "non"
+        "NotApplicable" -> "na"
+        "TaxExempt" -> "men"
+        else -> null
+    }
 }

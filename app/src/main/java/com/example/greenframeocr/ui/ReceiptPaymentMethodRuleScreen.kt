@@ -48,6 +48,9 @@ fun ReceiptPaymentMethodRuleScreen(
     var editTarget by remember { mutableStateOf<ReceiptPaymentMethodRule?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<ReceiptPaymentMethodRule?>(null) }
+    // あおいろ：どのルールにも当たらないときの科目（null = 現金）
+    var defaultPaymentKey by remember { mutableStateOf(viewModel.aoiroReceiptDefaultPaymentKey) }
+    var showDefaultPicker by remember { mutableStateOf(false) }
 
     fun reload() {
         scope.launch {
@@ -55,6 +58,14 @@ fun ReceiptPaymentMethodRuleScreen(
             accounts = viewModel.loadYayoiAccounts()
             if (isAoiro) aoiroAccounts = viewModel.loadAoiroVocab().accounts
             isLoading = false
+        }
+    }
+
+    /** ルールを書き終えてから一覧を読み直す */
+    fun writeThenReload(write: suspend () -> Unit) {
+        scope.launch {
+            write()
+            reload()
         }
     }
 
@@ -92,8 +103,9 @@ fun ReceiptPaymentMethodRuleScreen(
                 text = if (isAoiro) {
                     "レシートに印字された支払方法（例:「クレジット」「PayPay」）に含まれる" +
                         "キーワードと、あおいろ帳簿に送る支払方法の科目（貸方）を対応付けます。" +
-                        "どれにも一致しない場合や記載がない場合（手書き領収書等）は「現金」になります。" +
-                        "一致したルールにあおいろの科目が無いと、そのレシートは「科目なし」で PC に送ります。"
+                        "どれにも一致しない場合や記載がない場合（手書き領収書等）は下の「既定の科目」になります。" +
+                        "一致したルールにあおいろの科目が無いと、そのレシートは「科目なし」で PC に送ります。" +
+                        "科目で帳簿が決まります（現金 → 現金出納帳、未払金 → 未払帳、事業主借 → 振替伝票）。"
                 } else {
                     "レシートに印字された支払方法（例:「クレジット」「PayPay」）に含まれる" +
                         "キーワードと、弥生CSV出力時の支払方法の科目（貸方勘定科目）を対応付けます。" +
@@ -103,6 +115,21 @@ fun ReceiptPaymentMethodRuleScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(12.dp)
             )
+            if (isAoiro && aoiroAccounts.isNotEmpty()) {
+                val defaultName = defaultPaymentKey?.let { key -> aoiroAccounts.find { it.accountKey == key }?.name ?: key }
+                Box(Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
+                    PickerField(
+                        label = "既定の科目（どれにも一致しないとき）",
+                        value = defaultName ?: "現金",
+                        hasValue = defaultPaymentKey != null,
+                        onPick = { showDefaultPicker = true },
+                        onClear = {
+                            defaultPaymentKey = null
+                            viewModel.aoiroReceiptDefaultPaymentKey = null
+                        }
+                    )
+                }
+            }
             Divider()
 
             if (isLoading) {
@@ -157,6 +184,23 @@ fun ReceiptPaymentMethodRuleScreen(
         }
     }
 
+    if (isAoiro && showDefaultPicker) {
+        AoiroAccountPickerDialog(
+            subject = "どれにも一致しないとき",
+            emptySubject = "支払方法",
+            accounts = AoiroChoboReceiptRules.paymentCandidates(aoiroAccounts),
+            allAccounts = AoiroChoboReceiptRules.allPaymentCandidates(aoiroAccounts),
+            memoCandidates = null,
+            selectedKey = defaultPaymentKey,
+            onSelect = { key ->
+                defaultPaymentKey = key
+                viewModel.aoiroReceiptDefaultPaymentKey = key
+                showDefaultPicker = false
+            },
+            onDismiss = { showDefaultPicker = false }
+        )
+    }
+
     // あおいろモード：キーワードとあおいろの科目だけを編集する（弥生の科目はそのまま）
     if (isAoiro && showAddDialog) {
         AoiroRuleEditDialog(
@@ -164,14 +208,12 @@ fun ReceiptPaymentMethodRuleScreen(
             accounts = aoiroAccounts,
             onDismiss = { showAddDialog = false },
             onSave = { keyword, key, name ->
-                viewModel.savePaymentMethodRule(
-                    ReceiptPaymentMethodRule(
-                        keyword = keyword, yayoiAccountId = null, sortOrder = rules.size,
-                        accountKey = key, accountKeyName = name
-                    )
+                val rule = ReceiptPaymentMethodRule(
+                    keyword = keyword, yayoiAccountId = null, sortOrder = rules.size,
+                    accountKey = key, accountKeyName = name
                 )
                 showAddDialog = false
-                reload()
+                writeThenReload { viewModel.savePaymentMethodRule(rule) }
             }
         )
     }
@@ -181,9 +223,10 @@ fun ReceiptPaymentMethodRuleScreen(
             accounts = aoiroAccounts,
             onDismiss = { editTarget = null },
             onSave = { keyword, key, name ->
-                viewModel.savePaymentMethodRule(rule.copy(keyword = keyword, accountKey = key, accountKeyName = name))
                 editTarget = null
-                reload()
+                writeThenReload {
+                    viewModel.savePaymentMethodRule(rule.copy(keyword = keyword, accountKey = key, accountKeyName = name))
+                }
             }
         )
     }
@@ -195,11 +238,9 @@ fun ReceiptPaymentMethodRuleScreen(
             accounts = accounts,
             onDismiss = { showAddDialog = false },
             onSave = { keyword, accountId ->
-                viewModel.savePaymentMethodRule(
-                    ReceiptPaymentMethodRule(keyword = keyword, yayoiAccountId = accountId, sortOrder = rules.size)
-                )
+                val rule = ReceiptPaymentMethodRule(keyword = keyword, yayoiAccountId = accountId, sortOrder = rules.size)
                 showAddDialog = false
-                reload()
+                writeThenReload { viewModel.savePaymentMethodRule(rule) }
             }
         )
     }
@@ -211,9 +252,8 @@ fun ReceiptPaymentMethodRuleScreen(
             accounts = accounts,
             onDismiss = { editTarget = null },
             onSave = { keyword, accountId ->
-                viewModel.savePaymentMethodRule(rule.copy(keyword = keyword, yayoiAccountId = accountId))
                 editTarget = null
-                reload()
+                writeThenReload { viewModel.savePaymentMethodRule(rule.copy(keyword = keyword, yayoiAccountId = accountId)) }
             }
         )
     }
@@ -227,9 +267,8 @@ fun ReceiptPaymentMethodRuleScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deletePaymentMethodRule(rule)
                         deleteTarget = null
-                        reload()
+                        writeThenReload { viewModel.deletePaymentMethodRule(rule) }
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) { Text("削除") }

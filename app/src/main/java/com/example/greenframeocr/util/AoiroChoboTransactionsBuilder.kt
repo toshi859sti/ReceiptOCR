@@ -127,6 +127,8 @@ object AoiroChoboTransactionsBuilder {
         val memoKey: String?,
         val memoName: String?,
         val note: String?,
+        /** 契約 §8。レシートだけ登録番号の有無で true/false。購買・預金は判断できないので null（PC の既定） */
+        val hasInvoice: Boolean? = null,
         val matchStatus: String,
         val confidence: String?,
         val meta: Meta
@@ -307,7 +309,8 @@ object AoiroChoboTransactionsBuilder {
         val counterSide = Side(
             accountKey = counter?.accountKey,
             accountName = counter?.let { counterKeyName ?: it.name },
-            taxRate = memo?.taxRate
+            // 摘要が無ければ科目の既定（経費科目のときだけ。入金の収入科目は null のまま）
+            taxRate = AoiroChoboAccountRules.expenseTaxRate(memo?.taxRate, counter)
         )
         val bankSide = Side(
             accountKey = bank.accountKey,
@@ -352,12 +355,14 @@ object AoiroChoboTransactionsBuilder {
      *
      * 借方＝明細の個別上書き、無ければ品目グループのあおいろ科目・摘要（[linkForReceiptItem]）。
      * 貸方＝支払方法の科目で、レシートの個別上書き、無ければ弥生の出力と同じく支払方法の印字に
-     * 最初に部分一致したルール（[paymentRules] の並び順）、どれにも当たらなければ現金（[resolveReceiptPayment]）。
-     * 当たったルールにあおいろの科目が無ければ貸方は未設定（`UnmatchedAccount`）にする（現金にすると誤りになる）。
-     * 帳簿は貸方が現金なら `Cash`、それ以外は `Unpaid`（契約 §5）。
+     * 最初に部分一致したルール（[paymentRules] の並び順）、どれにも当たらなければ既定の科目
+     * （[defaultPaymentKey]。未設定なら現金。[resolveReceiptPayment]）。
+     * 当たったルールにあおいろの科目が無ければ貸方は未設定（`UnmatchedAccount`）にする（既定にすると誤りになる）。
      *
-     * 摘要は品目グループ（または個別上書き）に「現金/出金」のものを持つ。現金以外の支払いでは帳簿が変わるので、
-     * 「未払/発生」に同じ名前・税率・事業割合の摘要があればそれに置き換え、無ければ摘要なしで送る。
+     * 帳簿は貸方の科目の `ledgerAffinity` で決める（契約 2026-09-30 minor（9）・[AoiroChoboReceiptRules.ledgerOf]）：
+     * 現金 → `Cash`、未払金 → `Unpaid`、それ以外（事業主借など）→ `Transfer`。
+     * 摘要は品目グループ（または個別上書き）が持つものを、その帳簿で使えるとき（帳簿の摘要かレシート共通）だけ送る。
+     * 使えなければ摘要なし（`UnmatchedMemo`）。PC はこの組み合わせ以外を要確認にする（契約 minor（10））。
      */
     fun buildReceipt(
         rows: List<ReceiptRow>,
@@ -366,18 +371,22 @@ object AoiroChoboTransactionsBuilder {
         memos: List<AoiroChoboMemoTemplate>,
         vocabMeta: AoiroChoboVocabMeta,
         appVersion: String,
+        defaultPaymentKey: String? = null,
         now: Date = Date()
     ): Result {
         val accountsByKey = accounts.associateBy { it.accountKey }
         val warnings = mutableListOf<String>()
 
-        val cashAccounts = accounts.filter { it.ledgerAffinity == "Cash" }
-        val cash = cashAccount(accounts)
-        if (cash == null) {
-            warnings += if (cashAccounts.isEmpty()) {
-                "取り込んだ科目に現金（帳簿の所属が Cash の科目）がありません。支払方法のルールに当たらないレシートは貸方を未設定で出力します"
-            } else {
-                "現金にあたる科目が ${cashAccounts.size} 件あり決められません。支払方法のルールに当たらないレシートは貸方を未設定で出力します"
+        val fallback = defaultPayment(accounts, defaultPaymentKey)
+        if (fallback == null) {
+            val cashAccounts = accounts.filter { it.ledgerAffinity == "Cash" }
+            warnings += when {
+                defaultPaymentKey != null ->
+                    "既定の支払方法の科目が今の科目にありません。支払方法のルールに当たらないレシートは貸方を未設定で出力します"
+                cashAccounts.isEmpty() ->
+                    "取り込んだ科目に現金（帳簿の所属が Cash の科目）がありません。支払方法のルールに当たらないレシートは貸方を未設定で出力します"
+                else ->
+                    "現金にあたる科目が ${cashAccounts.size} 件あり決められません。支払方法のルールに当たらないレシートは貸方を未設定で出力します"
             }
         }
 
@@ -404,7 +413,7 @@ object AoiroChoboTransactionsBuilder {
                 continue
             }
 
-            val (payment, paymentName) = resolveReceiptPayment(row.receipt, paymentRules, accountsByKey, cash)
+            val (payment, paymentName) = resolveReceiptPayment(row.receipt, paymentRules, accountsByKey, fallback)
             entries += receiptEntry(row, externalId, date, payment, paymentName, accountsByKey, memos)
         }
         return finish(entries, skipped, warnings, vocabMeta, appVersion, now)
@@ -415,18 +424,25 @@ object AoiroChoboTransactionsBuilder {
         accounts.filter { it.ledgerAffinity == "Cash" }.singleOrNull()
 
     /**
+     * 支払方法のルールに当たらないレシートの貸方。農家が選んだ科目（[defaultPaymentKey]）、選んでいなければ現金。
+     * 選んだ科目が今の辞書に無ければ null（現金にはしない。事業主借のつもりの支払いを現金にすると誤りになる）
+     */
+    fun defaultPayment(accounts: List<AoiroChoboAccount>, defaultPaymentKey: String?): AoiroChoboAccount? =
+        if (defaultPaymentKey != null) accounts.find { it.accountKey == defaultPaymentKey } else cashAccount(accounts)
+
+    /**
      * レシートの支払方法の科目（貸方）と、JSON にエコーする名前。優先順は
-     * レシートの個別上書き → 支払方法の印字に最初に部分一致したルール → 現金。
+     * レシートの個別上書き → 支払方法の印字に最初に部分一致したルール → 既定（[defaultPayment]）。
      *
      * 上書き・ルールの科目が今の辞書に無ければ null（`UnmatchedAccount`）。当たったルールに
-     * あおいろの科目が無いときも null で、現金にはしない（現金以外の支払いを現金にすると誤りになる）。
+     * あおいろの科目が無いときも null で、既定にはしない（ルールが示す支払方法と違う科目になるため）。
      * 出力確認などの画面表示もこれを使う（出力と表示がずれないように）
      */
     fun resolveReceiptPayment(
         receipt: GeneralReceipt,
         paymentRules: List<ReceiptPaymentMethodRule>,
         accountsByKey: Map<String, AoiroChoboAccount>,
-        cash: AoiroChoboAccount?
+        fallback: AoiroChoboAccount?
     ): Pair<AoiroChoboAccount?, String?> {
         receipt.paymentOverrideAccountKey?.let { key ->
             val account = accountsByKey[key]
@@ -438,7 +454,7 @@ object AoiroChoboTransactionsBuilder {
             val account = rule.accountKey?.let { accountsByKey[it] }
             return account to account?.let { rule.accountKeyName ?: it.name }
         }
-        return cash to cash?.name
+        return fallback to fallback?.name
     }
 
     private fun receiptEntry(
@@ -455,24 +471,21 @@ object AoiroChoboTransactionsBuilder {
         val link = linkForReceiptItem(item, row.group)
         val expense = link.accountKey?.let { accountsByKey[it] }
 
-        val isCash = payment?.ledgerAffinity == "Cash"
-        val tab = if (isCash) MemoTab.CASH_OUT else MemoTab.UNPAID_IN
-        val stored = link.memoKey?.let { key -> memos.find { it.memoKey == key } }
-        val memo = if (expense == null || payment == null || stored == null) null else when {
-            tab.contains(stored) && stored.counterAccountKey == expense.accountKey -> stored
-            // 帳簿の違う同じ摘要（現金/出金の 修理代 ↔ 未払/発生の 修理代）
-            else -> memos.firstOrNull {
-                tab.contains(it) && it.counterAccountKey == expense.accountKey && it.name == stored.name &&
-                    it.taxRate == stored.taxRate && it.businessRatio == stored.businessRatio
-            }
+        // 帳簿は支払方法の科目で決まる（現金 → 現金出納帳、未払金 → 未払帳、事業主借など → 振替伝票）
+        val ledger = AoiroChoboReceiptRules.ledgerOf(payment)
+        // 摘要はその帳簿で使えるもの（帳簿の摘要かレシート共通）だけ送る。使えなければ摘要なし。
+        // 名前の同じ別の帳簿の摘要には置き換えない（事業割合が違うことがあるため・契約 minor（10））
+        val memoKey = link.memoKey
+        val memo = if (expense == null || payment == null || ledger == null || memoKey == null) null else {
+            AoiroChoboReceiptRules.memoCandidates(expense.accountKey, ledger, payment.accountKey, memos)
+                .firstOrNull { it.memoKey == memoKey }
         }
-        // 置き換えたときは保存時の名前ではなく置き換え先の名前をエコーする
-        val memoName = memo?.let { if (it.memoKey == stored?.memoKey) link.memoKeyName ?: it.name else it.name }
+        val memoName = memo?.let { link.memoKeyName ?: it.name }
 
         val expenseSide = Side(
             accountKey = expense?.accountKey,
             accountName = expense?.let { link.accountKeyName ?: it.name },
-            taxRate = memo?.taxRate
+            taxRate = AoiroChoboAccountRules.expenseTaxRate(memo?.taxRate, expense)
         )
         val paymentSide = Side(accountKey = payment?.accountKey, accountName = paymentName, taxRate = null)
         val status = when {
@@ -487,11 +500,8 @@ object AoiroChoboTransactionsBuilder {
         return Entry(
             externalId = externalId,
             source = "Receipt",
-            ledgerType = when {
-                payment == null -> null
-                isCash -> "Cash"
-                else -> "Unpaid"
-            },
+            // 返品で借方/貸方を入れ替えても、帳簿は入れ替える前の貸方（支払方法）で決める（契約 §5）
+            ledgerType = ledger?.ledgerType,
             bankSlotNo = null,
             entryDate = date.iso,
             amount = abs(item.price),
@@ -500,6 +510,8 @@ object AoiroChoboTransactionsBuilder {
             memoKey = sentMemo?.memoKey,
             memoName = sentMemo?.let { memoName },
             note = item.itemName.ifBlank { null },
+            // 登録番号が読めていればインボイスあり。読めていなければ無し（読み落としは PC で直せる。簡易課税なので税額には効かない）
+            hasInvoice = row.receipt.registrationNumber.isNotBlank(),
             matchStatus = status,
             confidence = null,
             meta = Meta(
@@ -562,7 +574,7 @@ object AoiroChoboTransactionsBuilder {
         val expenseSide = Side(
             accountKey = expense?.accountKey,
             accountName = expense?.let { product?.accountKeyName ?: it.name },
-            taxRate = memo?.taxRate
+            taxRate = AoiroChoboAccountRules.expenseTaxRate(memo?.taxRate, expense)
         )
         val payableSide = Side(
             accountKey = payable?.accountKey,

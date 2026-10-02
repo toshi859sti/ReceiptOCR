@@ -56,6 +56,9 @@ class AoiroLinkKind(
         allAccounts(accounts).flatMap { memoCandidates(it.accountKey, memos) }.sortedBy { it.displayOrder }
 
     companion object {
+        /** PC の摘要登録での呼び名（契約 minor（10）の `paymentCommon`） */
+        const val RECEIPT_COMMON_LABEL = "レシート共通"
+
         /** 通帳の摘要パターン・明細の相手科目。[isIncome] は入金か */
         fun deposit(isIncome: Boolean) = AoiroLinkKind(
             usage = AoiroChoboUsageRules.Usage.DEPOSIT,
@@ -65,12 +68,38 @@ class AoiroLinkKind(
             accountLabel = "相手科目（あおいろ）"
         )
 
-        /** レシートの品目グループの借方 */
-        val receiptItem = AoiroLinkKind(
+        /**
+         * レシートの明細の個別変更の借方。摘要は [payment]（そのレシートの支払方法の科目）で決まる帳簿のものと、
+         * レシート共通のもの（[AoiroChoboReceiptRules.memoCandidates]）。支払方法が決まらなければ現金出納帳の摘要にする
+         */
+        fun receiptItem(payment: AoiroChoboAccount?): AoiroLinkKind {
+            val ledger = AoiroChoboReceiptRules.ledgerOf(payment) ?: AoiroChoboReceiptRules.Ledger.CASH
+            return AoiroLinkKind(
+                usage = AoiroChoboUsageRules.Usage.RECEIPT,
+                allAccounts = AoiroChoboReceiptRules::accountCandidates,
+                memoCandidates = { key, memos ->
+                    AoiroChoboReceiptRules.memoCandidates(key, ledger, payment?.accountKey, memos)
+                },
+                memoTabLabel = when (ledger) {
+                    // レシート共通の摘要は現金/出金の摘要でもあるので、現金では書き足さない
+                    AoiroChoboReceiptRules.Ledger.CASH -> ledger.memoTabLabel
+                    AoiroChoboReceiptRules.Ledger.UNPAID -> "${ledger.memoTabLabel}・$RECEIPT_COMMON_LABEL"
+                    AoiroChoboReceiptRules.Ledger.TRANSFER ->
+                        "${ledger.memoTabLabel}・貸方 ${payment?.name}・$RECEIPT_COMMON_LABEL"
+                },
+                accountLabel = "あおいろ科目"
+            )
+        }
+
+        /**
+         * レシートの品目グループの借方。グループには支払方法の違うレシートが混ざるので、
+         * 摘要はレシート共通のものだけ（[AoiroChoboReceiptRules.groupMemoCandidates]）
+         */
+        val receiptGroup = AoiroLinkKind(
             usage = AoiroChoboUsageRules.Usage.RECEIPT,
             allAccounts = AoiroChoboReceiptRules::accountCandidates,
-            memoCandidates = AoiroChoboReceiptRules::memoCandidates,
-            memoTabLabel = "現金/出金",
+            memoCandidates = AoiroChoboReceiptRules::groupMemoCandidates,
+            memoTabLabel = RECEIPT_COMMON_LABEL,
             accountLabel = "あおいろ科目"
         )
 
@@ -203,11 +232,10 @@ fun AoiroLinkDialog(
             tabMemos = remember(accounts, memos) { kind.tabMemos(accounts, memos) },
             accounts = accounts,
             currentAccountKey = accountKey,
-            ratioSensitive = remember(memos) { AoiroChoboMemoRules.ratioSensitiveMemoKeys(memos) },
             selectedKey = memoKey,
             onSelect = { memo ->
                 memoKey = memo?.memoKey
-                memo?.counterAccountKey?.let { accountKey = it }
+                memo?.let(AoiroChoboMemoRules::accountKeyOf)?.let { accountKey = it }
                 showMemoPicker = false
             },
             onDismiss = { showMemoPicker = false }

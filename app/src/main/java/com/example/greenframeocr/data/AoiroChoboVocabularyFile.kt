@@ -61,6 +61,7 @@ data class AoiroChoboVocabularyFile(
         val hasInvoiceDefault: Boolean? = null,
         val showInCash: Boolean? = null,
         val showInBank: Boolean? = null,
+        val paymentCommon: Boolean? = null,
         val bankSlotNo: Int? = null,
         val displayOrder: Int? = null,
         val isPreset: Boolean? = null
@@ -110,6 +111,7 @@ fun AoiroChoboVocabularyFile.MemoTemplate.toEntityOrNull(): AoiroChoboMemoTempla
         hasInvoiceDefault = hasInvoiceDefault ?: false,
         showInCash = showInCash ?: false,
         showInBank = showInBank ?: false,
+        paymentCommon = paymentCommon ?: false,
         bankSlotNo = bankSlotNo,
         displayOrder = displayOrder ?: 0,
         isPreset = isPreset ?: false

@@ -291,10 +291,15 @@ JA 伝票は `GreenFrameDetector` → `GeminiReceiptClient` → `JaSheetOcrMappe
   `note` は通帳の摘要原文と明細のメモ。口座間の振替は除外しない（PC が「重複の可能性」で受ける）
 - レシート：借方＝明細の個別上書き（`general_receipt_items.overrideAccountKey`・`overrideMemoKey`）、無ければ品目グループ
   （`general_item_master`）の `accountKey`・`memoKey`。貸方＝レシートの個別上書き（`general_receipts.paymentOverrideAccountKey`）、
-  無ければ支払方法の印字に最初に部分一致したルールの `accountKey`、どれにも当たらなければ現金（`ledgerAffinity == "Cash"` の科目。弥生と同じ既定）。
-  当たったルールにあおいろの科目が無ければ貸方は未設定（`UnmatchedAccount`・現金にはしない）。
-  `ledgerType` は貸方が現金なら `Cash`、それ以外は `Unpaid`。摘要はグループに「現金/出金」のものを持ち、
-  現金以外の支払いでは「未払/発生」の同じ名前・税率・事業割合の摘要に置き換える（無ければ摘要なし）。
+  無ければ支払方法の印字に最初に部分一致したルールの `accountKey`、どれにも当たらなければ既定の科目
+  （支払方法の科目設定で選ぶ。`AppPreferences.aoiroReceiptDefaultPaymentKey`。未設定なら現金＝`ledgerAffinity == "Cash"` の科目）。
+  当たったルールにあおいろの科目が無ければ貸方は未設定（`UnmatchedAccount`・既定にはしない）。
+  `ledgerType` は貸方の科目の `ledgerAffinity` で決める（契約 2026-09-30 minor（9）・`AoiroChoboReceiptRules.ledgerOf`）：
+  `Cash` → `Cash`（摘要は現金/出金）、`Unpaid` → `Unpaid`（未払/発生）、それ以外（事業主借など）→ `Transfer`
+  （振替の摘要のうち `debitAccountKey` ＝品目の経費・`creditAccountKey` ＝支払方法の科目）。
+  品目グループの摘要は既定の支払方法の帳簿から、明細の個別変更はそのレシートの支払方法の帳簿から選ぶ。
+  帳簿が違うレシートでは、その帳簿の同じ名前・税率・事業割合の摘要に置き換える（無ければ摘要なし）。
+  支払方法の科目の候補に預金・買掛金の科目は出さない（Receipt は `bankSlotNo` を持てない）。
   値引き（金額が負）は借方/貸方を入れ替える。経費対象外の品目は出さない。
   `externalId` は `ocr:receipt:{general_receipts.uuid}:{itemIndex}`（itemIndex はレシートの全品目を id 順に並べた位置で、
   経費対象外の品目も数える）。`meta` に店名・登録番号・支払方法の印字を入れる。弥生の個別上書き（`yayoiAccountId`・
