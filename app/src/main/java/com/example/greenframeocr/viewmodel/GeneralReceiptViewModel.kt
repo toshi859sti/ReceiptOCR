@@ -12,6 +12,7 @@ import com.example.greenframeocr.data.AoiroChoboAccountUsage
 import com.example.greenframeocr.data.AoiroChoboMemoTemplate
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralItemGroup
+import com.example.greenframeocr.data.GeneralItemGroupYearCount
 import com.example.greenframeocr.data.GeneralItemMaster
 import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
@@ -85,6 +86,10 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
 
     val itemGroups: StateFlow<List<GeneralItemGroup>> =
         dao.getItemGroups().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** グループ×年の明細数。商品名・但し書きリストを年で絞るのに使う（グループの設定そのものは全年で 1 つ） */
+    val itemGroupYearCounts: StateFlow<List<GeneralItemGroupYearCount>> =
+        dao.getItemGroupYearCounts().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // 品目名（＝但し書き）手入力時のオートコンプリート候補。canonicalKeyで正規化グルーピング済みの
     // itemGroupsをそのまま使う（表記ゆれを吸収済み・件数の多い順）

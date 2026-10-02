@@ -1207,7 +1207,7 @@ private fun ReceiptDetailDialog(
                     OutlinedButton(
                         onClick = { linkChoice = null; linkTarget = ReceiptLinkTarget.Group(item.canonicalKey) },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("同じ品目すべて（${group?.count ?: 0}件）") }
+                    ) { Text("同じ品目すべて（全年で ${group?.count ?: 0}件）") }
                 }
             },
             confirmButton = {},

@@ -66,7 +66,9 @@ fun GeneralItemMatchingScreen(
     appPreferences: AppPreferences,
     onBack: () -> Unit
 ) {
-    val itemGroups by viewModel.itemGroups.collectAsState()
+    // グループ（品名 → 科目）は全年で 1 つ。画面は選んだ年に明細があるグループだけを、その年の件数で出す
+    val allItemGroups by viewModel.itemGroups.collectAsState()
+    val groupYearCounts by viewModel.itemGroupYearCounts.collectAsState()
     val aiError by viewModel.aiError.collectAsState()
     val aiSuggestions by viewModel.aiSuggestions.collectAsState()
     val isAiMatching by viewModel.isAiMatching.collectAsState()
@@ -97,6 +99,31 @@ fun GeneralItemMatchingScreen(
     // 明細の行に出すレシートの日付・店名
     val receipts by viewModel.receipts.collectAsState()
     val receiptsById = remember(receipts) { receipts.associateBy { it.id } }
+
+    // 年の絞り込み（null = 全年）。初期値はレシート領収書一覧と同じく作業年、その年が無ければ最新の年。
+    // 「作業年で固定」が ON の間は作業年から動かさない
+    val workingCalendarYear = remember { appPreferences.workingCalendarYear.toString() }
+    val lockYearToWorking = remember { appPreferences.lockYearToWorking }
+    val availableYears = remember(groupYearCounts) {
+        groupYearCounts.map { it.year }.filter { Regex("20\\d{2}").matches(it) }.distinct().sortedDescending()
+    }
+    var selectedYear by remember(availableYears) {
+        mutableStateOf(
+            when {
+                lockYearToWorking -> workingCalendarYear
+                availableYears.contains(workingCalendarYear) -> workingCalendarYear
+                else -> availableYears.firstOrNull()
+            }
+        )
+    }
+    val itemGroups = remember(allItemGroups, groupYearCounts, selectedYear) {
+        val year = selectedYear
+        if (year == null) allItemGroups else {
+            val counts = groupYearCounts.filter { it.year == year }.associateBy { it.canonicalKey }
+            allItemGroups.mapNotNull { g -> counts[g.canonicalKey]?.let { g.copy(count = it.count, totalPrice = it.totalPrice) } }
+                .sortedWith(compareBy({ -it.count }, { it.itemName }))
+        }
+    }
 
     LaunchedEffect(Unit) {
         val accounts = viewModel.loadYayoiAccounts()
@@ -162,6 +189,16 @@ fun GeneralItemMatchingScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+
+            // 年の絞り込み。グループの設定は全年で共通なので、変えるとほかの年の同じ品名にも効く
+            if (availableYears.isNotEmpty()) {
+                YearFilterRow(
+                    years = availableYears,
+                    selectedYear = selectedYear,
+                    locked = lockYearToWorking,
+                    onSelect = { selectedYear = it }
+                )
+            }
 
             // 統計カード
             Card(
@@ -255,9 +292,9 @@ fun GeneralItemMatchingScreen(
                     OutlinedButton(
                         onClick = {
                             hasSearchedSimilarGroups = true
-                            viewModel.findSimilarGroups(itemGroups)
+                            viewModel.findSimilarGroups(allItemGroups)
                         },
-                        enabled = !isFindingSimilarGroups && itemGroups.size >= 2,
+                        enabled = !isFindingSimilarGroups && allItemGroups.size >= 2,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -278,9 +315,9 @@ fun GeneralItemMatchingScreen(
                     OutlinedButton(
                         onClick = {
                             hasSearchedNumericPrefixes = true
-                            viewModel.findNumericPrefixes(itemGroups)
+                            viewModel.findNumericPrefixes(allItemGroups)
                         },
-                        enabled = !isFindingNumericPrefixes && itemGroups.isNotEmpty(),
+                        enabled = !isFindingNumericPrefixes && allItemGroups.isNotEmpty(),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -300,7 +337,10 @@ fun GeneralItemMatchingScreen(
 
             if (itemGroups.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("品目データがありません", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (allItemGroups.isEmpty()) "品目データがありません" else "${selectedYear}年の品目はありません",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             } else if (filteredGroups.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -326,6 +366,7 @@ fun GeneralItemMatchingScreen(
                             aoiroLabel = if (isAoiro) aoiroLabel(group) else null,
                             aoiroItemLabel = { item -> aoiroItemLabel(item, group) },
                             receiptsById = receiptsById,
+                            yearFilter = selectedYear,
                             onToggleExpand = {
                                 expandedKeys = if (isExpanded) expandedKeys - group.canonicalKey
                                                else expandedKeys + group.canonicalKey
@@ -742,6 +783,60 @@ private fun NumericPrefixCleanupDialog(
 
 // ─── 共通コンポーネント ──────────────────────────────────────────────────────
 
+/**
+ * 年の絞り込み（[selectedYear] が null なら全年）。[locked]（設定の「作業年で固定」）の間は変えられない。
+ * 横に「設定はほかの年の同じ品名にも使われる」ことを添える
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun YearFilterRow(
+    years: List<String>,
+    selectedYear: String?,
+    locked: Boolean,
+    onSelect: (String?) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ExposedDropdownMenuBox(
+            expanded = expanded && !locked,
+            onExpandedChange = { if (!locked) expanded = it },
+            modifier = Modifier.width(148.dp)
+        ) {
+            OutlinedTextField(
+                value = selectedYear?.let { "${it}年" } ?: "全年",
+                onValueChange = {},
+                readOnly = true,
+                enabled = !locked,
+                label = { Text(if (locked) "年（作業年で固定）" else "年", fontSize = 11.sp) },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && !locked) },
+                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                singleLine = true,
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+            )
+            ExposedDropdownMenu(expanded = expanded && !locked, onDismissRequest = { expanded = false }) {
+                (listOf<String?>(null) + years).forEach { year ->
+                    DropdownMenuItem(
+                        text = { Text(year?.let { "${it}年" } ?: "全年") },
+                        onClick = { onSelect(year); expanded = false }
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "科目・摘要の設定は、ほかの年の同じ品名にも使われます",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
 @Composable
 private fun StatColumn(label: String, value: String, valueColor: Color = Color.Unspecified) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -764,6 +859,7 @@ private fun ItemGroupCard(
     aoiroLabel: String? = null,   // あおいろモードのグループの「科目 ／ 摘要」（未設定なら null）
     aoiroItemLabel: (GeneralReceiptItem) -> String? = { null },   // あおいろモードの明細に効いている「科目 ／ 摘要」
     receiptsById: Map<Long, GeneralReceipt> = emptyMap(),   // 明細の行にレシートの日付・店名を出す
+    yearFilter: String? = null,   // 開いたときに出す明細の年（null なら全年）
     onToggleExpand: () -> Unit,
     onEditGroup: () -> Unit,
     onRenameGroup: () -> Unit,
@@ -875,9 +971,14 @@ private fun ItemGroupCard(
             AnimatedVisibility(visible = isExpanded) {
                 Column {
                     Divider(modifier = Modifier.padding(horizontal = 8.dp))
-                    val items by remember(group.canonicalKey) {
+                    val allItems by remember(group.canonicalKey) {
                         viewModel.getItemsByCanonicalKey(group.canonicalKey)
                     }.collectAsState(initial = null)
+                    // 年で絞っているときはその年のレシートの明細だけ
+                    val items = allItems?.let { list ->
+                        if (yearFilter == null) list
+                        else list.filter { receiptsById[it.receiptId]?.date?.startsWith(yearFilter) == true }
+                    }
 
                     when {
                         items == null -> {
@@ -1106,7 +1207,7 @@ internal fun GroupDefaultEditDialog(
         title = {
             Column {
                 Text(group.itemName, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${group.count}件", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("全年で ${group.count}件（ほかの年の同じ品名にも使われます）", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     text = "保存するとグループ全件に適用され、個別変更はリセットされます",
                     fontSize = 11.sp,

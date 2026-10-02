@@ -69,7 +69,7 @@ fun ReceiptItemLinkEditor(
             val vocab = aoiroVocab
             AoiroLinkDialog(
                 title = "あおいろ科目・摘要",
-                subject = "${group.itemName}（${group.count}件）",
+                subject = "${group.itemName}（全年で ${group.count}件）",
                 kind = AoiroLinkKind.receiptGroup,
                 accounts = vocab?.accounts.orEmpty(),
                 memos = vocab?.memos.orEmpty(),
@@ -78,7 +78,7 @@ fun ReceiptItemLinkEditor(
                 initialAccountKeyName = group.accountKeyName,
                 initialMemoKey = group.memoKey,
                 initialMemoKeyName = group.memoKeyName,
-                note = "この品目名のレシート明細すべてに使います（弥生の科目とは別）。保存すると明細ごとの個別変更は解除します",
+                note = "この品目名のレシート明細すべて（ほかの年も含む）に使います（弥生の科目とは別）。保存すると明細ごとの個別変更は解除します",
                 resetHint = "科目を外すと、この品目は「科目なし」で PC に送ります",
                 extraNote = "摘要は、PC の摘要登録で「${AoiroLinkKind.RECEIPT_COMMON_LABEL}」にしたものから選びます。" +
                     "現金・カード（未払）・家計から（振替）のどの支払方法のレシートでも同じ摘要で送ります",

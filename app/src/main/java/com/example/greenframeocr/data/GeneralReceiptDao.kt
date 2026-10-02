@@ -17,6 +17,14 @@ data class GeneralItemGroup(
     val memoKeyName: String? = null
 )
 
+/** 品目グループの年ごとの明細数・金額（年はレシートの日付の先頭 4 文字） */
+data class GeneralItemGroupYearCount(
+    val canonicalKey: String,
+    val year: String,
+    val count: Int,
+    val totalPrice: Int
+)
+
 data class ReceiptItemPreview(
     val receiptId: Long,
     val itemNamesPreview: String,
@@ -93,6 +101,16 @@ interface GeneralReceiptDao {
         ORDER BY count DESC, itemName ASC
     """)
     fun getItemGroups(): Flow<List<GeneralItemGroup>>
+
+    // 商品名・但し書きリストを年で絞るための、グループ×年の明細数（数え方は getItemGroups と同じ）
+    @Query("""
+        SELECT g.canonicalKey, substr(r.date, 1, 4) as year, COUNT(*) as count, SUM(g.price) as totalPrice
+        FROM general_receipt_items g
+        JOIN general_receipts r ON r.id = g.receiptId
+        WHERE g.itemName != '' AND g.isExcluded = 0
+        GROUP BY g.canonicalKey, substr(r.date, 1, 4)
+    """)
+    fun getItemGroupYearCounts(): Flow<List<GeneralItemGroupYearCount>>
 
     // 品目別マッチングでグループを展開したときの個別明細一覧
     @Query("""
