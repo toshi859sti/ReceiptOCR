@@ -109,4 +109,20 @@ class AoiroChoboAccountRulesTest {
         assertEquals(listOf("経費", "(任意) 経費", "経費", "繰入額", null), blocks)
         assertEquals("kakei", rows.last().account.accountKey)
     }
+
+    @Test
+    fun `経費の税率は摘要が先、無ければ経費科目の既定・経費でない科目は null`() {
+        val expense = AoiroChoboAccount(accountKey = "e", name = "e", accountType = "Expense", defaultTaxCategory = "Taxable")
+        val income = AoiroChoboAccount(accountKey = "i", name = "i", accountType = "Income", defaultTaxCategory = "Taxable")
+        assertEquals("8", AoiroChoboAccountRules.expenseTaxRate("8", expense))
+        assertEquals("10", AoiroChoboAccountRules.expenseTaxRate(null, expense))
+        assertEquals("8", AoiroChoboAccountRules.expenseTaxRate("8", income))
+        assertNull(AoiroChoboAccountRules.expenseTaxRate(null, income))
+        assertNull(AoiroChoboAccountRules.expenseTaxRate(null, null))
+        assertNull(AoiroChoboAccountRules.expenseTaxRate(null, expense.copy(defaultTaxCategory = "NA")))
+        assertNull(AoiroChoboAccountRules.expenseTaxRate(null, expense.copy(defaultTaxCategory = null)))
+        assertEquals("non", AoiroChoboAccountRules.defaultTaxRate("NonTaxable"))
+        assertEquals("na", AoiroChoboAccountRules.defaultTaxRate("NotApplicable"))
+        assertEquals("men", AoiroChoboAccountRules.defaultTaxRate("TaxExempt"))
+    }
 }

@@ -175,12 +175,38 @@ class AoiroChoboTransactionsBuilderTest {
     }
 
     @Test
-    fun `摘要の無い科目は UnmatchedMemo で、税率は PC に任せる`() {
+    fun `摘要の無い科目は UnmatchedMemo で、税率は科目の既定（課税は10%）`() {
         val e = build(PurchaseRow(item("軽油", 5500), product("douryoku"))).file.entries.single()
         assertEquals("UnmatchedMemo", e.matchStatus)
         assertEquals("douryoku", e.debit.accountKey)
         assertEquals(null, e.memoKey)
-        assertEquals(null, e.debit.taxRate)
+        assertEquals("Taxable", account("douryoku").defaultTaxCategory)
+        assertEquals("10", e.debit.taxRate)
+        assertEquals(null, e.credit.taxRate)
+    }
+
+    @Test
+    fun `摘要の無い通帳の行：出金の経費は科目の既定、入金の収入は null`() {
+        val out = buildDeposit(DepositRow(meisai("ｷﾖｳｻｲ", -3000), einou, rule("nougyou"))).file.entries.single()
+        assertEquals("nougyou", out.debit.accountKey)
+        assertEquals("non", out.debit.taxRate)      // 農業共済掛金は非課税
+        assertEquals(null, out.credit.taxRate)
+
+        val income = buildDeposit(DepositRow(meisai("ﾉｳｷﾖｳ", 50000), einou, rule("suitou"))).file.entries.single()
+        assertEquals("suitou", income.credit.accountKey)
+        assertEquals(null, income.credit.taxRate)    // 収入科目は科目の既定を使わない（契約 §4.7）
+        assertEquals(null, income.debit.taxRate)
+    }
+
+    @Test
+    fun `摘要の無いレシートの行は経費科目の既定の税率`() {
+        val e = buildReceipt(row(receipt(), receiptItem("軍手", 220), 0, group("sagyou"))).file.entries.single()
+        assertEquals("UnmatchedMemo", e.matchStatus)
+        assertEquals("10", e.debit.taxRate)
+        assertEquals(null, e.credit.taxRate)
+        // 科目が決まらなければ税率も無い
+        val none = buildReceipt(row(receipt(), receiptItem("謎", 100), 0, null)).file.entries.single()
+        assertEquals(null, none.debit.taxRate)
     }
 
     @Test

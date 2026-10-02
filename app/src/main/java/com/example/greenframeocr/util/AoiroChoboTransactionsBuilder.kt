@@ -307,7 +307,8 @@ object AoiroChoboTransactionsBuilder {
         val counterSide = Side(
             accountKey = counter?.accountKey,
             accountName = counter?.let { counterKeyName ?: it.name },
-            taxRate = memo?.taxRate
+            // 摘要が無ければ科目の既定（経費科目のときだけ。入金の収入科目は null のまま）
+            taxRate = AoiroChoboAccountRules.expenseTaxRate(memo?.taxRate, counter)
         )
         val bankSide = Side(
             accountKey = bank.accountKey,
@@ -482,7 +483,7 @@ object AoiroChoboTransactionsBuilder {
         val expenseSide = Side(
             accountKey = expense?.accountKey,
             accountName = expense?.let { link.accountKeyName ?: it.name },
-            taxRate = memo?.taxRate
+            taxRate = AoiroChoboAccountRules.expenseTaxRate(memo?.taxRate, expense)
         )
         val paymentSide = Side(accountKey = payment?.accountKey, accountName = paymentName, taxRate = null)
         val status = when {
@@ -569,7 +570,7 @@ object AoiroChoboTransactionsBuilder {
         val expenseSide = Side(
             accountKey = expense?.accountKey,
             accountName = expense?.let { product?.accountKeyName ?: it.name },
-            taxRate = memo?.taxRate
+            taxRate = AoiroChoboAccountRules.expenseTaxRate(memo?.taxRate, expense)
         )
         val payableSide = Side(
             accountKey = payable?.accountKey,
