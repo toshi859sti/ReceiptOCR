@@ -1011,15 +1011,16 @@ private fun DepositMeisaiLabeledRow(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 日付 (MM/dd)
+        // 日付 (yyyy/MM/dd)。全年で見ているときにどの年の明細か分かるよう年も出す
         val dateDisplay = meisai.transactionDate.let {
-            if (it.length == 10) "${it.substring(5, 7)}/${it.substring(8, 10)}" else it
+            if (it.length == 10) it.replace('-', '/') else it
         }
         Text(
             text = dateDisplay,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(40.dp)
+            maxLines = 1,
+            modifier = Modifier.width(80.dp)
         )
 
         Spacer(modifier = Modifier.width(8.dp))
