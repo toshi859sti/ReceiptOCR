@@ -102,7 +102,7 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 | `memoKey` | ✔※ | 帳簿の「摘要」列。**`vocabulary.memoTemplates[].memoKey` のいずれかのみ**（閉じた語彙）。キー自体は必須だが、逆引き 0 件のときは `null`（`UnmatchedMemo`）。§「摘要は閉じた語彙」 |
 | `memoName` | — | `memoKey` に対応する `name` のエコー。PC は照合に使わない（取込サマリーの表示・契約テストの突き合わせ用）。`memoKey` が `null` なら `null` |
 | `note` | — | 帳簿の「メモ」列。**生テキスト（商品名・但し書き・通帳メモ）はここに入れる**。自由文字・長さ制限ゆるめ |
-| `hasInvoice` | — | 省略時 PC 側既定（現状 true 相当）。§「hasInvoice」 |
+| `hasInvoice` | — | `Receipt` は `true`/`false`、`Purchase`/`Deposit` は省略。省略時 PC 側既定（現状 true 相当）。§「hasInvoice」 |
 | `matchStatus` | ✔ | §「matchStatus」 |
 | `confidence` | — | OCR / マッチングの自己申告確度 |
 | `meta` | — | 参考情報一式。オブジェクトごと省略可 |
@@ -237,9 +237,17 @@ PC 取込は、そのキーを当年度のマスタへ解決するだけ。解�
 
 ## 8. `hasInvoice`
 
-- スマホは `meta.registrationNumber`（インボイス登録番号 T+13桁）を渡すだけでよい。
-- `hasInvoice` を判断できるなら `true`/`false` を入れる。省略時は PC 側の既定（現状 true 相当）。
-- PC 側で取込後に編集可能。
+`source` ごとに決める（2026-10-02 minor（12））。
+
+| `source` | `hasInvoice` | 理由 |
+|---|---|---|
+| `Receipt` | 登録番号（`T\d{13}`）が読めたら `true`、読めなければ **`false`** | レシートに書いてあるかどうかの事実。`hasInvoiceDefault`（推測）では埋めない |
+| `Purchase` / `Deposit` | **省略する** | JA の請求書・通帳では登録番号を読んでいない。PC は省略を `true` として記帳する（JA は登録事業者、引き落としの請求書にも番号が載る） |
+
+- 読めた番号は `meta.registrationNumber` にも入れる。
+- OCR が番号を読み落とすと、実際はありでも `false` になる。簡易課税なので仕入れ側のインボイスの有無は税額に効かず、
+  PC で取込後に直せるので受け入れる。
+- 省略時の PC の既定は `true` 相当（摘要の `hasInvoiceDefault` は見ない）。
 
 ---
 

@@ -6,6 +6,20 @@
 
 ---
 
+## schemaVersion 2 — 2026-10-02 minor（12）（`hasInvoice` を `source` ごとに決める）
+
+`schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の方針（2026-10-02）を契約にした。
+
+- **`Receipt`：登録番号（`T\d{13}`）が読めたら `true`、読めなければ `false`**（[transaction-import.md](transaction-import.md) §8）。
+  以前は「読めなければ `hasInvoiceDefault`」（[matching-rules.md](matching-rules.md) §4 の 7）だったが、摘要の既定は推測なので使わない。
+- **`Purchase` / `Deposit`：省略する**。スマホは JA の請求書・通帳の登録番号を読んでいない。PC は省略を `true` として記帳する。
+- 読み落としで `false` になっても、簡易課税なので税額には効かない。PC で取込後に直せる。
+- PC の実装は変わらない（`hasInvoice` が無ければ `true`）。
+
+スマホ側への影響：無し（この方針で実装済み）。
+
+---
+
 ## schemaVersion 2 — 2026-10-02 minor（11）（税率の決め方に摘要を入れる）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の意見（2026-10-02・回答

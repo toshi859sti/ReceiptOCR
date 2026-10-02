@@ -578,7 +578,7 @@ PC の現在：   acct-x7 = "研修費"
 | 項目 | 本当の出所 | スマホがやること |
 |---|---|---|
 | **科目**（`accountKey`） | 商品名・通帳摘要（ルール＋学習、必要なら LLM 補助） | 解決する。学習のキーは `accountKey` |
-| **インボイス**（`hasInvoice`） | **レシート現物**（登録番号 `T\d{13}` の有無） | OCR で判定（予測でなく事実）。`hasInvoiceDefault` は最後の手段 |
+| **インボイス**（`hasInvoice`） | **レシート現物**（登録番号 `T\d{13}` の有無） | レシートは OCR で判定（予測でなく事実）。読めなければ `false`。購買・通帳は省略（PC が `true` 扱い）。`hasInvoiceDefault` では埋めない（[transaction-import.md](transaction-import.md) §8・minor（12）） |
 | **税率**（`taxRate`） | レシートの税率マーク ＞ **摘要の `taxRate`** ＞ その `accountKey` の `defaultTaxCategory` | 上から順に決める（下記「税率の決め方」）。不明なら `null`＋`matchStatus`。**PC は送られた値をそのまま使う** |
 | **事業割合**（`businessRatio`） | **その農家の家事按分方針**＝**摘要辞書の `businessRatio`**（商品と無関係） | **触らない。`100` 固定で出す**。**PC は `memoKey` が解決できたら摘要の `businessRatio` を採り、送られた値は使わない**（下記） |
 | **摘要**（`memoKey`） | 摘要辞書（逆引き）。**閉じた語彙** | 辞書の `memoKey` か `null`。生テキストは `note` へ。任意でラベル選好キャッシュ（下記） |
