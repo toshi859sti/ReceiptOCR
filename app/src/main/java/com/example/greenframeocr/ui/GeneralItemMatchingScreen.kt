@@ -465,14 +465,13 @@ fun GeneralItemMatchingScreen(
         )
     }
 
-    // グループのあおいろ科目・摘要ダイアログ。摘要は既定の支払方法の帳簿のもの（事業主借なら振替の摘要）
+    // グループのあおいろ科目・摘要ダイアログ。摘要はレシート共通のもの（どの支払方法のレシートでも同じ摘要で送れる）
     aoiroEditTarget?.let { group ->
         val vocab = aoiroVocab
-        val defaultPayment = vocab?.let { viewModel.aoiroDefaultPayment(it.accounts) }
         AoiroLinkDialog(
             title = "あおいろ科目・摘要",
             subject = "${group.itemName}（${group.count}件）",
-            kind = AoiroLinkKind.receiptItem(defaultPayment),
+            kind = AoiroLinkKind.receiptGroup,
             accounts = vocab?.accounts.orEmpty(),
             memos = vocab?.memos.orEmpty(),
             usage = vocab?.usage.orEmpty(),
@@ -482,8 +481,8 @@ fun GeneralItemMatchingScreen(
             initialMemoKeyName = group.memoKeyName,
             note = "この品目名のレシート明細すべてに使います（弥生の科目とは別）。保存すると明細ごとの個別変更は解除します",
             resetHint = "科目を外すと、この品目は「科目なし」で PC に送ります",
-            extraNote = "摘要は、既定の支払方法（${defaultPayment?.name ?: "未設定"}）の帳簿のものです。" +
-                "支払方法が違うレシートでは、その帳簿の同じ名前の摘要に置き換えて送ります（無ければ摘要なし）",
+            extraNote = "摘要は、PC の摘要登録で「${AoiroLinkKind.RECEIPT_COMMON_LABEL}」にしたものから選びます。" +
+                "現金・カード（未払）・家計から（振替）のどの支払方法のレシートでも同じ摘要で送ります",
             onDismiss = { aoiroEditTarget = null },
             onSave = { s ->
                 viewModel.updateGroupAoiro(group.canonicalKey, s.accountKey, s.accountKeyName, s.memoKey, s.memoKeyName)
@@ -508,7 +507,8 @@ fun GeneralItemMatchingScreen(
             initialMemoKeyName = item.overrideMemoKeyName,
             note = "保存するとグループ設定に関わらずこの明細にのみ適用されます",
             resetHint = "科目を外すとグループの設定に戻ります（${aoiroLabel(group) ?: "グループも未設定"}）",
-            extraNote = "このレシートの支払方法（${payment?.name ?: "未設定"}）の帳簿の摘要から選びます",
+            extraNote = "このレシートの支払方法（${payment?.name ?: "未設定"}）の帳簿の摘要と、" +
+                "${AoiroLinkKind.RECEIPT_COMMON_LABEL}の摘要から選びます",
             onDismiss = { aoiroItemEditTarget = null },
             onSave = { s ->
                 viewModel.updateItemAoiroOverride(item.id, s.accountKey, s.accountKeyName, s.memoKey, s.memoKeyName)

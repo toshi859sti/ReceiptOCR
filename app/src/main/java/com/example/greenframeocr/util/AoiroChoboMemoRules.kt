@@ -33,7 +33,10 @@ object AoiroChoboMemoRules {
         AP_OUT("買掛/支払", { it.ledgerType == "AP" && it.direction == "Out" }),
         UNPAID_IN("未払/発生", { it.ledgerType == "Unpaid" && it.direction == "In" }),
         UNPAID_OUT("未払/支払", { it.ledgerType == "Unpaid" && it.direction == "Out" }),
-        TRANSFER("振替", { it.ledgerType == "Transfer" });
+        TRANSFER("振替", { it.ledgerType == "Transfer" }),
+
+        /** レシート共通（契約 minor（10））。現金/出金の摘要の一部で、未払・振替のレシートにも同じ摘要で使える */
+        RECEIPT_COMMON("レシート共通", { it.paymentCommon });
 
         fun contains(memo: AoiroChoboMemoTemplate): Boolean = match(memo)
     }

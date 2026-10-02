@@ -358,8 +358,8 @@ object AoiroChoboTransactionsBuilder {
      *
      * 帳簿は貸方の科目の `ledgerAffinity` で決める（契約 2026-09-30 minor（9）・[AoiroChoboReceiptRules.ledgerOf]）：
      * 現金 → `Cash`、未払金 → `Unpaid`、それ以外（事業主借など）→ `Transfer`。
-     * 摘要は品目グループ（または個別上書き）が持つものを、その帳簿の摘要から探す。帳簿が違えば
-     * 同じ名前・税率・事業割合の摘要に置き換え、無ければ摘要なしで送る。
+     * 摘要は品目グループ（または個別上書き）が持つものを、その帳簿で使えるとき（帳簿の摘要かレシート共通）だけ送る。
+     * 使えなければ摘要なし（`UnmatchedMemo`）。PC はこの組み合わせ以外を要確認にする（契約 minor（10））。
      */
     fun buildReceipt(
         rows: List<ReceiptRow>,
@@ -470,17 +470,14 @@ object AoiroChoboTransactionsBuilder {
 
         // 帳簿は支払方法の科目で決まる（現金 → 現金出納帳、未払金 → 未払帳、事業主借など → 振替伝票）
         val ledger = AoiroChoboReceiptRules.ledgerOf(payment)
-        val stored = link.memoKey?.let { key -> memos.find { it.memoKey == key } }
-        val memo = if (expense == null || payment == null || ledger == null || stored == null) null else {
-            val candidates = AoiroChoboReceiptRules.memoCandidates(expense.accountKey, ledger, payment.accountKey, memos)
-            // 帳簿の違う同じ摘要（現金/出金の 修理代 ↔ 未払/発生の 修理代）があればそれに置き換える
-            candidates.firstOrNull { it.memoKey == stored.memoKey }
-                ?: candidates.firstOrNull {
-                    it.name == stored.name && it.taxRate == stored.taxRate && it.businessRatio == stored.businessRatio
-                }
+        // 摘要はその帳簿で使えるもの（帳簿の摘要かレシート共通）だけ送る。使えなければ摘要なし。
+        // 名前の同じ別の帳簿の摘要には置き換えない（事業割合が違うことがあるため・契約 minor（10））
+        val memoKey = link.memoKey
+        val memo = if (expense == null || payment == null || ledger == null || memoKey == null) null else {
+            AoiroChoboReceiptRules.memoCandidates(expense.accountKey, ledger, payment.accountKey, memos)
+                .firstOrNull { it.memoKey == memoKey }
         }
-        // 置き換えたときは保存時の名前ではなく置き換え先の名前をエコーする
-        val memoName = memo?.let { if (it.memoKey == stored?.memoKey) link.memoKeyName ?: it.name else it.name }
+        val memoName = memo?.let { link.memoKeyName ?: it.name }
 
         val expenseSide = Side(
             accountKey = expense?.accountKey,

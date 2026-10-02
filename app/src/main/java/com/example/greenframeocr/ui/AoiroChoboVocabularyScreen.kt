@@ -250,7 +250,8 @@ private val MEMO_LEDGERS: List<Pair<String, List<MemoTab>>> = listOf(
     "売掛" to listOf(MemoTab.AR_IN, MemoTab.AR_OUT),
     "買掛" to listOf(MemoTab.AP_IN, MemoTab.AP_OUT),
     "未払" to listOf(MemoTab.UNPAID_IN, MemoTab.UNPAID_OUT),
-    "振替" to listOf(MemoTab.TRANSFER)
+    "振替" to listOf(MemoTab.TRANSFER),
+    "レシート共通" to listOf(MemoTab.RECEIPT_COMMON)
 )
 
 @Composable

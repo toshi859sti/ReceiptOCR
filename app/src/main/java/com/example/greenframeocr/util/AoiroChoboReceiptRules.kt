@@ -9,8 +9,8 @@ import com.example.greenframeocr.util.AoiroChoboMemoRules.MemoTab
  *
  * レシートの帳簿は**貸方（支払方法）の科目の `ledgerAffinity`** で決まる（契約 2026-09-30 minor（9）・
  * transaction-import §5）。現金 → 現金出納帳、未払金 → 未払帳、それ以外（事業主借など）→ 振替伝票。
- * 摘要はその帳簿のものから選ぶ（[Ledger]）。帳簿の違うレシートに回ったときの置き換えは
- * [AoiroChoboTransactionsBuilder.buildReceipt] がやる。
+ * 品目グループの摘要は「レシート共通」（どの帳簿でも同じ memoKey で使える・契約 minor（10））から選び、
+ * 明細の個別変更はそのレシートの帳簿の摘要とレシート共通から選ぶ。名前による置き換えはしない。
  */
 object AoiroChoboReceiptRules {
 
@@ -37,11 +37,13 @@ object AoiroChoboReceiptRules {
         AoiroChoboUsageRules.pcCandidates(AoiroChoboUsageRules.Usage.RECEIPT, accounts)
 
     /**
-     * 品目の経費科目 [accountKey] で絞った摘要の候補。
+     * 明細の個別変更の摘要の候補（経費科目 [accountKey] で絞る）。その帳簿の従来の摘要と、レシート共通の摘要。
      *
-     * - 現金出納帳：現金/出金 かつ `counterAccountKey == 経費科目`
+     * - 現金出納帳：現金/出金 かつ `counterAccountKey == 経費科目`（レシート共通の摘要もここに入る）
      * - 未払帳：未払/発生 かつ `counterAccountKey == 経費科目`
      * - 振替伝票：振替 かつ `debitAccountKey == 経費科目` かつ `creditAccountKey == 支払方法の科目`（[paymentKey]）
+     *
+     * PC の取込もこの組み合わせでしか確定しない（transaction-import §5・minor（10））。出力の判定もこれを使う
      */
     fun memoCandidates(
         accountKey: String,
@@ -49,13 +51,23 @@ object AoiroChoboReceiptRules {
         paymentKey: String?,
         memos: List<AoiroChoboMemoTemplate>
     ): List<AoiroChoboMemoTemplate> = memos.filter {
-        when (ledger) {
+        isCommon(it, accountKey) || when (ledger) {
             Ledger.CASH -> MemoTab.CASH_OUT.contains(it) && it.counterAccountKey == accountKey
             Ledger.UNPAID -> MemoTab.UNPAID_IN.contains(it) && it.counterAccountKey == accountKey
             Ledger.TRANSFER -> MemoTab.TRANSFER.contains(it) && it.debitAccountKey == accountKey &&
                 it.creditAccountKey == paymentKey
         }
     }.sortedBy { it.displayOrder }
+
+    /**
+     * 品目グループの摘要の候補：経費科目 [accountKey] のレシート共通の摘要だけ。
+     * グループには支払方法の違うレシートが混ざるので、どの帳簿でも同じ memoKey で使える摘要に限る（契約 minor（10））
+     */
+    fun groupMemoCandidates(accountKey: String, memos: List<AoiroChoboMemoTemplate>): List<AoiroChoboMemoTemplate> =
+        memos.filter { isCommon(it, accountKey) }.sortedBy { it.displayOrder }
+
+    private fun isCommon(memo: AoiroChoboMemoTemplate, accountKey: String): Boolean =
+        memo.paymentCommon && memo.counterAccountKey == accountKey
 
     /** 契約 §4.5 が支払方法（貸方）の候補に挙げる科目：現金・未払金・事業主借 */
     private val PAYMENT_KEYS = listOf("genkin", "mibarai", "zigyounusikari")

@@ -6,7 +6,6 @@ import com.example.greenframeocr.data.AoiroChoboVocabularyFile
 import com.example.greenframeocr.data.toEntityOrNull
 import com.google.gson.Gson
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -46,27 +45,12 @@ class AoiroChoboPurchaseRulesTest {
     }
 
     @Test
-    fun `候補が1件なら先に埋める・2件以上や0件なら埋めない`() {
-        val memos = listOf(
-            memo("肥料購入", "hiryou"),
-            memo("諸材料購入", "syozairyou", order = 1),
-            memo("資材購入", "syozairyou", order = 2)
-        )
-        assertEquals("肥料購入", AoiroChoboPurchaseRules.preselectedMemo("hiryou", memos)?.memoKey)
-        // 同義の摘要でも、どちらで帳簿に載せるかは農家が決める
-        assertNull(AoiroChoboPurchaseRules.preselectedMemo("syozairyou", memos))
-        // 給油所→動力光熱費は買掛/仕入の摘要が無い。科目だけで保存する
-        assertNull(AoiroChoboPurchaseRules.preselectedMemo("douryoku", memos))
-    }
-
-    @Test
-    fun `事業割合だけ違う摘要がある科目は埋めない`() {
-        // 本番の買掛にこの組は無いが、PC で足されれば起こりうる。取り違えると経費の額が変わる
+    fun `事業割合だけ違う摘要は両方とも候補に出る`() {
+        // 本番の買掛にこの組は無いが、PC で足されれば起こりうる。取り違えると経費の額が変わるので農家が選ぶ
         val memos = listOf(
             memo("軽油購入（事業専用）", "douryoku", ratio = 100),
             memo("軽油購入", "douryoku", ratio = 50)
         )
-        assertNull(AoiroChoboPurchaseRules.preselectedMemo("douryoku", memos))
         assertEquals(2, AoiroChoboPurchaseRules.memoCandidates("douryoku", memos).size)
     }
 
@@ -81,7 +65,7 @@ class AoiroChoboPurchaseRulesTest {
     }
 
     @Test
-    fun `本番データ：借方25科目のうち6科目は摘要が1件で先に埋まる`() {
+    fun `本番データ：借方25科目のうち6科目は買掛の摘要が1件だけ`() {
         // Gradle のユニットテストは app/ を作業ディレクトリにして走る
         val file = File("../docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20260925_134932.json")
         val parsed = Gson().fromJson(file.readText(Charsets.UTF_8), AoiroChoboVocabularyFile::class.java)
@@ -91,15 +75,15 @@ class AoiroChoboPurchaseRulesTest {
         val candidates = AoiroChoboPurchaseRules.accountCandidates(accounts)
         // minor（6）で事業主貸が加わって 25 件
         assertEquals(25, candidates.size)
-        val preselected = candidates.mapNotNull { a ->
-            AoiroChoboPurchaseRules.preselectedMemo(a.accountKey, memos)?.let { a.accountKey to it.name }
+        val single = candidates.mapNotNull { a ->
+            AoiroChoboPurchaseRules.memoCandidates(a.accountKey, memos).singleOrNull()?.let { a.accountKey to it.name }
         }.toMap()
         assertEquals(
             mapOf(
                 "syubyou" to "種苗購入", "hiryou" to "肥料購入", "siryou" to "飼料購入",
                 "nougu" to "農具購入", "nouyaku" to "農薬購入", "syozairyou" to "諸材料購入"
             ),
-            preselected
+            single
         )
         // 給油所の行き先・修繕費は摘要なし（PC は UnmatchedMemo で受ける）
         assertTrue(AoiroChoboPurchaseRules.memoCandidates("douryoku", memos).isEmpty())

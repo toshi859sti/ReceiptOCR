@@ -552,13 +552,9 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             _aiError.value = "あおいろ帳簿の科目がまだ取り込まれていません。設定画面から取り込んでください"
             return
         }
-        // 摘要名のヒントは、品目グループの摘要と同じく既定の支払方法の帳簿のもの
-        val defaultPayment = aoiroDefaultPayment(vocab.accounts)
-        val ledger = AoiroChoboReceiptRules.ledgerOf(defaultPayment) ?: AoiroChoboReceiptRules.Ledger.CASH
+        // 摘要名のヒントは、品目グループの摘要と同じくレシート共通のもの
         val memoNames = accounts.associate { a ->
-            a.accountKey to AoiroChoboReceiptRules.memoCandidates(
-                a.accountKey, ledger, defaultPayment?.accountKey, vocab.memos
-            ).map { it.name }
+            a.accountKey to AoiroChoboReceiptRules.groupMemoCandidates(a.accountKey, vocab.memos).map { it.name }
         }
         viewModelScope.launch {
             _isAiMatching.value = true

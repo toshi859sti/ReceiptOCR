@@ -463,7 +463,8 @@ class AoiroChoboTransactionsBuilderTest {
     )
 
     private fun cashMemo(accountKey: String, name: String? = null) =
-        AoiroChoboReceiptRules.memoCandidates(accountKey, memos).single { name == null || it.name == name }
+        AoiroChoboReceiptRules.memoCandidates(accountKey, AoiroChoboReceiptRules.Ledger.CASH, "genkin", memos)
+            .single { name == null || it.name == name }
 
     /** 端末の既定のルール（DatabaseInitializer）にあおいろの科目を付けたもの */
     private val paymentRules = listOf(
@@ -472,8 +473,10 @@ class AoiroChoboTransactionsBuilderTest {
         ReceiptPaymentMethodRule(id = 3, keyword = "PayPay", yayoiAccountId = 2, sortOrder = 2)
     )
 
-    private fun buildReceipt(vararg rows: AoiroChoboTransactionsBuilder.ReceiptRow) =
-        AoiroChoboTransactionsBuilder.buildReceipt(rows.toList(), paymentRules, accounts, memos, meta, appVersion = "1.0")
+    private fun buildReceipt(
+        vararg rows: AoiroChoboTransactionsBuilder.ReceiptRow,
+        memos: List<AoiroChoboMemoTemplate> = this.memos
+    ) = AoiroChoboTransactionsBuilder.buildReceipt(rows.toList(), paymentRules, accounts, memos, meta, appVersion = "1.0")
 
     private fun row(r: GeneralReceipt, item: GeneralReceiptItem, index: Int, g: GeneralItemMaster?) =
         AoiroChoboTransactionsBuilder.ReceiptRow(r, item, index, g)
@@ -511,21 +514,51 @@ class AoiroChoboTransactionsBuilderTest {
     }
 
     @Test
-    fun `クレジット払いは未払金で、同じ摘要が未払にあれば置き換える・無ければ摘要なし`() {
+    fun `クレジット払いは未払金で、レシート共通でない現金の摘要は名前が同じでも置き換えず摘要なし`() {
         val r = receipt("クレジット払い")
         val repair = buildReceipt(row(r, receiptItem("修理", 5500), 0, group("syuuzen", cashMemo("syuuzen")))).file.entries.single()
         assertEquals("Unpaid", repair.ledgerType)
         assertEquals("mibarai", repair.credit.accountKey)
+        // 未払/発生に同じ名前の「修理代」があっても置き換えない（事業割合が違うことがある・契約 minor（10））
+        assertTrue(memos.any { AoiroChoboMemoRules.MemoTab.UNPAID_IN.contains(it) && it.counterAccountKey == "syuuzen" })
+        assertEquals("UnmatchedMemo", repair.matchStatus)
+        assertEquals(null, repair.memoKey)
+        assertEquals(null, repair.memoName)
+    }
+
+    @Test
+    fun `明細の個別変更で選んだ未払の摘要はそのまま送る`() {
         val unpaidRepair = memos.single {
             AoiroChoboMemoRules.MemoTab.UNPAID_IN.contains(it) && it.counterAccountKey == "syuuzen"
         }
-        assertEquals(unpaidRepair.memoKey, repair.memoKey)
-        assertEquals("Matched", repair.matchStatus)
+        val item = receiptItem("修理", 5500).copy(
+            overrideAccountKey = "syuuzen", overrideAccountKeyName = "修繕費",
+            overrideMemoKey = unpaidRepair.memoKey, overrideMemoKeyName = unpaidRepair.name
+        )
+        val e = buildReceipt(row(receipt("クレジット払い"), item, 0, group("syuuzen", cashMemo("syuuzen")))).file.entries.single()
+        assertEquals(unpaidRepair.memoKey, e.memoKey)
+        assertEquals("Matched", e.matchStatus)
+    }
 
-        val material = buildReceipt(row(r, receiptItem("結束バンド", 330), 0, group("syozairyou", cashMemo("syozairyou"))))
-            .file.entries.single()
-        assertEquals("UnmatchedMemo", material.matchStatus)
-        assertEquals(null, material.memoKey)
+    @Test
+    fun `レシート共通の摘要は現金・未払・振替のどれでも同じ memoKey で送る`() {
+        val common = cashMemo("syozairyou").copy(paymentCommon = true)
+        val withCommon = memos.map { if (it.memoKey == common.memoKey) common else it }
+        val g = group("syozairyou", common)
+        val cash = receipt("現金")
+        val card = receipt("クレジット", uuid = "11111111-2222-3333-4444-555555555555")
+        val household = receipt(uuid = "22222222-2222-3333-4444-555555555555")
+            .copy(paymentOverrideAccountKey = "zigyounusikari", paymentOverrideAccountKeyName = "事業主借")
+        val entries = buildReceipt(
+            row(cash, receiptItem("結束バンド", 330), 0, g),
+            row(card, receiptItem("結束バンド", 330), 0, g),
+            row(household, receiptItem("結束バンド", 330), 0, g),
+            memos = withCommon
+        ).file.entries
+        assertEquals(listOf("Cash", "Unpaid", "Transfer"), entries.map { it.ledgerType })
+        assertEquals(listOf("genkin", "mibarai", "zigyounusikari"), entries.map { it.credit.accountKey })
+        assertTrue(entries.all { it.memoKey == common.memoKey && it.matchStatus == "Matched" })
+        assertTrue(entries.all { it.credit.taxRate == null })
     }
 
     @Test
