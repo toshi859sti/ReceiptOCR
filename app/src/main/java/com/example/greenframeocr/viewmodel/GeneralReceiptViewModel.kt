@@ -704,6 +704,9 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope.launch(Dispatchers.IO) { dao.deleteReceipt(receipt) }
     }
 
+    /** レシートの明細（変更を追う）。詳細画面で科目・摘要を変えたあと、表示をすぐ合わせるのに使う */
+    fun itemsForReceiptFlow(receiptId: Long) = dao.getItemsByReceiptId(receiptId)
+
     suspend fun getItemsForReceipt(receiptId: Long): List<GeneralReceiptItem> =
         withContext(Dispatchers.IO) { dao.getItemsByReceiptIdOnce(receiptId) }
 

@@ -29,9 +29,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.greenframeocr.data.AccountingSoftware
-import com.example.greenframeocr.data.AoiroChoboAccount
 import com.example.greenframeocr.data.AppPreferences
 import com.example.greenframeocr.data.GeneralItemGroup
+import com.example.greenframeocr.data.GeneralReceipt
 import com.example.greenframeocr.data.GeneralReceiptItem
 import com.example.greenframeocr.data.YayoiAccount
 import com.example.greenframeocr.util.GeminiReceiptClient
@@ -39,12 +39,11 @@ import com.example.greenframeocr.util.RomajiSearch
 import com.example.greenframeocr.util.NumericPrefixCandidate
 import com.example.greenframeocr.util.SimilarGroupPair
 import com.example.greenframeocr.viewmodel.GeneralReceiptViewModel
-import kotlinx.coroutines.launch
 
 // 科目名の表示色。グループのデフォルトでマッチした分は緑系、個別に上書きした分は赤系で固定
 // （テーマプリセットによってprimary/tertiaryの色味が変わるため、区別のため固定色にしている）
-private val MatchedAccountColor = Color(0xFF2E7D32)
-private val OverriddenAccountColor = Color(0xFFC62828)
+internal val MatchedAccountColor = Color(0xFF2E7D32)
+internal val OverriddenAccountColor = Color(0xFFC62828)
 
 // 品目グループの並び替え順。COUNTはDAOの既定順（件数DESC・品目名ASC）をそのまま使う
 private enum class ItemSortOrder(val label: String) {
@@ -80,10 +79,9 @@ fun GeneralItemMatchingScreen(
 
     var listFontSize by remember { mutableFloatStateOf(appPreferences.listFontSize) }
     var expandedKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var groupEditTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
     var groupRenameTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
-    var itemEditTarget by remember { mutableStateOf<GeneralReceiptItem?>(null) }
-    var itemEditGroupDefaultName by remember { mutableStateOf<String?>(null) }
+    // グループ・明細の科目（弥生）／科目・摘要（あおいろ）の設定。レシート詳細と同じダイアログ（ReceiptItemLinkEditor）
+    var linkTarget by remember { mutableStateOf<ReceiptLinkTarget?>(null) }
     var yayoiAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var yayoiFlaggedAccounts by remember { mutableStateOf<List<YayoiAccount>>(emptyList()) }
     var searchText by remember { mutableStateOf("") }
@@ -96,10 +94,9 @@ fun GeneralItemMatchingScreen(
     // あおいろ帳簿：グループに あおいろ科目・摘要 を付ける。明細ごとの個別上書きも弥生と同じようにできる（DB v41）
     val isAoiro = appPreferences.accountingSoftware == AccountingSoftware.AOIRO
     var aoiroVocab by remember { mutableStateOf<GeneralReceiptViewModel.AoiroVocab?>(null) }
-    var aoiroEditTarget by remember { mutableStateOf<GeneralItemGroup?>(null) }
-    // 明細の個別変更。摘要の帳簿はそのレシートの支払方法で決まるので、開くときに引いておく
-    var aoiroItemEditTarget by remember { mutableStateOf<Triple<GeneralReceiptItem, GeneralItemGroup, AoiroChoboAccount?>?>(null) }
-    val scope = rememberCoroutineScope()
+    // 明細の行に出すレシートの日付・店名
+    val receipts by viewModel.receipts.collectAsState()
+    val receiptsById = remember(receipts) { receipts.associateBy { it.id } }
 
     LaunchedEffect(Unit) {
         val accounts = viewModel.loadYayoiAccounts()
@@ -110,23 +107,11 @@ fun GeneralItemMatchingScreen(
 
     fun isMatched(group: GeneralItemGroup) = if (isAoiro) group.accountKey != null else group.yayoiAccountId != null
 
-    // 表示名は今の辞書から引く（PC で改名されていればそちら）。辞書から消えたキーは保存時の名前
-    fun aoiroLabel(accountKey: String?, accountKeyName: String?, memoKey: String?, memoKeyName: String?): String? {
-        val key = accountKey ?: return null
-        val vocab = aoiroVocab
-        val account = vocab?.accounts?.find { it.accountKey == key }?.name ?: accountKeyName ?: key
-        val memo = memoKey?.let { m -> vocab?.memos?.find { it.memoKey == m }?.name ?: memoKeyName ?: m }
-        return if (memo != null) "$account ／ $memo" else account
-    }
-
-    fun aoiroLabel(group: GeneralItemGroup): String? =
-        aoiroLabel(group.accountKey, group.accountKeyName, group.memoKey, group.memoKeyName)
+    fun aoiroLabel(group: GeneralItemGroup): String? = aoiroLinkLabel(aoiroVocab, group)
 
     /** 明細に効いている あおいろ科目・摘要（個別上書きがあればそれ、無ければグループ） */
     fun aoiroItemLabel(item: GeneralReceiptItem, group: GeneralItemGroup): String? =
-        if (item.overrideAccountKey != null) {
-            aoiroLabel(item.overrideAccountKey, item.overrideAccountKeyName, item.overrideMemoKey, item.overrideMemoKeyName)
-        } else aoiroLabel(group)
+        aoiroItemLinkLabel(aoiroVocab, item, group)
 
     val matchedCount = itemGroups.count { isMatched(it) }
     val totalCount = itemGroups.size
@@ -340,22 +325,14 @@ fun GeneralItemMatchingScreen(
                             isAoiro = isAoiro,
                             aoiroLabel = if (isAoiro) aoiroLabel(group) else null,
                             aoiroItemLabel = { item -> aoiroItemLabel(item, group) },
+                            receiptsById = receiptsById,
                             onToggleExpand = {
                                 expandedKeys = if (isExpanded) expandedKeys - group.canonicalKey
                                                else expandedKeys + group.canonicalKey
                             },
-                            onEditGroup = { if (isAoiro) aoiroEditTarget = group else groupEditTarget = group },
+                            onEditGroup = { linkTarget = ReceiptLinkTarget.Group(group.canonicalKey) },
                             onRenameGroup = { groupRenameTarget = group },
-                            onEditIndividual = { item ->
-                                if (isAoiro) {
-                                    scope.launch {
-                                        aoiroItemEditTarget = Triple(item, group, viewModel.aoiroPaymentAccountForReceipt(item.receiptId))
-                                    }
-                                } else {
-                                    itemEditTarget = item
-                                    itemEditGroupDefaultName = yayoiAccounts.find { it.id == group.yayoiAccountId }?.accountName
-                                }
-                            }
+                            onEditIndividual = { item -> linkTarget = ReceiptLinkTarget.Item(item) }
                         )
                     }
                 }
@@ -446,73 +423,16 @@ fun GeneralItemMatchingScreen(
         )
     }
 
-    // グループのデフォルト科目編集ダイアログ（保存すると個別上書きは全解除）
-    if (groupEditTarget != null) {
-        GroupDefaultEditDialog(
-            group = groupEditTarget!!,
-            yayoiAccounts = yayoiAccounts,
-            yayoiFlaggedAccounts = yayoiFlaggedAccounts,
-            onDismiss = { groupEditTarget = null },
-            onSave = { canonicalKey, accountId ->
-                viewModel.updateGroupDefaultAccount(canonicalKey, accountId)
-                groupEditTarget = null
-            },
-            onLoadAccounts = { accounts ->
+    // グループ・明細の科目・摘要の設定（グループを保存するとグループ内の個別変更は解除）
+    linkTarget?.let { target ->
+        ReceiptItemLinkEditor(
+            target = target,
+            isAoiro = isAoiro,
+            viewModel = viewModel,
+            onDismiss = { linkTarget = null },
+            onYayoiAccountsChanged = { accounts ->
                 yayoiAccounts = accounts
                 yayoiFlaggedAccounts = accounts.filter { it.usedForReceipt }
-            },
-            viewModel = viewModel
-        )
-    }
-
-    // グループのあおいろ科目・摘要ダイアログ。摘要はレシート共通のもの（どの支払方法のレシートでも同じ摘要で送れる）
-    aoiroEditTarget?.let { group ->
-        val vocab = aoiroVocab
-        AoiroLinkDialog(
-            title = "あおいろ科目・摘要",
-            subject = "${group.itemName}（${group.count}件）",
-            kind = AoiroLinkKind.receiptGroup,
-            accounts = vocab?.accounts.orEmpty(),
-            memos = vocab?.memos.orEmpty(),
-            usage = vocab?.usage.orEmpty(),
-            initialAccountKey = group.accountKey,
-            initialAccountKeyName = group.accountKeyName,
-            initialMemoKey = group.memoKey,
-            initialMemoKeyName = group.memoKeyName,
-            note = "この品目名のレシート明細すべてに使います（弥生の科目とは別）。保存すると明細ごとの個別変更は解除します",
-            resetHint = "科目を外すと、この品目は「科目なし」で PC に送ります",
-            extraNote = "摘要は、PC の摘要登録で「${AoiroLinkKind.RECEIPT_COMMON_LABEL}」にしたものから選びます。" +
-                "現金・カード（未払）・家計から（振替）のどの支払方法のレシートでも同じ摘要で送ります",
-            onDismiss = { aoiroEditTarget = null },
-            onSave = { s ->
-                viewModel.updateGroupAoiro(group.canonicalKey, s.accountKey, s.accountKeyName, s.memoKey, s.memoKeyName)
-                aoiroEditTarget = null
-            }
-        )
-    }
-
-    // 明細の個別変更（あおいろ）。科目を外すとグループの設定に戻る。摘要はそのレシートの支払方法の帳簿のもの
-    aoiroItemEditTarget?.let { (item, group, payment) ->
-        val vocab = aoiroVocab
-        AoiroLinkDialog(
-            title = "個別変更（あおいろ）",
-            subject = "${item.itemName}  ¥${"%,d".format(item.price)}",
-            kind = AoiroLinkKind.receiptItem(payment),
-            accounts = vocab?.accounts.orEmpty(),
-            memos = vocab?.memos.orEmpty(),
-            usage = vocab?.usage.orEmpty(),
-            initialAccountKey = item.overrideAccountKey,
-            initialAccountKeyName = item.overrideAccountKeyName,
-            initialMemoKey = item.overrideMemoKey,
-            initialMemoKeyName = item.overrideMemoKeyName,
-            note = "保存するとグループ設定に関わらずこの明細にのみ適用されます",
-            resetHint = "科目を外すとグループの設定に戻ります（${aoiroLabel(group) ?: "グループも未設定"}）",
-            extraNote = "このレシートの支払方法（${payment?.name ?: "未設定"}）の帳簿の摘要と、" +
-                "${AoiroLinkKind.RECEIPT_COMMON_LABEL}の摘要から選びます",
-            onDismiss = { aoiroItemEditTarget = null },
-            onSave = { s ->
-                viewModel.updateItemAoiroOverride(item.id, s.accountKey, s.accountKeyName, s.memoKey, s.memoKeyName)
-                aoiroItemEditTarget = null
             }
         )
     }
@@ -525,21 +445,6 @@ fun GeneralItemMatchingScreen(
             onSave = { canonicalKey, newName ->
                 viewModel.renameGroup(canonicalKey, newName)
                 groupRenameTarget = null
-            }
-        )
-    }
-
-    // 個別明細の上書きダイアログ
-    if (itemEditTarget != null) {
-        IndividualItemOverrideDialog(
-            item = itemEditTarget!!,
-            groupDefaultAccountName = itemEditGroupDefaultName,
-            yayoiAccounts = yayoiAccounts,
-            yayoiFlaggedAccounts = yayoiFlaggedAccounts,
-            onDismiss = { itemEditTarget = null },
-            onSave = { itemId, accountId ->
-                viewModel.updateItemOverride(itemId, accountId)
-                itemEditTarget = null
             }
         )
     }
@@ -858,6 +763,7 @@ private fun ItemGroupCard(
     isAoiro: Boolean = false,
     aoiroLabel: String? = null,   // あおいろモードのグループの「科目 ／ 摘要」（未設定なら null）
     aoiroItemLabel: (GeneralReceiptItem) -> String? = { null },   // あおいろモードの明細に効いている「科目 ／ 摘要」
+    receiptsById: Map<Long, GeneralReceipt> = emptyMap(),   // 明細の行にレシートの日付・店名を出す
     onToggleExpand: () -> Unit,
     onEditGroup: () -> Unit,
     onRenameGroup: () -> Unit,
@@ -991,10 +897,17 @@ private fun ItemGroupCard(
                             )
                         }
                         else -> {
-                            items!!.forEach { item ->
+                            // どのレシートの明細か分かるよう、日付・店名・金額を出す。新しいレシートから
+                            items!!.sortedByDescending { receiptsById[it.receiptId]?.date.orEmpty() }.forEach { item ->
+                                val receipt = receiptsById[item.receiptId]
+                                val receiptInfo = receipt?.let { r ->
+                                    listOf(r.date, r.storeName.ifBlank { "（店名なし）" }).joinToString("  ")
+                                }
                                 if (isAoiro) {
                                     GeneralItemLabelRow(
                                         itemName = item.itemName,
+                                        receiptInfo = receiptInfo,
+                                        price = item.price,
                                         label = aoiroItemLabel(item),
                                         isOverridden = item.overrideAccountKey != null,
                                         fontSize = fontSize,
@@ -1003,6 +916,7 @@ private fun ItemGroupCard(
                                 } else {
                                     GeneralItemRow(
                                         item = item,
+                                        receiptInfo = receiptInfo,
                                         groupDefaultAccount = matchedAccount,
                                         overrideAccount = yayoiAccounts.find { it.id == item.yayoiAccountId },
                                         fontSize = fontSize,
@@ -1021,6 +935,7 @@ private fun ItemGroupCard(
 @Composable
 private fun GeneralItemRow(
     item: GeneralReceiptItem,
+    receiptInfo: String?,
     groupDefaultAccount: YayoiAccount?,
     overrideAccount: YayoiAccount?,
     fontSize: Float,
@@ -1028,34 +943,55 @@ private fun GeneralItemRow(
 ) {
     val isOverridden = item.yayoiAccountId != null
     val effectiveAccount = if (isOverridden) overrideAccount else groupDefaultAccount
-    GeneralItemLabelRow(item.itemName, effectiveAccount?.accountName, isOverridden, fontSize, onClick)
+    GeneralItemLabelRow(item.itemName, receiptInfo, item.price, effectiveAccount?.accountName, isOverridden, fontSize, onClick)
 }
 
-/** 明細行の本体。[label] はこの明細に効いている科目（未設定なら null）。[onClick] が null なら押せない */
+/**
+ * 明細行の本体。上の段にレシートの日付・店名（[receiptInfo]）と金額、下の段に品名と
+ * この明細に効いている科目（[label]。未設定なら null）。[onClick] が null なら押せない
+ */
 @Composable
 private fun GeneralItemLabelRow(
     itemName: String,
+    receiptInfo: String?,
+    price: Int,
     label: String?,
     isOverridden: Boolean,
     fontSize: Float,
     onClick: (() -> Unit)?
 ) {
-    Row(
+    val smallSize = (fontSize - 3f).coerceAtLeast(10f).sp
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Text(
-            text = itemName,
-            fontSize = (fontSize - 2f).coerceAtLeast(11f).sp,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Spacer(Modifier.width(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = receiptInfo ?: "（レシート不明）",
+                fontSize = (fontSize - 2f).coerceAtLeast(11f).sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "¥${"%,d".format(price)}",
+                fontSize = (fontSize - 2f).coerceAtLeast(11f).sp
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = itemName,
+                fontSize = smallSize,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.width(8.dp))
             Text(
                 text = label ?: "未設定",
                 fontSize = 11.sp,
@@ -1064,7 +1000,7 @@ private fun GeneralItemLabelRow(
                         else MaterialTheme.colorScheme.error,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 120.dp)
+                modifier = Modifier.widthIn(max = 160.dp)
             )
             if (isOverridden) {
                 Spacer(Modifier.width(4.dp))
@@ -1124,7 +1060,7 @@ private fun GroupRenameDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GroupDefaultEditDialog(
+internal fun GroupDefaultEditDialog(
     group: GeneralItemGroup,
     yayoiAccounts: List<YayoiAccount>,
     yayoiFlaggedAccounts: List<YayoiAccount>,   // usedForReceipt=true の科目
@@ -1281,7 +1217,7 @@ private fun GroupDefaultEditDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun IndividualItemOverrideDialog(
+internal fun IndividualItemOverrideDialog(
     item: GeneralReceiptItem,
     groupDefaultAccountName: String?,
     yayoiAccounts: List<YayoiAccount>,
