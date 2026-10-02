@@ -150,7 +150,7 @@
     原因は `AutocompleteTextField` の `ExposedDropdownMenu`（material3 1.1.2）がフォーカスを奪うこと。
     フォーカスを取らない `DropdownMenu(properties = PopupProperties(focusable = false))` に替えた。
     実機で、候補が出たあともバックスペースが続けて効くこと・候補を押すと入ることを確認（保存はしていない）。
-    ほかの ExposedDropdownMenu は読み取り専用か、押して開くだけなので変えていない
+    ほかの ExposedDropdownMenu は読み取り専用か、押して開くだけなので変えていない。品名の欄もユーザーが実機で確認済み
 - 同日 PC が本番の摘要 19 件をレシート共通にして書き出し直した：`docs/AoiroChobo_export/aoirochobo_vocabulary_2026_20261002_192336.json`。
   雑費の摘要は事業割合が違う（ガソリン代（自動車）・修理代（自動車）・車検費 50、雑費 100）ので自動で選ばないこと
   （今のスマホは AI も科目だけ提案し、摘要は自動で埋めないので該当なし）
