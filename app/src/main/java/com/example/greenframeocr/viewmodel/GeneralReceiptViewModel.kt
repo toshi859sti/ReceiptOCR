@@ -795,15 +795,16 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
     suspend fun loadPaymentMethodRules(): List<ReceiptPaymentMethodRule> =
         withContext(Dispatchers.IO) { db.receiptPaymentMethodRuleDao().getAll() }
 
-    fun savePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
-        viewModelScope.launch(Dispatchers.IO) {
+    // 書き終わってから一覧を読み直せるよう suspend にしている（launch だと読み直しが先に走り、古い行が表示されることがあった）
+    suspend fun savePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
+        withContext(Dispatchers.IO) {
             if (rule.id == 0L) db.receiptPaymentMethodRuleDao().insert(rule)
             else db.receiptPaymentMethodRuleDao().update(rule)
         }
     }
 
-    fun deletePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
-        viewModelScope.launch(Dispatchers.IO) { db.receiptPaymentMethodRuleDao().delete(rule) }
+    suspend fun deletePaymentMethodRule(rule: ReceiptPaymentMethodRule) {
+        withContext(Dispatchers.IO) { db.receiptPaymentMethodRuleDao().delete(rule) }
     }
 
     /** レシート単位の相手科目個別上書き。accountId=nullでルール判定に戻す */

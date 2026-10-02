@@ -61,6 +61,14 @@ fun ReceiptPaymentMethodRuleScreen(
         }
     }
 
+    /** ルールを書き終えてから一覧を読み直す */
+    fun writeThenReload(write: suspend () -> Unit) {
+        scope.launch {
+            write()
+            reload()
+        }
+    }
+
     /** あおいろの科目名。今の辞書の名前 → 保存時の名前 の順 */
     fun aoiroName(rule: ReceiptPaymentMethodRule): String? =
         rule.accountKey?.let { key -> aoiroAccounts.find { it.accountKey == key }?.name ?: rule.accountKeyName ?: key }
@@ -200,14 +208,12 @@ fun ReceiptPaymentMethodRuleScreen(
             accounts = aoiroAccounts,
             onDismiss = { showAddDialog = false },
             onSave = { keyword, key, name ->
-                viewModel.savePaymentMethodRule(
-                    ReceiptPaymentMethodRule(
-                        keyword = keyword, yayoiAccountId = null, sortOrder = rules.size,
-                        accountKey = key, accountKeyName = name
-                    )
+                val rule = ReceiptPaymentMethodRule(
+                    keyword = keyword, yayoiAccountId = null, sortOrder = rules.size,
+                    accountKey = key, accountKeyName = name
                 )
                 showAddDialog = false
-                reload()
+                writeThenReload { viewModel.savePaymentMethodRule(rule) }
             }
         )
     }
@@ -217,9 +223,10 @@ fun ReceiptPaymentMethodRuleScreen(
             accounts = aoiroAccounts,
             onDismiss = { editTarget = null },
             onSave = { keyword, key, name ->
-                viewModel.savePaymentMethodRule(rule.copy(keyword = keyword, accountKey = key, accountKeyName = name))
                 editTarget = null
-                reload()
+                writeThenReload {
+                    viewModel.savePaymentMethodRule(rule.copy(keyword = keyword, accountKey = key, accountKeyName = name))
+                }
             }
         )
     }
@@ -231,11 +238,9 @@ fun ReceiptPaymentMethodRuleScreen(
             accounts = accounts,
             onDismiss = { showAddDialog = false },
             onSave = { keyword, accountId ->
-                viewModel.savePaymentMethodRule(
-                    ReceiptPaymentMethodRule(keyword = keyword, yayoiAccountId = accountId, sortOrder = rules.size)
-                )
+                val rule = ReceiptPaymentMethodRule(keyword = keyword, yayoiAccountId = accountId, sortOrder = rules.size)
                 showAddDialog = false
-                reload()
+                writeThenReload { viewModel.savePaymentMethodRule(rule) }
             }
         )
     }
@@ -247,9 +252,8 @@ fun ReceiptPaymentMethodRuleScreen(
             accounts = accounts,
             onDismiss = { editTarget = null },
             onSave = { keyword, accountId ->
-                viewModel.savePaymentMethodRule(rule.copy(keyword = keyword, yayoiAccountId = accountId))
                 editTarget = null
-                reload()
+                writeThenReload { viewModel.savePaymentMethodRule(rule.copy(keyword = keyword, yayoiAccountId = accountId)) }
             }
         )
     }
@@ -263,9 +267,8 @@ fun ReceiptPaymentMethodRuleScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deletePaymentMethodRule(rule)
                         deleteTarget = null
-                        reload()
+                        writeThenReload { viewModel.deletePaymentMethodRule(rule) }
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) { Text("削除") }
