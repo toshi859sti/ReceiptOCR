@@ -722,9 +722,28 @@ class GeneralReceiptViewModel(application: Application) : AndroidViewModel(appli
             updatedItems.forEach { item ->
                 val keyed = item.copy(receiptId = receipt.id).withComputedKey()
                 if (item.id == 0L) dao.insertItem(keyed)
-                else dao.updateItem(keyed)
+                else {
+                    // 既存の明細の item.canonicalKey は改名前のまま。改名でグループが変わったら設定を引き継ぐ
+                    if (keyed.canonicalKey != item.canonicalKey) carryOverGroupSettings(item.canonicalKey, keyed.canonicalKey)
+                    dao.updateItem(keyed)
+                }
             }
         }
+    }
+
+    /**
+     * 品目名を直して別のグループ（canonicalKey）に移った明細の科目設定を引き継ぐ。
+     * 移り先にまだ設定（弥生の科目・あおいろの科目）が無ければ、移る前のグループの設定を写す。
+     * 移り先に設定があればそちらを使う（既にある品目に合流したのと同じ）。明細の個別変更は明細側に残る
+     */
+    private suspend fun carryOverGroupSettings(fromKey: String, toKey: String) {
+        if (toKey.isBlank()) return
+        val masterDao = db.generalItemMasterDao()
+        val from = masterDao.getByKey(fromKey) ?: return
+        if (from.yayoiAccountId == null && from.accountKey == null) return
+        val to = masterDao.getByKey(toKey)
+        if (to != null && (to.yayoiAccountId != null || to.accountKey != null)) return
+        masterDao.upsert(from.copy(canonicalKey = toKey))
     }
 
     /** 個別上書き（item.yayoiAccountId）があればそちら優先、なければグループのデフォルトを使う */
