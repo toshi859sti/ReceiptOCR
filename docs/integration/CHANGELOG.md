@@ -6,6 +6,29 @@
 
 ---
 
+## schemaVersion 2 — 2026-10-01 minor（10）（摘要の「レシート共通」を足す）
+
+`schemaVersion` は据え置き（**2 のまま**）。`memoTemplates[]` にフィールドを 1 つ足す（前方互換）。スマホ側の依頼
+（[REPLY-phone-2026-10-01.md](REPLY-phone-2026-10-01.md)）への対応。回答は [REPLY-pc-2026-10-01.md](REPLY-pc-2026-10-01.md)。
+
+- **`memoTemplates[].paymentCommon`（bool）を追加**（[vocabulary-snapshot.md](vocabulary-snapshot.md) §4.2・§4.5）。
+  `true` の摘要は現金/出金・未払/発生・振替の 3 帳簿で**同じ `memoKey` のまま**使える。形は必ず
+  `ledgerType == "Cash"`・`direction == "Out"`・`showInCash == true`・相手科目が経費。レシートの品目グループ用。
+  スマホ案の 2 つの印（`showInUnpaid` / `showInTransfer`）ではなく、3 帳簿セットの印 1 つにした。
+  PC の画面での呼び名は「**レシート共通**」（2026-10-02 に「支払共通」から改名。`Purchase` / `Deposit` には効かないため）
+  （部分的な共有では、支払方法の違うレシートが混ざる品目グループに使えないため）。
+- **未払帳・振替伝票で使われた摘要はレシート共通をやめられない**（PC の摘要登録が断る）。
+  あわせて現金と預金の共有も、使われた側の印は外せなくなった（2026-10-01 `edf5d58`）。
+- **PC の取込に、摘要の帳簿のガードを足した**（[transaction-import.md](transaction-import.md) §5）。`memoKey` の摘要が
+  その行の帳簿で使えなければ「要確認」（「この帳簿で使えない摘要」）。選び直すまで登録できない。
+- PC の未払帳・振替伝票の摘要の候補にレシート共通の摘要を足した。振替伝票では貸方に事業主借を既定で入れる。
+- 古い vocabulary にはフィールドが無い。無ければ `false` として扱う。
+- 書き出すと全摘要に `paymentCommon` が付くので、PC が変わっていなくても `contentHash` は変わる。
+
+スマホ側への影響：品目グループの摘要候補を `paymentCommon == true` にし、名前による置き換えをやめること。
+
+---
+
 ## schemaVersion 2 — 2026-09-30 minor（9）（Receipt の帳簿を支払方法の科目で決める・振替の摘要を解禁）
 
 `schemaVersion` は据え置き（**2 のまま**）。JSON の形は変わらない。スマホ側の依頼
